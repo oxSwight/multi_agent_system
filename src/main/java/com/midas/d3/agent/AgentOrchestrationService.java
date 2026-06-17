@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.implementation.CodeGenerationCoordinator;
+import com.midas.d3.agent.implementation.TestGenerationCoordinator;
 import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
@@ -57,6 +58,7 @@ public class AgentOrchestrationService {
     private final AgentSystemPrompts    agentSystemPrompts;
     private final ObjectMapper          objectMapper;
     private final CodeGenerationCoordinator codeGenerationCoordinator;
+    private final TestGenerationCoordinator testGenerationCoordinator;
 
     /** Maps pipeline stages to their ContextReducer agent roles. */
     private static final Map<MidasState, ContextReducer.AgentRole> STAGE_TO_ROLE =
@@ -115,6 +117,15 @@ public class AgentOrchestrationService {
             pipelineOrchestrator.submitResult(runId, result.rawLlmOutput());
             MidasState newState = pipelineOrchestrator.getState(runId);
             log.info("[AgentOrchestrationService] Run [{}] — CODE_GENERATION done. New state: [{}].",
+                    runId, newState);
+            return newState;
+        }
+
+        if (currentState == MidasState.TEST_GENERATION) {
+            AgentResult result = testGenerationCoordinator.execute(context, "QaEngineer");
+            pipelineOrchestrator.submitResult(runId, result.rawLlmOutput());
+            MidasState newState = pipelineOrchestrator.getState(runId);
+            log.info("[AgentOrchestrationService] Run [{}] — TEST_GENERATION done. New state: [{}].",
                     runId, newState);
             return newState;
         }

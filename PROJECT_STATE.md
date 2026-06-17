@@ -278,10 +278,32 @@ the state machine without hanging.
 **Test status (2026-06-17):** `274` tests run, **0 failures** — suite green
 after Phase 6A parallel HYBRID passes. Run: `.\mvnw.cmd test`
 
-### Planned — Phase 6B+ (TBD)
+**Phase 6B — Parallel HYBRID Test Generation Fan-Out.**
+When `runtime_environment.execution_model` is `HYBRID`, `TEST_GENERATION` forks
+into two bounded internal LLM passes (client QA surface, server QA surface) inside
+`TestGenerationCoordinator`, launched concurrently via `CompletableFuture.supplyAsync`
+on the shared `agentTaskExecutor` and gated by `CompletableFuture.allOf` before
+`ImplementationSourceMerger.merge`. Non-HYBRID models bypass the fork and use the
+standard single-pass `QA_ENGINEER_PROMPT`. The state machine topology is unchanged —
+fan-out is internal to `TEST_GENERATION`.
+
+| Layer | Files |
+| --- | --- |
+| Detection | `HybridExecutionModel` (reused from Phase 5) |
+| Source slicing | `SourceMapSlicer` — filters `generatedSourceCode` by client/server path |
+| Context slicing | `ContextReducer.reduceTestGenerationPass(ctx, surface)` + `ArchitectureSurfaceSlicer` |
+| Orchestration | `TestGenerationCoordinator` (used by `AgentOrchestrationService` + `QaAutomationAgent`) |
+| Merge | `ImplementationSourceMerger` — disjoint test-path union with duplicate-path fail-fast |
+| Prompts | `HYBRID_CLIENT_QA_PROMPT`, `HYBRID_SERVER_QA_PROMPT` |
+| Unit tests | `SourceMapSlicerTest`, `TestGenerationCoordinatorTest`, `AgentOrchestrationServiceTest` |
+
+**Test status (2026-06-17):** `281` tests run, **0 failures** — suite green
+after Phase 6B HYBRID test fan-out. Run: `.\mvnw.cmd test`
+
+### Planned — Phase 6C+ (TBD)
 
 > **Branch:** `main`
-> **Candidates:** TEST_GENERATION fan-out for HYBRID projects.
+> **Candidates:** Further dynamic routing, HITL Controller feedback loop.
 
 ### Next Up (Post Phase 5)
 
@@ -333,26 +355,19 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 6A complete; Phase 6B evaluation pending.
+**Working tree:** Phase 6B complete — TEST_GENERATION HYBRID fan-out verified.
 
-**Phase 5 verification (complete):**
+**Phase 6B verification (complete):**
 
-1. HYBRID projects (`execution_model: HYBRID` on technical spec) trigger two LLM
-   passes at `CODE_GENERATION` with sliced context and merged `generatedSourceCode`.
-2. Non-HYBRID projects still use a single implementation pass (no regression).
-3. Merge rejects duplicate file paths across client/server passes.
-4. SSM topology unchanged — fan-out is internal to `CODE_GENERATION`; no backward loops.
-
-**Phase 6A verification (complete):**
-
-1. HYBRID client and server passes run concurrently on `agentTaskExecutor` (log
-   evidence: distinct thread IDs per surface).
-2. `ImplementationSourceMerger.merge` executes only after `allOf` succeeds.
-3. Non-retryable `LlmCallException` from either pass surfaces immediately via
+1. HYBRID projects trigger two concurrent QA passes at `TEST_GENERATION` with
+   `SourceMapSlicer`-filtered source and merged `generatedTests`.
+2. Non-HYBRID projects still use a single QA pass (no regression).
+3. Client pass uses `HYBRID_CLIENT_QA_PROMPT` (Jest/jsdom); server pass uses
+   `HYBRID_SERVER_QA_PROMPT` (JUnit 5 + Mockito + RestAssured).
+4. Merge rejects duplicate test paths across client/server passes.
+5. SSM topology unchanged — fan-out is internal to `TEST_GENERATION`.
+6. Non-retryable `LlmCallException` from either pass surfaces immediately via
    `awaitAll` unwrapping — no hang.
-4. Non-HYBRID single-pass path unchanged.
-
-**Phase 6B focus:** evaluate TEST_GENERATION fan-out for HYBRID projects.
 
 **Do not** change REJECT→ERROR semantics unless product owner explicitly
 requests a feedback-loop design; current behaviour is intentional and covered

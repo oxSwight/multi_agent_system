@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.midas.d3.agent.implementation.ArchitectureSurfaceSlicer;
 import com.midas.d3.agent.implementation.ImplementationSurface;
+import com.midas.d3.agent.implementation.SourceMapSlicer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -183,6 +184,37 @@ public class ContextReducer {
 
         return AgentContextView.builder()
                 .agentName("IMPLEMENTATION_ENGINEER_" + surface.name())
+                .pipelineRunId(context.getPipelineRunId())
+                .rawUserIdea(context.getRawUserIdea())
+                .requiredArtifacts(artifacts)
+                .estimatedTokenBudget(estimatedTokens)
+                .build();
+    }
+
+    public AgentContextView reduceTestGenerationPass(MidasContext context, ImplementationSurface surface) {
+        Objects.requireNonNull(surface, "surface must not be null");
+        AgentContextView base = reduce(context, AgentRole.QA_ENGINEER);
+        Map<String, JsonNode> artifacts = new LinkedHashMap<>(base.safeArtifacts());
+
+        JsonNode architecture = artifacts.get("architectureDesign");
+        if (architecture != null && !architecture.isNull()) {
+            artifacts.put("architectureDesign",
+                    ArchitectureSurfaceSlicer.slice(architecture, surface, objectMapper));
+        }
+
+        JsonNode sourceCode = artifacts.get("generatedSourceCode");
+        if (sourceCode != null && !sourceCode.isNull()) {
+            artifacts.put("generatedSourceCode",
+                    SourceMapSlicer.slice(sourceCode, surface, objectMapper));
+        }
+
+        int estimatedTokens = estimateTokens(context.getRawUserIdea(), artifacts);
+
+        log.debug("ContextReducer → HYBRID {} QA pass artifacts={} estimatedTokens={}",
+                surface, artifacts.keySet(), estimatedTokens);
+
+        return AgentContextView.builder()
+                .agentName("QA_ENGINEER_" + surface.name())
                 .pipelineRunId(context.getPipelineRunId())
                 .rawUserIdea(context.getRawUserIdea())
                 .requiredArtifacts(artifacts)
