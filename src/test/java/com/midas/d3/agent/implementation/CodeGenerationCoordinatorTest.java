@@ -7,12 +7,14 @@ import com.midas.d3.config.JacksonConfig;
 import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
+import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
 import com.midas.d3.validation.ImplementationEngineerValidator;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,9 +25,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -42,15 +48,22 @@ class CodeGenerationCoordinatorTest {
     private ObjectMapper objectMapper;
     private ImplementationEngineerValidator validator;
     private CodeGenerationCoordinator coordinator;
+    private ExecutorService agentTaskExecutor;
 
     @BeforeEach
     void setUp() {
         objectMapper = new JacksonConfig().objectMapper();
         validator = new ImplementationEngineerValidator(objectMapper);
+        agentTaskExecutor = Executors.newFixedThreadPool(2);
         coordinator = new CodeGenerationCoordinator(
-                contextReducer, llmClient, validatorRegistry, objectMapper);
+                contextReducer, llmClient, validatorRegistry, objectMapper, agentTaskExecutor);
         when(validatorRegistry.getValidator(MidasState.CODE_GENERATION))
                 .thenReturn(Optional.of(validator));
+    }
+
+    @AfterEach
+    void tearDown() {
+        agentTaskExecutor.shutdownNow();
     }
 
     @Test
@@ -91,8 +104,9 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
 
-        when(llmClient.call(any()))
-                .thenReturn("{\"manifest.json\":\"{}\", \"src/popup.ts\":\"export const ok = true;\"}")
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
+                .thenReturn("{\"manifest.json\":\"{}\", \"src/popup.ts\":\"export const ok = true;\"}");
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
                 .thenReturn("{\"src/main/java/com/example/App.java\":\"public class App {}\"}");
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
@@ -105,8 +119,8 @@ class CodeGenerationCoordinatorTest {
     }
 
     @Test
-    @DisplayName("HYBRID client pass uses dedicated client system prompt")
-    void execute_hybrid_usesClientPromptForFirstPass() throws Exception {
+    @DisplayName("HYBRID model uses dedicated client and server system prompts")
+    void execute_hybrid_usesDedicatedPromptsForEachPass() throws Exception {
         var spec = objectMapper.readTree("""
                 {"runtime_environment":{"execution_model":"HYBRID"}}
                 """);
@@ -116,18 +130,41 @@ class CodeGenerationCoordinatorTest {
                 .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_CLIENT"));
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
-        when(llmClient.call(any()))
-                .thenReturn("{\"manifest.json\":\"{}\"}")
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
+                .thenReturn("{\"manifest.json\":\"{}\"}");
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
                 .thenReturn("{\"App.java\":\"public class App {}\"}");
 
         coordinator.execute(ctx, "ImplementationEngineerAgent");
 
         ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
         verify(llmClient, times(2)).call(captor.capture());
-        assertThat(captor.getAllValues().get(0).getSystemPrompt())
-                .isEqualTo(AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT);
-        assertThat(captor.getAllValues().get(1).getSystemPrompt())
-                .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
+        assertThat(captor.getAllValues())
+                .extracting(LlmCallRequest::getSystemPrompt)
+                .containsExactlyInAnyOrder(
+                        AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT,
+                        AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
+    }
+
+    @Test
+    @DisplayName("HYBRID parallel pass surfaces non-retryable LLM failure without hanging")
+    void execute_hybrid_propagatesPassFailure() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var ctx = MidasContext.start("Build hybrid app", "run-hybrid-fail").withTechnicalSpec(spec);
+
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
+                .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_CLIENT"));
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
+                .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_SERVER"));
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
+                .thenReturn("{\"manifest.json\":\"{}\"}");
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
+                .thenThrow(LlmCallException.emptyResponse("ImplementationEngineerAgentServer"));
+
+        assertThatThrownBy(() -> coordinator.execute(ctx, "ImplementationEngineerAgent"))
+                .isInstanceOf(LlmCallException.class);
     }
 
     private void stubImplementationView(String runId, ContextReducer.AgentRole role) {

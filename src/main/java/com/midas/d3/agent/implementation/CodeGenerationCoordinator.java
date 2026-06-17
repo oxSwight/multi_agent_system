@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.agent.AgentSystemPrompts;
 import com.midas.d3.agent.base.AgentExecutionException;
 import com.midas.d3.agent.base.AgentResult;
+import com.midas.d3.config.AsyncConfig;
 import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
@@ -17,11 +18,14 @@ import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
 import com.midas.d3.validation.ValidationHookException;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.Executor;
 
 /**
  * Coordinates {@link MidasState#CODE_GENERATION}, including the bounded HYBRID fan-out
@@ -29,7 +33,6 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class CodeGenerationCoordinator {
 
     static final int MAX_PASS_RETRIES = 3;
@@ -38,6 +41,19 @@ public class CodeGenerationCoordinator {
     private final LlmClient llmClient;
     private final ValidatorRegistry validatorRegistry;
     private final ObjectMapper objectMapper;
+    private final Executor agentTaskExecutor;
+
+    public CodeGenerationCoordinator(ContextReducer contextReducer,
+                                     LlmClient llmClient,
+                                     ValidatorRegistry validatorRegistry,
+                                     ObjectMapper objectMapper,
+                                     @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor) {
+        this.contextReducer = contextReducer;
+        this.llmClient = llmClient;
+        this.validatorRegistry = validatorRegistry;
+        this.objectMapper = objectMapper;
+        this.agentTaskExecutor = agentTaskExecutor;
+    }
 
     /**
      * Executes code generation — single pass for standard models, dual pass + merge for HYBRID.
@@ -62,20 +78,28 @@ public class CodeGenerationCoordinator {
     private AgentResult executeHybridFanOut(MidasContext context,
                                             String agentName,
                                             GoalKeeperValidator validator) {
-        log.info("[CodeGenerationCoordinator] HYBRID fan-out for run [{}].", context.getPipelineRunId());
+        log.info("[CodeGenerationCoordinator] HYBRID parallel fan-out for run [{}].", context.getPipelineRunId());
 
-        PassResult clientPass = executePass(
-                context,
-                ImplementationSurface.CLIENT,
-                AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT,
-                agentName + "Client",
-                validator);
-        PassResult serverPass = executePass(
-                context,
-                ImplementationSurface.SERVER,
-                AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT,
-                agentName + "Server",
-                validator);
+        CompletableFuture<PassResult> clientFuture = CompletableFuture.supplyAsync(
+                () -> executePass(
+                        context,
+                        ImplementationSurface.CLIENT,
+                        AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT,
+                        agentName + "Client",
+                        validator),
+                agentTaskExecutor);
+        CompletableFuture<PassResult> serverFuture = CompletableFuture.supplyAsync(
+                () -> executePass(
+                        context,
+                        ImplementationSurface.SERVER,
+                        AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT,
+                        agentName + "Server",
+                        validator),
+                agentTaskExecutor);
+
+        awaitAll(clientFuture, serverFuture);
+        PassResult clientPass = clientFuture.join();
+        PassResult serverPass = serverFuture.join();
 
         JsonNode merged = ImplementationSourceMerger.merge(
                 clientPass.validated(), serverPass.validated(), objectMapper);
@@ -258,6 +282,21 @@ public class CodeGenerationCoordinator {
             Thread.sleep(delayMs);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void awaitAll(CompletableFuture<?>... futures) {
+        try {
+            CompletableFuture.allOf(futures).join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw e;
         }
     }
 

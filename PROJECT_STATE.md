@@ -260,10 +260,28 @@ Key components:
 **Test status (2026-06-17):** `273` tests run, **0 failures** — suite green
 after Phase 5 HYBRID fan-out. Run: `.\mvnw.cmd test`
 
-### In Progress — Phase 6 (TBD)
+**Phase 6A — Parallel HYBRID Implementation Passes.**
+When `runtime_environment.execution_model` is `HYBRID`, `CodeGenerationCoordinator`
+now launches client and server implementation passes **concurrently** via
+`CompletableFuture.supplyAsync` on the shared `agentTaskExecutor`, gated by
+`CompletableFuture.allOf` before `ImplementationSourceMerger.merge`. Non-HYBRID
+models are unchanged (single pass). `awaitAll` unwraps `CompletionException` so
+`AgentExecutionException`, `LlmCallException`, and merge failures propagate to
+the state machine without hanging.
+
+| Layer | Files |
+| --- | --- |
+| Orchestration | `CodeGenerationCoordinator` — parallel fan-out + exception unwrapping |
+| Executor | `AsyncConfig.AGENT_EXECUTOR` injected into coordinator |
+| Unit tests | `CodeGenerationCoordinatorTest` — order-independent prompt assertions, parallel failure propagation |
+
+**Test status (2026-06-17):** `274` tests run, **0 failures** — suite green
+after Phase 6A parallel HYBRID passes. Run: `.\mvnw.cmd test`
+
+### Planned — Phase 6B+ (TBD)
 
 > **Branch:** `main`
-> **Candidates:** parallel HYBRID implementation passes; TEST_GENERATION fan-out for HYBRID projects.
+> **Candidates:** TEST_GENERATION fan-out for HYBRID projects.
 
 ### Next Up (Post Phase 5)
 
@@ -315,7 +333,7 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 5 complete; Phase 6 evaluation in progress.
+**Working tree:** Phase 6A complete; Phase 6B evaluation pending.
 
 **Phase 5 verification (complete):**
 
@@ -325,7 +343,16 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 3. Merge rejects duplicate file paths across client/server passes.
 4. SSM topology unchanged — fan-out is internal to `CODE_GENERATION`; no backward loops.
 
-**Phase 6 focus:** evaluate parallel HYBRID passes and/or TEST_GENERATION fan-out.
+**Phase 6A verification (complete):**
+
+1. HYBRID client and server passes run concurrently on `agentTaskExecutor` (log
+   evidence: distinct thread IDs per surface).
+2. `ImplementationSourceMerger.merge` executes only after `allOf` succeeds.
+3. Non-retryable `LlmCallException` from either pass surfaces immediately via
+   `awaitAll` unwrapping — no hang.
+4. Non-HYBRID single-pass path unchanged.
+
+**Phase 6B focus:** evaluate TEST_GENERATION fan-out for HYBRID projects.
 
 **Do not** change REJECT→ERROR semantics unless product owner explicitly
 requests a feedback-loop design; current behaviour is intentional and covered
