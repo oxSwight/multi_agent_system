@@ -414,8 +414,10 @@ SecOps LLM calls append the remediation directive when present.
 **Test status (2026-06-17):** `329` tests run, **0 failures** — suite green
 after Phase 9C remediation UX. Run: `.\mvnw.cmd test`
 
-**MIDAS MVP — feature-complete (2026-06-17).** Phases 1–8C delivered; CLI egress
+**MIDAS MVP — 100% complete (2026-06-17).** Phases 1–8C delivered; CLI egress
 deferred post-MVP. Phase 9 (9A topology + 9B prompt injection + 9C UX) complete.
+The pipeline is resilient (bounded self-healing remediation loop) and **ready for
+production End-to-End (E2E) testing**.
 
 ### Planned — Post-MVP (TBD)
 
@@ -470,7 +472,12 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 9 (9A + 9B + 9C) complete — remediation loop topology, prompt injection, and Telegram UX wired.
+**Working tree:** Clean — Phase 9 (9A + 9B + 9C) committed. MVP 100% complete;
+standby for manual production E2E testing.
+
+**Phase 9C UX decision (locked):** a single interim "Correction in progress" message
+at `CODE_GENERATION` re-entry only — no remediation notices on `TEST_GENERATION` or
+`SECOPS_AUDIT` (avoids Telegram spam while preserving transparency).
 
 **Phase 9C verification (complete):**
 
