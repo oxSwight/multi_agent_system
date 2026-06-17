@@ -1,6 +1,7 @@
 package com.midas.d3.agent.base;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.agent.AgentSystemPrompts;
 import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
@@ -140,7 +141,7 @@ public abstract class BaseMidasAgent {
 
             try {
                 String raw = llmClient.call(
-                        LlmCallRequest.of(stage, getAgentName(), getSystemPrompt(),
+                        LlmCallRequest.of(stage, getAgentName(), effectiveSystemPrompt(context),
                                 userMessage, context.getPipelineRunId()));
 
                 // ── Human-in-the-Loop early-exit ─────────────────────────────
@@ -203,6 +204,14 @@ public abstract class BaseMidasAgent {
                     "No MidasState mapping found for AgentRole [%s].".formatted(getRole()));
         }
         return stage;
+    }
+
+    private String effectiveSystemPrompt(MidasContext context) {
+        if (getRole() == ContextReducer.AgentRole.SECOPS_ENGINEER) {
+            return AgentSystemPrompts.appendProductReviewRemediation(
+                    getSystemPrompt(), context.getRemediationDirective());
+        }
+        return getSystemPrompt();
     }
 
     /**

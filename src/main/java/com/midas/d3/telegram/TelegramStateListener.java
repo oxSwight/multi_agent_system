@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
+import com.midas.d3.statemachine.PipelineContextKeys;
+import com.midas.d3.statemachine.PipelineTopology;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.statemachine.StateContext;
 import org.springframework.statemachine.listener.StateMachineListenerAdapter;
 import org.springframework.statemachine.state.State;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageText;
@@ -12,25 +15,6 @@ import org.telegram.telegrambots.meta.bots.AbsSender;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiRequestException;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-/**
- * Per-run {@link org.springframework.statemachine.listener.StateMachineListener} that
- * updates a single Telegram message with a visual progress bar as the pipeline advances.
- *
- * <h2>Progress bar format (7 segments = 7 agents)</h2>
- * <pre>
- *   [🟩⬜⬜⬜⬜⬜⬜] Агент 1: Системный Аналитик работает...
- *   [🟩🟩⬜⬜⬜⬜⬜] Агент 2: Проектирование Архитектуры...
- *   [🟩🟩🟩🟩🟩🟩🟩] ✅ Пайплайн успешно завершен!
- *   [❌ ERROR] Сбой на этапе ...
- * </pre>
- *
- * <h2>Telegram API failure resilience</h2>
- * {@link TelegramApiException}s are caught and logged; they never propagate to the
- * state machine. "Message not modified" errors (same text sent twice) are silently ignored.
- *
- * <p>Instances are created per pipeline run by {@link TelegramPipelineBot} and attached
- * via {@link com.midas.d3.statemachine.PipelineOrchestrator#startPipelineWithListener}.
- */
 @Slf4j
 public class TelegramStateListener extends StateMachineListenerAdapter<MidasState, MidasEvent> {
 
@@ -47,26 +31,33 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
         this.messageId  = messageId;
     }
 
-    // ── StateMachineListenerAdapter ───────────────────────────────────────────
-
     @Override
-    public void stateChanged(State<MidasState, MidasEvent> from,
-                             State<MidasState, MidasEvent> to) {
-        if (to == null || to.getId() == null) return;
-        MidasState state = to.getId();
+    public void stateContext(StateContext<MidasState, MidasEvent> stateContext) {
+        State<MidasState, MidasEvent> target = stateContext.getTarget();
+        if (target == null || target.getId() == null) {
+            return;
+        }
+        MidasState state = target.getId();
+        if (state.name().endsWith("_CHOICE")) {
+            return;
+        }
 
-        // Skip internal CHOICE pseudo-states — they are not meaningful to the user
-        if (state.name().endsWith("_CHOICE")) return;
+        MidasContext ctx = (MidasContext) stateContext.getExtendedState()
+                .getVariables().get(PipelineContextKeys.MIDAS_CONTEXT);
 
-        String text = renderProgress(state);
-        if (text == null) return;
+        String text = renderProgress(state, ctx);
+        if (text == null) {
+            return;
+        }
 
         editMessage(text);
     }
 
-    // ── Progress rendering ────────────────────────────────────────────────────
+    static String renderProgress(MidasState state, MidasContext ctx) {
+        if (state == MidasState.CODE_GENERATION && isRemediationPass(ctx)) {
+            return renderRemediationInProgress(ctx);
+        }
 
-    private String renderProgress(MidasState state) {
         return switch (state) {
             case SYSTEM_ANALYSIS ->
                 HEADER + "[🟩⬜⬜⬜⬜⬜⬜] <i>Агент 1 — Системный Аналитик работает...</i>";
@@ -108,11 +99,41 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
         };
     }
 
+    static boolean isRemediationPass(MidasContext ctx) {
+        return ctx != null
+                && ctx.getProductReviewRemediationAttempts() > 0
+                && ctx.getRemediationDirectiveOpt().isPresent();
+    }
+
+    static String renderRemediationInProgress(MidasContext ctx) {
+        int attempt = ctx.getProductReviewRemediationAttempts();
+        int maxAttempts = remediationMaxAttempts(ctx);
+        return HEADER + "[🟩🟩🟩🟩⬜⬜⬜]\n\n" +
+                "⚠️ <b>Контролер выявил недочеты.</b>\n" +
+                "Запущен цикл автоматического исправления (Попытка " + attempt + " из " + maxAttempts + ")...\n\n" +
+                "<i>Агент 4 — Корректировка исходного кода...</i>";
+    }
+
+    private static int remediationMaxAttempts(MidasContext ctx) {
+        JsonNode directive = ctx.getRemediationDirective();
+        if (directive != null && directive.has("max_remediation_attempts")) {
+            return directive.path("max_remediation_attempts").asInt(PipelineTopology.MAX_PRODUCT_REVIEW_REMEDIATIONS);
+        }
+        return PipelineTopology.MAX_PRODUCT_REVIEW_REMEDIATIONS;
+    }
+
     public static String renderFinalCompletion(MidasContext ctx, boolean documentDelivered) {
         StringBuilder sb = new StringBuilder();
         sb.append(HEADER).append("[🟩🟩🟩🟩🟩🟩🟩]\n\n");
         sb.append("✅ <b>Пайплайн успешно завершен!</b>\n");
         sb.append("Все 7 артефактов сгенерированы и валидированы.\n");
+        if (ctx.getProductReviewRemediationAttempts() > 0) {
+            sb.append("🔧 <i>Успешно исправлено автоматически (попытка ")
+                    .append(ctx.getProductReviewRemediationAttempts())
+                    .append(" из ")
+                    .append(remediationMaxAttempts(ctx))
+                    .append(").</i>\n");
+        }
         if (documentDelivered) {
             sb.append("📦 <b>Архив артефактов доставлен в чат.</b>\n");
         }
@@ -142,8 +163,6 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
         return null;
     }
 
-    // ── Telegram API call ─────────────────────────────────────────────────────
-
     private void editMessage(String text) {
         try {
             EditMessageText edit = EditMessageText.builder()
@@ -156,13 +175,11 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
             botSender.execute(edit);
 
         } catch (TelegramApiRequestException e) {
-            // "message is not modified" means we tried to set the same text — harmless
             if (!NOT_MODIFIED_ERROR.equals(e.getApiResponse())) {
                 log.warn("[TelegramStateListener] API error updating message [{}] in chat [{}]: {}",
                         messageId, chatId, e.getApiResponse());
             }
         } catch (TelegramApiException e) {
-            // Network timeout or other transient failure — log and continue
             log.warn("[TelegramStateListener] Failed to edit Telegram message [{}]: {}",
                     messageId, e.getMessage());
         } catch (Exception e) {

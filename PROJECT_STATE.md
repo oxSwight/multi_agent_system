@@ -397,8 +397,25 @@ a strict **PRODUCT REVIEW REMEDIATION** block appended to the LLM system prompt.
 **Scope containment:** injected prompt forbids new features and full upstream rewrites;
 agents must address only `required_changes` and `coverage_gaps` from the directive.
 
+**Test status (2026-06-17):** `326` tests run, **0 failures** — suite green
+after Phase 9B remediation prompt injection. Run: `.\mvnw.cmd test`
+
+**Phase 9C — Remediation UX & Notifications (Telegram & SecOps).**
+Users receive interim Telegram feedback when the remediation loop re-enters
+`CODE_GENERATION`, and the final completion message notes successful auto-correction.
+SecOps LLM calls append the remediation directive when present.
+
+| Layer | Files |
+| --- | --- |
+| Progress UI | `TelegramStateListener` — remediation interim renderer, final auto-correction note |
+| SecOps prompt | `BaseMidasAgent.effectiveSystemPrompt` — `appendProductReviewRemediation` for SecOps role |
+| Tests | `TelegramStateListenerTest` |
+
+**Test status (2026-06-17):** `329` tests run, **0 failures** — suite green
+after Phase 9C remediation UX. Run: `.\mvnw.cmd test`
+
 **MIDAS MVP — feature-complete (2026-06-17).** Phases 1–8C delivered; CLI egress
-deferred post-MVP. Phase 9 (9A topology + 9B prompt injection) complete.
+deferred post-MVP. Phase 9 (9A topology + 9B prompt injection + 9C UX) complete.
 
 ### Planned — Post-MVP (TBD)
 
@@ -453,7 +470,13 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 9 (9A + 9B) complete — remediation loop topology and prompt injection wired.
+**Working tree:** Phase 9 (9A + 9B + 9C) complete — remediation loop topology, prompt injection, and Telegram UX wired.
+
+**Phase 9C verification (complete):**
+
+1. `CODE_GENERATION` re-entry after Controller REJECT shows interim remediation message with attempt count.
+2. `renderFinalCompletion` appends auto-correction success note when `productReviewRemediationAttempts > 0`.
+3. `BaseMidasAgent` appends remediation directive to SecOps system prompt when directive is present.
 
 **Phase 9B verification (complete):**
 
