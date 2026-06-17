@@ -221,6 +221,56 @@ class CodeGenerationCoordinatorTest {
                 .isInstanceOf(LlmCallException.class);
     }
 
+    @Test
+    @DisplayName("CLI model appends PRODUCT REVIEW REMEDIATION block when directive is present")
+    void execute_cli_withRemediationDirective_appendsRemediationBlock() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Add export command"]}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-remediate")
+                .withTechnicalSpec(spec)
+                .withRemediationDirective(directive);
+        stubImplementationView("run-remediate", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn("""
+                {"cmd/main.go":"package main"}
+                """);
+
+        coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .startsWith(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT)
+                .contains("--- PRODUCT REVIEW REMEDIATION ---")
+                .contains("Add export command")
+                .contains("Do NOT introduce new features");
+    }
+
+    @Test
+    @DisplayName("CLI model without remediation directive uses base prompt unchanged")
+    void execute_cli_withoutRemediationDirective_usesBasePrompt() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
+        stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn("""
+                {"cmd/main.go":"package main"}
+                """);
+
+        coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
+    }
+
     private void stubImplementationView(String runId, ContextReducer.AgentRole role) {
         when(contextReducer.reduce(any(), eq(role)))
                 .thenReturn(view(runId, role.name()));

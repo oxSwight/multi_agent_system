@@ -221,6 +221,56 @@ class TestGenerationCoordinatorTest {
                 .isInstanceOf(LlmCallException.class);
     }
 
+    @Test
+    @DisplayName("CLI model appends PRODUCT REVIEW REMEDIATION block when directive is present")
+    void execute_cli_withRemediationDirective_appendsRemediationBlock() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Cover export command"]}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-remediate")
+                .withTechnicalSpec(spec)
+                .withRemediationDirective(directive);
+        stubQaView("run-remediate", ContextReducer.AgentRole.QA_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn("""
+                {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                """);
+
+        coordinator.execute(ctx, "QaAutomationAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .startsWith(AgentSystemPrompts.QA_ENGINEER_PROMPT)
+                .contains("--- PRODUCT REVIEW REMEDIATION ---")
+                .contains("Cover export command")
+                .contains("Do NOT rewrite or redesign the entire upstream architecture");
+    }
+
+    @Test
+    @DisplayName("CLI model without remediation directive uses base prompt unchanged")
+    void execute_cli_withoutRemediationDirective_usesBasePrompt() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
+        stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn("""
+                {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                """);
+
+        coordinator.execute(ctx, "QaAutomationAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.QA_ENGINEER_PROMPT);
+    }
+
     private void stubQaView(String runId, ContextReducer.AgentRole role) {
         when(contextReducer.reduce(any(), eq(role)))
                 .thenReturn(view(runId, role.name()));

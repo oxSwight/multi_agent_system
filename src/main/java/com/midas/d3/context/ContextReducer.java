@@ -89,18 +89,19 @@ public class ContextReducer {
         ARTIFACT_DEPENDENCIES.put(AgentRole.IMPLEMENTATION_ENGINEER, List.of(
                 ArtifactDependency.required("technicalSpec"),
                 ArtifactDependency.required("architectureDesign"),
-                // Integration stage is skipped for self-contained products (no external services),
-                // so its artifact is soft: omit it gracefully rather than failing the build.
-                ArtifactDependency.optional("integrationStrategy")));
+                ArtifactDependency.optional("integrationStrategy"),
+                ArtifactDependency.optional("remediationDirective")));
         ARTIFACT_DEPENDENCIES.put(AgentRole.QA_ENGINEER, List.of(
                 ArtifactDependency.required("technicalSpec"),
                 ArtifactDependency.required("architectureDesign"),
-                ArtifactDependency.required("generatedSourceCode")));
+                ArtifactDependency.required("generatedSourceCode"),
+                ArtifactDependency.optional("remediationDirective")));
         ARTIFACT_DEPENDENCIES.put(AgentRole.SECOPS_ENGINEER, List.of(
                 ArtifactDependency.required("technicalSpec"),
                 ArtifactDependency.required("architectureDesign"),
                 ArtifactDependency.required("generatedSourceCode"),
-                ArtifactDependency.required("generatedTests")));
+                ArtifactDependency.required("generatedTests"),
+                ArtifactDependency.optional("remediationDirective")));
         // The Controller is the blocking Product-Owner gate. To keep it well under token limits
         // it judges intent conformance from the original spec (business_goal + requested features)
         // and the SecOps artifacts (which carry the release_artifacts map of what was actually
@@ -268,6 +269,7 @@ public class ContextReducer {
             case "generatedSourceCode"-> ctx.getGeneratedSourceCode();
             case "generatedTests"     -> ctx.getGeneratedTests();
             case "secOpsArtifacts"    -> ctx.getSecOpsArtifacts();
+            case "remediationDirective" -> ctx.getRemediationDirective();
             default -> throw new IllegalArgumentException("Unknown artifact key: " + key);
         };
     }

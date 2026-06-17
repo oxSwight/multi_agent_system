@@ -438,22 +438,70 @@ class PipelineStateMachineTest {
     }
 
     @Test
-    @DisplayName("PRODUCT_REVIEW with REJECT verdict → ERROR with the report attached")
-    void productReview_reject_routesToErrorWithReport() {
+    @DisplayName("PRODUCT_REVIEW with REJECT verdict → CODE_GENERATION remediation loop initiated")
+    void productReview_reject_initiatesRemediationLoop() {
         drivePipelineToProductReview();
 
         sendSubmit(CONTROLLER_REJECT);
 
+        assertState(MidasState.CODE_GENERATION);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirectiveOpt()).isPresent();
+        assertThat(ctx.getRemediationDirective().get("source_verdict").asText()).isEqualTo("REJECT");
+        assertThat(ctx.getRemediationDirective().get("required_changes").isArray()).isTrue();
+        assertThat(ctx.getRemediationDirective().get("required_changes")).isNotEmpty();
+        assertThat(ctx.getGeneratedSourceCode()).isNull();
+        assertThat(ctx.getGeneratedTests()).isNull();
+        assertThat(ctx.getSecOpsArtifacts()).isNull();
+        assertThat(ctx.getTechnicalSpec()).isNotNull();
+        assertThat(ctx.getArchitectureDesign()).isNotNull();
+        assertThat(ctx.getValidationRetries()).isZero();
+        assertThat(ctx.safeAuditLog())
+                .anyMatch(e -> e.getSeverity() == com.midas.d3.context.AuditEntry.Severity.WARN);
+    }
+
+    @Test
+    @DisplayName("PRODUCT_REVIEW with second REJECT after remediation → ERROR with report attached")
+    void productReview_rejectExhausted_routesToErrorWithReport() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_REJECT);
+
         assertState(MidasState.ERROR);
         MidasContext ctx = extractContext();
-        // The conformance report is attached even on rejection so it is retrievable.
         assertThat(ctx.getProductReviewReport()).isNotNull();
         assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("REJECT");
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
         assertThat(ctx.getLastErrorMessage())
                 .contains("REJECTED")
                 .contains("Implement task assignment end-to-end (API + persistence + UI)");
         assertThat(ctx.safeAuditLog())
                 .anyMatch(e -> e.getSeverity() == com.midas.d3.context.AuditEntry.Severity.ERROR);
+    }
+
+    @Test
+    @DisplayName("PRODUCT_REVIEW REJECT → remediate → PASS reaches COMPLETED")
+    void productReview_rejectThenPass_completes() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_PASS);
+
+        assertState(MidasState.COMPLETED);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirectiveOpt()).isPresent();
+        assertThat(ctx.getProductReviewReport()).isNotNull();
+        assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("PASS");
+        assertThat(ctx.getGeneratedSourceCode()).isNotNull();
+        assertThat(ctx.getGeneratedTests()).isNotNull();
+        assertThat(ctx.getSecOpsArtifacts()).isNotNull();
     }
 
     @Test
@@ -615,6 +663,28 @@ class PipelineStateMachineTest {
         sendSubmit("""
             {
               "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void test() {} }"
+            }
+            """);
+        assertState(MidasState.SECOPS_AUDIT);
+        sendSubmit("""
+            {
+              "security_audit_report": ["No hardcoded credentials found."],
+              "Dockerfile": "FROM eclipse-temurin:21-jre\\nCOPY app.jar app.jar\\nENTRYPOINT [\\"java\\",\\"-jar\\",\\"app.jar\\"]"
+            }
+            """);
+        assertState(MidasState.PRODUCT_REVIEW);
+    }
+
+    private void drivePipelineFromCodeGeneration() {
+        sendSubmit("""
+            {
+              "src/main/java/com/example/TaskController.java": "public class TaskController { void assign() {} }"
+            }
+            """);
+        assertState(MidasState.TEST_GENERATION);
+        sendSubmit("""
+            {
+              "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void assignWorks() {} }"
             }
             """);
         assertState(MidasState.SECOPS_AUDIT);

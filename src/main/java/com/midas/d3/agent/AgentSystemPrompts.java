@@ -1,5 +1,6 @@
 package com.midas.d3.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.midas.d3.statemachine.MidasState;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -577,4 +578,23 @@ public class AgentSystemPrompts {
             - remediation_block is always present (use empty arrays rather than omitting it).
             - Output ONLY the JSON object, starting with { and ending with }.
             """;
+
+    public static String appendProductReviewRemediation(String baseSystemPrompt, JsonNode remediationDirective) {
+        if (baseSystemPrompt == null) {
+            throw new IllegalArgumentException("baseSystemPrompt must not be null");
+        }
+        if (remediationDirective == null || remediationDirective.isNull() || remediationDirective.isMissingNode()) {
+            return baseSystemPrompt;
+        }
+        return baseSystemPrompt
+                + "\n\n--- PRODUCT REVIEW REMEDIATION ---\n"
+                + "You are re-entering this stage because the Controller rejected the previous delivery.\n"
+                + "REMEDIATION DIRECTIVE (authoritative — address ONLY these items):\n"
+                + remediationDirective.toPrettyString()
+                + "\n\nSTRICT SCOPE RULES:\n"
+                + "- Fix ONLY the required_changes and coverage_gaps in the directive above.\n"
+                + "- Do NOT introduce new features beyond the original user intent and locked technical specification.\n"
+                + "- Do NOT rewrite or redesign the entire upstream architecture, technical spec, or integration strategy.\n"
+                + "- Preserve correctly implemented portions; make the minimum targeted changes needed.\n";
+    }
 }

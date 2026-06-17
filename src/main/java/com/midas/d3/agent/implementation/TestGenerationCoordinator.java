@@ -155,7 +155,7 @@ public class TestGenerationCoordinator {
                 String raw = llmClient.call(LlmCallRequest.of(
                         MidasState.TEST_GENERATION,
                         llmAgentName,
-                        systemPrompt,
+                        effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
                         context.getPipelineRunId()));
 
@@ -212,7 +212,7 @@ public class TestGenerationCoordinator {
                 String raw = llmClient.call(LlmCallRequest.of(
                         MidasState.TEST_GENERATION,
                         llmAgentName,
-                        systemPrompt,
+                        effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
                         context.getPipelineRunId()));
 
@@ -244,6 +244,11 @@ public class TestGenerationCoordinator {
                 ContextReducer.AgentRole.QA_ENGINEER,
                 MAX_PASS_RETRIES,
                 lastError);
+    }
+
+    private String effectiveSystemPrompt(MidasContext context, String baseSystemPrompt) {
+        return AgentSystemPrompts.appendProductReviewRemediation(
+                baseSystemPrompt, context.getRemediationDirective());
     }
 
     String buildUserMessage(AgentContextView view, ImplementationSurface surface) {

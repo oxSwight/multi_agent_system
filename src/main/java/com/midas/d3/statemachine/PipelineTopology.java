@@ -67,6 +67,8 @@ public class PipelineTopology {
     private static final EnumSet<MidasState> QUALITY_GATES =
             EnumSet.of(MidasState.PRODUCT_REVIEW);
 
+    public static final int MAX_PRODUCT_REVIEW_REMEDIATIONS = 1;
+
     private final List<MidasState> processingStages;
     private final List<MidasState> choiceStates;
     private final EnumMap<MidasState, MidasState> choiceByStage;
@@ -208,6 +210,20 @@ public class PipelineTopology {
      */
     public boolean isQualityGate(MidasState stage) {
         return stage != null && QUALITY_GATES.contains(stage);
+    }
+
+    public int maxProductReviewRemediations() {
+        return MAX_PRODUCT_REVIEW_REMEDIATIONS;
+    }
+
+    public boolean isProductReviewRemediationAvailable(MidasContext ctx) {
+        Objects.requireNonNull(ctx, "ctx must not be null");
+        return ctx.getProductReviewRemediationAttempts() < MAX_PRODUCT_REVIEW_REMEDIATIONS;
+    }
+
+    public boolean isProductReviewRemediationExhausted(MidasContext ctx) {
+        Objects.requireNonNull(ctx, "ctx must not be null");
+        return ctx.getProductReviewRemediationAttempts() >= MAX_PRODUCT_REVIEW_REMEDIATIONS;
     }
 
     // ── Internals ──────────────────────────────────────────────────────────────

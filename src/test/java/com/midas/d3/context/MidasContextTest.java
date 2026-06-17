@@ -16,6 +16,7 @@ class MidasContextTest {
         assertThat(ctx.getCreatedAt()).isNotNull();
         assertThat(ctx.safeAuditLog()).isEmpty();
         assertThat(ctx.getValidationRetries()).isZero();
+        assertThat(ctx.getProductReviewRemediationAttempts()).isZero();
     }
 
     @Test
@@ -82,5 +83,20 @@ class MidasContextTest {
 
         assertThat(ctx.getProductReviewReportOpt()).isPresent();
         assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("PASS");
+    }
+
+    @Test
+    void withRemediationDirective_roundTripsViaAccessor() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var directive = mapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Fix assignment"],"remediation_attempt":1}
+                """);
+        var ctx = MidasContext.start("idea", "run-001")
+                .withProductReviewRemediationAttempts(1)
+                .withRemediationDirective(directive);
+
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirectiveOpt()).isPresent();
+        assertThat(ctx.getRemediationDirective().get("source_verdict").asText()).isEqualTo("REJECT");
     }
 }

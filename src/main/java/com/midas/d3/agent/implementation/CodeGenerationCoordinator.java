@@ -162,7 +162,7 @@ public class CodeGenerationCoordinator {
                 String raw = llmClient.call(LlmCallRequest.of(
                         MidasState.CODE_GENERATION,
                         llmAgentName,
-                        systemPrompt,
+                        effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
                         context.getPipelineRunId()));
 
@@ -219,7 +219,7 @@ public class CodeGenerationCoordinator {
                 String raw = llmClient.call(LlmCallRequest.of(
                         MidasState.CODE_GENERATION,
                         llmAgentName,
-                        systemPrompt,
+                        effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
                         context.getPipelineRunId()));
 
@@ -251,6 +251,11 @@ public class CodeGenerationCoordinator {
                 ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
                 MAX_PASS_RETRIES,
                 lastError);
+    }
+
+    private String effectiveSystemPrompt(MidasContext context, String baseSystemPrompt) {
+        return AgentSystemPrompts.appendProductReviewRemediation(
+                baseSystemPrompt, context.getRemediationDirective());
     }
 
     String buildUserMessage(AgentContextView view, ImplementationSurface surface) {

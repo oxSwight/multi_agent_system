@@ -116,9 +116,9 @@ Current dependency declarations:
 | `SYSTEM_ANALYST` | — | — |
 | `SOFTWARE_ARCHITECT` | `technicalSpec` | — |
 | `INTEGRATION_ENGINEER` | `technicalSpec`, `architectureDesign` | — |
-| `IMPLEMENTATION_ENGINEER` | `technicalSpec`, `architectureDesign` | `integrationStrategy` |
-| `QA_ENGINEER` | `technicalSpec`, `architectureDesign`, `generatedSourceCode` | — |
-| `SECOPS_ENGINEER` | `technicalSpec`, `architectureDesign`, `generatedSourceCode`, `generatedTests` | — |
+| `IMPLEMENTATION_ENGINEER` | `technicalSpec`, `architectureDesign` | `integrationStrategy`, `remediationDirective` |
+| `QA_ENGINEER` | `technicalSpec`, `architectureDesign`, `generatedSourceCode` | `remediationDirective` |
+| `SECOPS_ENGINEER` | `technicalSpec`, `architectureDesign`, `generatedSourceCode`, `generatedTests` | `remediationDirective` |
 | `CONTROLLER` | `technicalSpec`, `secOpsArtifacts` | — |
 
 The serialized view is additionally guarded by a configurable size limit
@@ -210,11 +210,9 @@ Key components shipped:
 | Reducer | `ContextReducer.AgentRole.CONTROLLER` — required: `technicalSpec`, `secOpsArtifacts` |
 | Unit / SSM tests | `ControllerValidatorTest`, `ProductReviewRejectedGuardTest`, `PipelineStateMachineTest` (pass / pass-with-notes / reject / retry), `PipelineTopologyTest` |
 
-**Reject semantics (implemented, differs from original roadmap sketch):** a
-well-formed `REJECT` verdict is **terminal** — it routes to `ERROR` (not back
-into the pipeline for auto-correction). `ProductReviewRejectionAction` attaches
-the full report to context, sets `lastErrorMessage`, and appends an audit entry.
-Schema failures at the gate still follow the standard retry/exhaustion path.
+**Reject semantics (superseded by Phase 9A):** originally terminal REJECT→ERROR;
+Phase 9A adds one bounded remediation loop before terminal ERROR. Schema failures
+at the gate still follow the standard retry/exhaustion path.
 
 **Phase 3 — Remaining cleanup (handoff checklist).**
 Closed P1 test gaps (`ContextReducerTest` CONTROLLER cases,
@@ -362,15 +360,50 @@ shows packaging-in-progress until delivery completes.
 
 **Phase 8D (CLI egress) — skipped for MVP.**
 
+**Phase 9A — Remediation Loop Topology (SSM & State).**
+Bounded product-review remediation: one backward edge from `PRODUCT_CHOICE` to
+`CODE_GENERATION` when the Controller returns a well-formed `REJECT` verdict and
+remediation budget remains (`MAX_PRODUCT_REVIEW_REMEDIATIONS = 1`). A second
+`REJECT` after the loop is exhausted still terminates in `ERROR`.
+
+| Layer | Files |
+| --- | --- |
+| Context | `MidasContext.productReviewRemediationAttempts`, `remediationDirective` |
+| Topology | `PipelineTopology.MAX_PRODUCT_REVIEW_REMEDIATIONS`, remediation accessors |
+| Guards | `RemediationAvailableGuard`, `RemediationExhaustedGuard` |
+| Action | `RemediationInitAction` — invalidates stages 4–6 artifacts, builds directive, resets validation retries |
+| SSM | `PipelineStateMachineConfig` — reordered `PRODUCT_CHOICE` branches (remediate → exhaust → pass → schema retry) |
+| Tests | `PipelineStateMachineTest`, `PipelineTopologyTest`, `MidasContextTest`, guard unit tests |
+
+**Reject semantics (updated):** first well-formed `REJECT` routes to
+`CODE_GENERATION` (remediation loop); second `REJECT` routes to `ERROR`.
+Schema failures at the gate still follow the standard retry/exhaustion path.
+
+**Test status (2026-06-17):** `315` tests run, **0 failures** — suite green
+after Phase 9A remediation topology. Run: `.\mvnw.cmd test`
+
+**Phase 9B — Remediation Prompt Injection (Reducer & Coordinators).**
+Agents downstream of a product-review REJECT now receive the Controller's
+`remediationDirective` in their reduced context and — for code and test generation —
+a strict **PRODUCT REVIEW REMEDIATION** block appended to the LLM system prompt.
+
+| Layer | Files |
+| --- | --- |
+| Context slicing | `ContextReducer` — optional `remediationDirective` for `IMPLEMENTATION_ENGINEER`, `QA_ENGINEER`, `SECOPS_ENGINEER` |
+| Prompt injection | `AgentSystemPrompts.appendProductReviewRemediation`, `CodeGenerationCoordinator`, `TestGenerationCoordinator` |
+| API exposure | `PipelineContextResponse` — `productReviewRemediationAttempts`, `remediationDirective` |
+| Tests | `ContextReducerTest`, `CodeGenerationCoordinatorTest`, `TestGenerationCoordinatorTest`, `PipelineContextResponseTest` |
+
+**Scope containment:** injected prompt forbids new features and full upstream rewrites;
+agents must address only `required_changes` and `coverage_gaps` from the directive.
+
 **MIDAS MVP — feature-complete (2026-06-17).** Phases 1–8C delivered; CLI egress
-deferred post-MVP.
+deferred post-MVP. Phase 9 (9A topology + 9B prompt injection) complete.
 
 ### Planned — Post-MVP (TBD)
 
 > **Branch:** `main`
-> **Candidates:** Further dynamic routing, HITL Controller feedback loop.
-
-### Next Up (Post Phase 5)
+> **Next:** Human-in-the-loop review of Controller REJECT reports before pipeline reset.
 
 - Human-in-the-loop review of Controller REJECT reports before pipeline reset.
 - Extend dynamic routing to additional skip-eligible stages if product rules emerge.
@@ -420,7 +453,20 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 8B + 8C complete — MIDAS MVP feature-complete.
+**Working tree:** Phase 9 (9A + 9B) complete — remediation loop topology and prompt injection wired.
+
+**Phase 9B verification (complete):**
+
+1. `remediationDirective` included in reduced context for Implementation, QA, and SecOps roles when present; omitted gracefully when absent.
+2. `CodeGenerationCoordinator` / `TestGenerationCoordinator` append `--- PRODUCT REVIEW REMEDIATION ---` to system prompt when directive is set.
+3. `GET /api/v1/pipelines/{runId}/context` exposes `productReviewRemediationAttempts` and `remediationDirective`.
+
+**Phase 9A verification (complete):**
+
+1. First `PRODUCT_REVIEW` `REJECT` → `CODE_GENERATION` with `remediationDirective` and downstream artifacts nulled.
+2. `productReviewRemediationAttempts` increments to 1; upstream intent artifacts preserved.
+3. Second `REJECT` after re-running stages 4→7 → `ERROR` with report attached.
+4. `REJECT → remediate → PASS` path reaches `COMPLETED` (contract test in `PipelineStateMachineTest`).
 
 **Phase 8B verification (complete):**
 
@@ -453,9 +499,8 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
    `QA_ENGINEER_PROMPT`.
 5. SSM topology unchanged — routing is internal to the coordinators.
 
-**Do not** change REJECT→ERROR semantics unless product owner explicitly
-requests a feedback-loop design; current behaviour is intentional and covered
-by `PipelineStateMachineTest` + `ProductReviewRejectedGuardTest`.
+**Do not** change remediation cap or REJECT branch ordering without updating
+`PipelineStateMachineTest`, guard tests, and `PipelineControllerIT`.
 
 ---
 

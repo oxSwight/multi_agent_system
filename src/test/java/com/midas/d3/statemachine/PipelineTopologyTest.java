@@ -199,6 +199,30 @@ class PipelineTopologyTest {
     }
 
     @Test
+    @DisplayName("MAX_PRODUCT_REVIEW_REMEDIATIONS is 1")
+    void maxProductReviewRemediationsIsOne() {
+        assertThat(PipelineTopology.MAX_PRODUCT_REVIEW_REMEDIATIONS).isEqualTo(1);
+        assertThat(topology.maxProductReviewRemediations()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("remediation available when attempts are below the cap")
+    void remediationAvailableWhenBelowCap() {
+        var ctx = MidasContext.start("idea", "run-001");
+        assertThat(topology.isProductReviewRemediationAvailable(ctx)).isTrue();
+        assertThat(topology.isProductReviewRemediationExhausted(ctx)).isFalse();
+    }
+
+    @Test
+    @DisplayName("remediation exhausted when attempts reach the cap")
+    void remediationExhaustedAtCap() {
+        var ctx = MidasContext.start("idea", "run-001")
+                .withProductReviewRemediationAttempts(1);
+        assertThat(topology.isProductReviewRemediationAvailable(ctx)).isFalse();
+        assertThat(topology.isProductReviewRemediationExhausted(ctx)).isTrue();
+    }
+
+    @Test
     @DisplayName("exposed collections are immutable defensive views")
     void exposedCollectionsAreImmutable() {
         assertThatThrownBy(() -> topology.processingStages().add(MidasState.IDLE))

@@ -135,6 +135,78 @@ class ContextReducerTest {
     }
 
     @Test
+    void reduce_implementationEngineer_withRemediationDirective_includesDirective() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"CLIENT_ONLY\"}");
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Add login"],"coverage_gaps":[]}
+                """);
+        var ctx = MidasContext.start("Build an app", "run-001")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withRemediationDirective(directive);
+
+        var view = reducer.reduce(ctx, ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        assertThat(view.safeArtifacts())
+                .containsKey("remediationDirective")
+                .containsEntry("remediationDirective", directive);
+    }
+
+    @Test
+    void reduce_implementationEngineer_withoutRemediationDirective_omitsGracefully() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"CLIENT_ONLY\"}");
+        var ctx = MidasContext.start("Build an app", "run-001")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch);
+
+        var view = reducer.reduce(ctx, ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        assertThat(view.safeArtifacts()).doesNotContainKey("remediationDirective");
+    }
+
+    @Test
+    void reduce_qaEngineer_withRemediationDirective_includesDirective() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var source = objectMapper.readTree("{\"App.java\":\"public class App {}\"}");
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Cover login flow"]}
+                """);
+        var ctx = MidasContext.start("Build an app", "run-001")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withGeneratedSourceCode(source)
+                .withRemediationDirective(directive);
+
+        var view = reducer.reduce(ctx, ContextReducer.AgentRole.QA_ENGINEER);
+
+        assertThat(view.safeArtifacts()).containsKey("remediationDirective");
+    }
+
+    @Test
+    void reduce_secOpsEngineer_withRemediationDirective_includesDirective() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var source = objectMapper.readTree("{\"App.java\":\"public class App {}\"}");
+        var tests = objectMapper.readTree("{\"AppTest.java\":\"class AppTest {}\"}");
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Harden auth endpoints"]}
+                """);
+        var ctx = MidasContext.start("Build an app", "run-001")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withGeneratedSourceCode(source)
+                .withGeneratedTests(tests)
+                .withRemediationDirective(directive);
+
+        var view = reducer.reduce(ctx, ContextReducer.AgentRole.SECOPS_ENGINEER);
+
+        assertThat(view.safeArtifacts()).containsKey("remediationDirective");
+    }
+
+    @Test
     void reduce_implementationPass_clientSlice_omitsServerFileLayout() throws Exception {
         var spec = objectMapper.readTree("""
                 {"runtime_environment":{"execution_model":"HYBRID"}}
@@ -163,6 +235,27 @@ class ContextReducerTest {
                 .isEqualTo("manifest.json");
         assertThat(view.safeArtifacts().get("architectureDesign").get("api_contracts"))
                 .isEmpty();
+    }
+
+    @Test
+    void reduce_implementationPass_withRemediationDirective_preservesDirective() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var arch = objectMapper.readTree("""
+                {"architecture_style":"CLIENT_SERVER","file_layout":["manifest.json","App.java"]}
+                """);
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Fix popup UX"]}
+                """);
+        var ctx = MidasContext.start("Build hybrid", "run-remediate")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withRemediationDirective(directive);
+
+        var view = reducer.reduceImplementationPass(ctx, ImplementationSurface.CLIENT);
+
+        assertThat(view.safeArtifacts()).containsKey("remediationDirective");
     }
 
     @Test

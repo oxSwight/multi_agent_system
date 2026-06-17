@@ -28,6 +28,8 @@ public record PipelineContextResponse(
         JsonNode generatedTests,
         JsonNode secOpsArtifacts,
         JsonNode productReviewReport,
+        int productReviewRemediationAttempts,
+        JsonNode remediationDirective,
         List<AuditEntry> auditLog
 ) {
     /**
@@ -49,6 +51,8 @@ public record PipelineContextResponse(
                 ctx.getGeneratedTests(),
                 ctx.getSecOpsArtifacts(),
                 ctx.getProductReviewReport(),
+                ctx.getProductReviewRemediationAttempts(),
+                ctx.getRemediationDirective(),
                 ctx.safeAuditLog()
         );
     }

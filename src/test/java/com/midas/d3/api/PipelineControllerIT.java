@@ -578,13 +578,18 @@ class PipelineControllerIT {
     }
 
     @Test
-    @DisplayName("PRODUCT_REVIEW REJECT → ERROR with productReviewReport attached")
+    @DisplayName("PRODUCT_REVIEW first REJECT → CODE_GENERATION remediation; second REJECT → ERROR")
     void productReview_reject_routesToErrorWithReport() {
         String runId = startRun("Build a full-stack task management system");
         try {
             submit(runId, VALID_TECH_SPEC,    "ARCHITECTURE_DESIGN");
             submit(runId, VALID_ARCHITECTURE, "INTEGRATION_STRATEGY");
             submit(runId, VALID_INTEGRATION,  "CODE_GENERATION");
+            submit(runId, VALID_CODE_GEN,     "TEST_GENERATION");
+            submit(runId, VALID_TESTS,        "SECOPS_AUDIT");
+            submit(runId, VALID_SECOPS,       "PRODUCT_REVIEW");
+            submit(runId, REJECT_CONTROLLER,  "CODE_GENERATION");
+
             submit(runId, VALID_CODE_GEN,     "TEST_GENERATION");
             submit(runId, VALID_TESTS,        "SECOPS_AUDIT");
             submit(runId, VALID_SECOPS,       "PRODUCT_REVIEW");

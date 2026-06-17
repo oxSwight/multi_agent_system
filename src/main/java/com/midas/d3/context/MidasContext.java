@@ -83,6 +83,10 @@ public final class MidasContext {
      */
     @With private final JsonNode productReviewReport;
 
+    @With private final int productReviewRemediationAttempts;
+
+    @With private final JsonNode remediationDirective;
+
     // ── Telegram Integration ─────────────────────────────────────────────────
 
     /**
@@ -126,6 +130,7 @@ public final class MidasContext {
                 .createdAt(Instant.now())
                 .auditLog(Collections.emptyList())
                 .validationRetries(0)
+                .productReviewRemediationAttempts(0)
                 .build();
     }
 
@@ -157,6 +162,10 @@ public final class MidasContext {
 
     public Optional<JsonNode> getProductReviewReportOpt() {
         return Optional.ofNullable(productReviewReport);
+    }
+
+    public Optional<JsonNode> getRemediationDirectiveOpt() {
+        return Optional.ofNullable(remediationDirective);
     }
 
     /** Returns an immutable copy of the audit log; never null. */

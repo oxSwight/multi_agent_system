@@ -1,7 +1,8 @@
 package com.midas.d3.statemachine;
 
 import com.midas.d3.statemachine.action.*;
-import com.midas.d3.statemachine.guard.ProductReviewRejectedGuard;
+import com.midas.d3.statemachine.guard.RemediationAvailableGuard;
+import com.midas.d3.statemachine.guard.RemediationExhaustedGuard;
 import com.midas.d3.statemachine.guard.RetriesExhaustedGuard;
 import com.midas.d3.statemachine.guard.SkipIntegrationStageGuard;
 import com.midas.d3.statemachine.guard.ValidationSucceededGuard;
@@ -68,13 +69,15 @@ public class PipelineStateMachineConfig
     private final ValidationSucceededGuard   validationSucceededGuard;
     private final SkipIntegrationStageGuard  skipIntegrationStageGuard;
     private final RetriesExhaustedGuard      retriesExhaustedGuard;
-    private final ProductReviewRejectedGuard productReviewRejectedGuard;
+    private final RemediationAvailableGuard  remediationAvailableGuard;
+    private final RemediationExhaustedGuard  remediationExhaustedGuard;
     private final InitContextAction          initContextAction;
     private final ValidateAndCaptureAction   validateAndCaptureAction;
     private final StoreArtifactAction        storeArtifactAction;
     private final IncrementRetryAction       incrementRetryAction;
     private final PipelineErrorAction        pipelineErrorAction;
     private final ProductReviewRejectionAction productReviewRejectionAction;
+    private final RemediationInitAction      remediationInitAction;
     private final AgentEntryAction           agentEntryAction;
     private final CriticalFailureAction      criticalFailureAction;
     private final PipelineCompletionAction   completionAction;
@@ -141,12 +144,10 @@ public class PipelineStateMachineConfig
                     .and();
 
             if (topology.isQualityGate(stage)) {
-                // Blocking quality gate: an extra FIRST branch sends a well-formed REJECT verdict
-                // straight to ERROR (with the report attached). A passing verdict then advances
-                // normally; schema failures fall through to the standard retry/exhaustion branches.
                 t = t.withChoice()
                         .source(choice)
-                        .first(MidasState.ERROR, productReviewRejectedGuard, productReviewRejectionAction)
+                        .first(MidasState.CODE_GENERATION, remediationAvailableGuard, remediationInitAction)
+                        .then(MidasState.ERROR, remediationExhaustedGuard, productReviewRejectionAction)
                         .then(next, validationSucceededGuard, storeArtifactAction)
                         .then(MidasState.ERROR, retriesExhaustedGuard, pipelineErrorAction)
                         .last(stage, incrementRetryAction)
