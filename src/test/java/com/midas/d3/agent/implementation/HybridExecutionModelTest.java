@@ -51,4 +51,28 @@ class HybridExecutionModelTest {
         var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
         assertThat(HybridExecutionModel.isHybrid(spec)).isFalse();
     }
+
+    @Test
+    @DisplayName("singlePassSurface maps CLIENT_SIDE and SERVER_SIDE to surfaces")
+    void singlePassSurface_mapsExecutionModels() throws Exception {
+        var clientSpec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLIENT_SIDE"}}
+                """);
+        var serverSpec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"SERVER_SIDE"}}
+                """);
+        var hybridSpec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var cliSpec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+
+        assertThat(HybridExecutionModel.singlePassSurface(clientSpec))
+                .contains(ImplementationSurface.CLIENT);
+        assertThat(HybridExecutionModel.singlePassSurface(serverSpec))
+                .contains(ImplementationSurface.SERVER);
+        assertThat(HybridExecutionModel.singlePassSurface(hybridSpec)).isEmpty();
+        assertThat(HybridExecutionModel.singlePassSurface(cliSpec)).isEmpty();
+    }
 }

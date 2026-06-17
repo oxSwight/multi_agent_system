@@ -59,13 +59,32 @@ public class TestGenerationCoordinator {
         if (HybridExecutionModel.isHybrid(context)) {
             return executeHybridFanOut(context, agentName, validator);
         }
-        return executeSinglePass(
-                context,
-                agentName,
-                AgentSystemPrompts.QA_ENGINEER_PROMPT,
-                contextReducer.reduce(context, ContextReducer.AgentRole.QA_ENGINEER),
-                validator,
-                agentName);
+        return HybridExecutionModel.singlePassSurface(context)
+                .map(surface -> executeSurfaceSinglePass(context, agentName, surface, validator))
+                .orElseGet(() -> executeSinglePass(
+                        context,
+                        agentName,
+                        AgentSystemPrompts.QA_ENGINEER_PROMPT,
+                        contextReducer.reduce(context, ContextReducer.AgentRole.QA_ENGINEER),
+                        validator,
+                        agentName));
+    }
+
+    private AgentResult executeSurfaceSinglePass(MidasContext context,
+                                                 String agentName,
+                                                 ImplementationSurface surface,
+                                                 GoalKeeperValidator validator) {
+        String systemPrompt = surface == ImplementationSurface.CLIENT
+                ? AgentSystemPrompts.HYBRID_CLIENT_QA_PROMPT
+                : AgentSystemPrompts.HYBRID_SERVER_QA_PROMPT;
+        PassResult pass = executePass(context, surface, systemPrompt, agentName, validator);
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(pass.validated());
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize " + surface + " test map.", e);
+        }
+        return new AgentResult(pass.validated(), json, pass.attemptsUsed());
     }
 
     private AgentResult executeHybridFanOut(MidasContext context,

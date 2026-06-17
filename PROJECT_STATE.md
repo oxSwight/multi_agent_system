@@ -300,7 +300,25 @@ fan-out is internal to `TEST_GENERATION`.
 **Test status (2026-06-17):** `281` tests run, **0 failures** — suite green
 after Phase 6B HYBRID test fan-out. Run: `.\mvnw.cmd test`
 
-### Planned — Phase 6C+ (TBD)
+**Phase 7A — Execution-Model Surface Routing.**
+`CLIENT_SIDE` and `SERVER_SIDE` projects now route through a single bounded
+surface pass at both `CODE_GENERATION` and `TEST_GENERATION`, using the same
+`HYBRID_CLIENT_*` / `HYBRID_SERVER_*` prompts and context slicing as the HYBRID
+fan-out passes (`ArchitectureSurfaceSlicer` for architecture; `SourceMapSlicer`
+for QA source filtering). `HYBRID` retains parallel client/server fan-out;
+`CLI` retains the generic single-pass prompts. SSM topology unchanged.
+
+| Layer | Files |
+| --- | --- |
+| Detection | `HybridExecutionModel.singlePassSurface(ctx)` |
+| Orchestration | `CodeGenerationCoordinator`, `TestGenerationCoordinator` — surface-routed single pass |
+| Context slicing | `ContextReducer.reduceImplementationPass`, `reduceTestGenerationPass` (reused) |
+| Unit tests | `CodeGenerationCoordinatorTest`, `TestGenerationCoordinatorTest`, `HybridExecutionModelTest` |
+
+**Test status (2026-06-17):** `287` tests run, **0 failures** — suite green
+after Phase 7A surface routing. Run: `.\mvnw.cmd test`
+
+### Planned — Phase 6C+ / 7B (TBD)
 
 > **Branch:** `main`
 > **Candidates:** Further dynamic routing, HITL Controller feedback loop.
@@ -355,19 +373,18 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 6B complete — TEST_GENERATION HYBRID fan-out verified.
+**Working tree:** Phase 7A complete — execution-model surface routing verified.
 
-**Phase 6B verification (complete):**
+**Phase 7A verification (complete):**
 
-1. HYBRID projects trigger two concurrent QA passes at `TEST_GENERATION` with
-   `SourceMapSlicer`-filtered source and merged `generatedTests`.
-2. Non-HYBRID projects still use a single QA pass (no regression).
-3. Client pass uses `HYBRID_CLIENT_QA_PROMPT` (Jest/jsdom); server pass uses
-   `HYBRID_SERVER_QA_PROMPT` (JUnit 5 + Mockito + RestAssured).
-4. Merge rejects duplicate test paths across client/server passes.
-5. SSM topology unchanged — fan-out is internal to `TEST_GENERATION`.
-6. Non-retryable `LlmCallException` from either pass surfaces immediately via
-   `awaitAll` unwrapping — no hang.
+1. `CLIENT_SIDE` routes to a single client-surface pass with `HYBRID_CLIENT_*` prompts
+   and sliced architecture/source context at both `CODE_GENERATION` and `TEST_GENERATION`.
+2. `SERVER_SIDE` routes to a single server-surface pass with `HYBRID_SERVER_*` prompts
+   (JUnit/RestAssured QA without front-end noise).
+3. `HYBRID` unchanged — parallel client/server fan-out with merge.
+4. `CLI` unchanged — generic single pass with `IMPLEMENTATION_ENGINEER_PROMPT` /
+   `QA_ENGINEER_PROMPT`.
+5. SSM topology unchanged — routing is internal to the coordinators.
 
 **Do not** change REJECT→ERROR semantics unless product owner explicitly
 requests a feedback-loop design; current behaviour is intentional and covered

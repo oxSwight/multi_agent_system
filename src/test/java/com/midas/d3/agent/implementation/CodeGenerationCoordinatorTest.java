@@ -67,13 +67,14 @@ class CodeGenerationCoordinatorTest {
     }
 
     @Test
-    @DisplayName("non-HYBRID model executes a single LLM pass")
-    void execute_nonHybrid_singlePass() throws Exception {
+    @DisplayName("SERVER_SIDE model executes a single surface-routed pass with server prompt")
+    void execute_serverSide_surfaceRoutedSinglePass() throws Exception {
         var spec = objectMapper.readTree("""
                 {"runtime_environment":{"execution_model":"SERVER_SIDE"}}
                 """);
         var ctx = MidasContext.start("Build API", "run-001").withTechnicalSpec(spec);
-        stubImplementationView("run-001", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
+                .thenReturn(view("run-001", "IMPLEMENTATION_ENGINEER_SERVER"));
 
         when(llmClient.call(any())).thenReturn("""
                 {"src/main/java/com/example/App.java":"public class App {}"}
@@ -81,8 +82,61 @@ class CodeGenerationCoordinatorTest {
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
-        verify(llmClient, times(1)).call(any());
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
+        verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER));
         assertThat(result.validatedOutput().has("src/main/java/com/example/App.java")).isTrue();
+        assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CLIENT_SIDE model executes a single surface-routed pass with client prompt")
+    void execute_clientSide_surfaceRoutedSinglePass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLIENT_SIDE"}}
+                """);
+        var ctx = MidasContext.start("Build extension", "run-client").withTechnicalSpec(spec);
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
+                .thenReturn(view("run-client", "IMPLEMENTATION_ENGINEER_CLIENT"));
+
+        when(llmClient.call(any())).thenReturn("""
+                {"manifest.json":"{}", "src/popup.ts":"export const ok = true;"}
+                """);
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT);
+        verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT));
+        assertThat(result.validatedOutput().has("manifest.json")).isTrue();
+        assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CLI model executes a single generic LLM pass")
+    void execute_cli_genericSinglePass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
+        stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn("""
+                {"cmd/main.go":"package main"}
+                """);
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
+        verify(contextReducer).reduce(any(), eq(ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER));
+        assertThat(result.validatedOutput().has("cmd/main.go")).isTrue();
         assertThat(result.attemptsUsed()).isEqualTo(1);
     }
 

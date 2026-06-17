@@ -67,13 +67,14 @@ class TestGenerationCoordinatorTest {
     }
 
     @Test
-    @DisplayName("non-HYBRID model executes a single LLM pass")
-    void execute_nonHybrid_singlePass() throws Exception {
+    @DisplayName("SERVER_SIDE model executes a single surface-routed pass with server prompt")
+    void execute_serverSide_surfaceRoutedSinglePass() throws Exception {
         var spec = objectMapper.readTree("""
                 {"runtime_environment":{"execution_model":"SERVER_SIDE"}}
                 """);
         var ctx = MidasContext.start("Build API", "run-001").withTechnicalSpec(spec);
-        stubQaView("run-001", ContextReducer.AgentRole.QA_ENGINEER);
+        when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
+                .thenReturn(view("run-001", "QA_ENGINEER_SERVER"));
 
         when(llmClient.call(any())).thenReturn("""
                 {"src/test/java/com/example/AppTest.java":"class AppTest { @Test void ok() {} }"}
@@ -81,8 +82,61 @@ class TestGenerationCoordinatorTest {
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
 
-        verify(llmClient, times(1)).call(any());
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_QA_PROMPT);
+        verify(contextReducer).reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER));
         assertThat(result.validatedOutput().has("src/test/java/com/example/AppTest.java")).isTrue();
+        assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CLIENT_SIDE model executes a single surface-routed pass with client prompt")
+    void execute_clientSide_surfaceRoutedSinglePass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLIENT_SIDE"}}
+                """);
+        var ctx = MidasContext.start("Build extension", "run-client").withTechnicalSpec(spec);
+        when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
+                .thenReturn(view("run-client", "QA_ENGINEER_CLIENT"));
+
+        when(llmClient.call(any())).thenReturn("""
+                {"src/popup.test.ts":"describe('popup', () => { it('works', () => expect(true).toBe(true)); });"}
+                """);
+
+        AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.HYBRID_CLIENT_QA_PROMPT);
+        verify(contextReducer).reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.CLIENT));
+        assertThat(result.validatedOutput().has("src/popup.test.ts")).isTrue();
+        assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CLI model executes a single generic LLM pass")
+    void execute_cli_genericSinglePass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
+        stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn("""
+                {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                """);
+
+        AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.QA_ENGINEER_PROMPT);
+        verify(contextReducer).reduce(any(), eq(ContextReducer.AgentRole.QA_ENGINEER));
+        assertThat(result.validatedOutput().has("cmd/main_test.go")).isTrue();
         assertThat(result.attemptsUsed()).isEqualTo(1);
     }
 

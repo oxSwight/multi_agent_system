@@ -66,13 +66,32 @@ public class CodeGenerationCoordinator {
         if (HybridExecutionModel.isHybrid(context)) {
             return executeHybridFanOut(context, agentName, validator);
         }
-        return executeSinglePass(
-                context,
-                agentName,
-                AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT,
-                contextReducer.reduce(context, ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER),
-                validator,
-                "ImplementationEngineer");
+        return HybridExecutionModel.singlePassSurface(context)
+                .map(surface -> executeSurfaceSinglePass(context, agentName, surface, validator))
+                .orElseGet(() -> executeSinglePass(
+                        context,
+                        agentName,
+                        AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT,
+                        contextReducer.reduce(context, ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER),
+                        validator,
+                        "ImplementationEngineer"));
+    }
+
+    private AgentResult executeSurfaceSinglePass(MidasContext context,
+                                                 String agentName,
+                                                 ImplementationSurface surface,
+                                                 GoalKeeperValidator validator) {
+        String systemPrompt = surface == ImplementationSurface.CLIENT
+                ? AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT
+                : AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT;
+        PassResult pass = executePass(context, surface, systemPrompt, agentName, validator);
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(pass.validated());
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize " + surface + " source map.", e);
+        }
+        return new AgentResult(pass.validated(), json, pass.attemptsUsed());
     }
 
     private AgentResult executeHybridFanOut(MidasContext context,
