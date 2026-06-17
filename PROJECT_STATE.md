@@ -239,16 +239,12 @@ the Integration stage. Covered by `PipelineTopologyTest`,
 **Test status (2026-06-17):** `257` tests run, **0 failures** — suite green
 after Phase 4 strict-schema finalization. Run: `.\mvnw.cmd test`
 
-### In Progress — Phase 5 (HYBRID Implementation Fan-Out)
-
-> **Branch:** `main`
-> **Test status (2026-06-17):** `273` tests run, **0 failures** — suite green
-> after HYBRID fan-out implementation. Run: `.\mvnw.cmd test`
-
+**Phase 5 — HYBRID Implementation Fan-Out.**
 When `runtime_environment.execution_model` is `HYBRID`, `CODE_GENERATION` forks
 into two bounded internal LLM passes (client surface, then server surface) inside
 `CodeGenerationCoordinator`. Non-HYBRID models (`CLIENT_SIDE`, `SERVER_SIDE`, `CLI`)
 bypass the fork and use the standard single-pass `IMPLEMENTATION_ENGINEER_PROMPT`.
+The state machine topology is unchanged — fan-out is internal to `CODE_GENERATION`.
 
 Key components:
 
@@ -261,7 +257,13 @@ Key components:
 | Prompts | `HYBRID_CLIENT_IMPLEMENTATION_PROMPT`, `HYBRID_SERVER_IMPLEMENTATION_PROMPT` |
 | Unit tests | `HybridExecutionModelTest`, `ArchitectureSurfaceSlicerTest`, `ImplementationSourceMergerTest`, `CodeGenerationCoordinatorTest`, `ContextReducerTest`, `PipelineTopologyTest`, `AgentOrchestrationServiceTest` |
 
-Awaiting product-owner verification before merge.
+**Test status (2026-06-17):** `273` tests run, **0 failures** — suite green
+after Phase 5 HYBRID fan-out. Run: `.\mvnw.cmd test`
+
+### In Progress — Phase 6 (TBD)
+
+> **Branch:** `main`
+> **Candidates:** parallel HYBRID implementation passes; TEST_GENERATION fan-out for HYBRID projects.
 
 ### Next Up (Post Phase 5)
 
@@ -313,15 +315,17 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 5 HYBRID fan-out implemented; awaiting verification.
+**Working tree:** Phase 5 complete; Phase 6 evaluation in progress.
 
-**What the next agent / reviewer should verify:**
+**Phase 5 verification (complete):**
 
 1. HYBRID projects (`execution_model: HYBRID` on technical spec) trigger two LLM
    passes at `CODE_GENERATION` with sliced context and merged `generatedSourceCode`.
 2. Non-HYBRID projects still use a single implementation pass (no regression).
 3. Merge rejects duplicate file paths across client/server passes.
 4. SSM topology unchanged — fan-out is internal to `CODE_GENERATION`; no backward loops.
+
+**Phase 6 focus:** evaluate parallel HYBRID passes and/or TEST_GENERATION fan-out.
 
 **Do not** change REJECT→ERROR semantics unless product owner explicitly
 requests a feedback-loop design; current behaviour is intentional and covered
