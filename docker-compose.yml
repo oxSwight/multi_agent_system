@@ -1,0 +1,100 @@
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # PostgreSQL 16 — persistent data store
+  # ──────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: midas_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: midas_db
+      POSTGRES_USER: ${MIDAS_DB_USERNAME:-midas}
+      POSTGRES_PASSWORD: ${MIDAS_DB_PASSWORD:?MIDAS_DB_PASSWORD must be set}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - midas_pgdata:/var/lib/postgresql/data
+    networks:
+      - midas-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MIDAS_DB_USERNAME:-midas} -d midas_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ──────────────────────────────────────────────────────────
+  # Spring Boot backend
+  # ──────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: midas_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      # Database
+      MIDAS_DB_URL: jdbc:postgresql://db:5432/midas_db
+      MIDAS_DB_USERNAME: ${MIDAS_DB_USERNAME:-midas}
+      MIDAS_DB_PASSWORD: ${MIDAS_DB_PASSWORD:?MIDAS_DB_PASSWORD must be set}
+
+      # Security
+      MIDAS_JWT_SECRET: ${MIDAS_JWT_SECRET:?MIDAS_JWT_SECRET must be set}
+
+      # Gemini LLM
+      MIDAS_LLM_BASE_URL: ${MIDAS_LLM_BASE_URL:-https://generativelanguage.googleapis.com}
+      MIDAS_LLM_API_KEY: ${MIDAS_LLM_API_KEY:-}
+      MIDAS_LLM_MODEL: ${MIDAS_LLM_MODEL:-gemini-2.0-flash}
+
+      # Nous / OpenAI-compatible LLM
+      MIDAS_NOUS_BASE_URL: ${MIDAS_NOUS_BASE_URL:-http://localhost:1234}
+      MIDAS_NOUS_API_KEY: ${MIDAS_NOUS_API_KEY:-}
+      MIDAS_NOUS_MODEL: ${MIDAS_NOUS_MODEL:-nous-hermes-2-mistral-7b-dpo}
+      MIDAS_NOUS_TIMEOUT_SECONDS: ${MIDAS_NOUS_TIMEOUT_SECONDS:-120}
+      MIDAS_NOUS_MAX_RETRIES: ${MIDAS_NOUS_MAX_RETRIES:-2}
+
+      # Scheduler
+      MIDAS_EVOLUTION_CRON: ${MIDAS_EVOLUTION_CRON:-0 0 * * * *}
+
+      # Telegram (optional)
+      MIDAS_TELEGRAM_ENABLED: ${MIDAS_TELEGRAM_ENABLED:-false}
+      MIDAS_TELEGRAM_BOT_USERNAME: ${MIDAS_TELEGRAM_BOT_USERNAME:-midas_pipeline_bot}
+      MIDAS_TELEGRAM_BOT_TOKEN: ${MIDAS_TELEGRAM_BOT_TOKEN:-}
+    networks:
+      - midas-network
+
+  # ──────────────────────────────────────────────────────────
+  # Next.js frontend dashboard
+  # ──────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./midas-dashboard
+      dockerfile: Dockerfile
+      args:
+        # Baked into the JS bundle at build time by Next.js.
+        # Change to your VPS domain/IP for production.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+    container_name: midas_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    networks:
+      - midas-network
+
+# ──────────────────────────────────────────────────────────
+# Named volumes & networks
+# ──────────────────────────────────────────────────────────
+volumes:
+  midas_pgdata:
+    driver: local
+
+networks:
+  midas-network:
+    driver: bridge

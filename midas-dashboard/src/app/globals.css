@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base resets & custom properties ─────────────────────────────────────── */
+:root {
+  --bg:         #080812;
+  --surface:    #0d0d1f;
+  --card:       #111127;
+  --border:     #1e1e3a;
+  --accent:     #6366f1;
+  --accent-dim: rgba(99, 102, 241, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg);
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar styling ────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+::-webkit-scrollbar-thumb {
+  background: #2d2d5a;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* ── Pulsing animation for WAITING_FOR_USER_INPUT status ──────────────────── */
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+  50%       { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+}
+.badge-pulse {
+  animation: badge-pulse 2s ease-in-out infinite;
+}
+
+/* ── Spin for running indicator ───────────────────────────────────────────── */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spin-slow {
+  animation: spin-slow 1.5s linear infinite;
+}
+
+/* ── Code / pre blocks inside agent outputs ───────────────────────────────── */
+.agent-output {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #c4c4e0;
+}
+
+/* ── JSON syntax token colors ─────────────────────────────────────────────── */
+.json-key     { color: #7dd3fc; }    /* light blue   */
+.json-string  { color: #86efac; }    /* light green  */
+.json-number  { color: #fda4af; }    /* soft rose    */
+.json-bool    { color: #c4b5fd; }    /* light purple */
+.json-null    { color: #94a3b8; }    /* gray         */
+
+/* ── Inline code markers ──────────────────────────────────────────────────── */
+.code-block   { color: #e2e8f0; }
+.code-fence   { color: #64748b; font-style: italic; }
+
+/* ── Fade-in page transition ─────────────────────────────────────────────── */
+.page-enter {
+  animation: fadeIn 0.25s ease-out both;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

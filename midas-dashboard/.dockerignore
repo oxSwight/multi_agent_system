@@ -1,0 +1,16 @@
+# Frontend .dockerignore
+# Keeps the build context lean — node_modules are installed
+# fresh inside the container by the deps stage.
+
+node_modules/
+.next/
+.env*
+.env.local
+.env.*.local
+Dockerfile*
+.dockerignore
+.git/
+.gitignore
+.vscode/
+*.md
+README*

@@ -1,0 +1,41 @@
+version: '3.9'
+
+# ── MIDAS Database Infrastructure ─────────────────────────────────────────────
+# Starts a local PostgreSQL instance for development and manual integration tests.
+#
+# Usage:
+#   docker compose -f docker-compose-db.yml up -d     # start in background
+#   docker compose -f docker-compose-db.yml down      # stop and remove containers
+#   docker compose -f docker-compose-db.yml down -v   # stop and delete data volume
+#
+# The application connects via the settings defined in application.yml:
+#   spring.datasource.url=jdbc:postgresql://localhost:5432/midas_db
+#   spring.datasource.username=midas
+#   spring.datasource.password=password
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: midas_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: midas_db
+      POSTGRES_USER: midas
+      POSTGRES_PASSWORD: password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - midas_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U midas -d midas_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  midas_pgdata:
+    driver: local

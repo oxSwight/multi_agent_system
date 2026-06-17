@@ -1,0 +1,97 @@
+spring:
+  application:
+    name: midas-d3
+
+  # ── Datasource (PostgreSQL) ───────────────────────────────────────────────
+  datasource:
+    url: ${MIDAS_DB_URL:jdbc:postgresql://localhost:5432/midas_db}
+    username: ${MIDAS_DB_USERNAME:midas}
+    password: ${MIDAS_DB_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: MidasHikariPool
+
+  # ── JPA / Hibernate ───────────────────────────────────────────────────────
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      # Schema is EXCLUSIVELY managed by Flyway migrations.
+      # ddl-auto=validate ensures Hibernate verifies entity mappings against the
+      # actual schema on startup without altering it — any mismatch is caught early.
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          time_zone: UTC
+
+  # ── Flyway migrations ─────────────────────────────────────────────────────
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    validate-on-migrate: true
+    out-of-order: false
+
+midas:
+  # ── Security / JWT ────────────────────────────────────────────────────────
+  security:
+    jwt:
+      # Base64-encoded HMAC-SHA256 signing key (minimum 256 bits).
+      # OVERRIDE IN PRODUCTION via MIDAS_JWT_SECRET environment variable.
+      # Default is for local development only — never use in production.
+      secret: ${MIDAS_JWT_SECRET:c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0}
+
+  context:
+    max-artifact-size-kb: 512
+  validation:
+    max-retries: 3
+
+  # ── Gemini LLM (GeminiLlmClient — used by pipeline agents & Evolution Agent) ─
+  llm:
+    timeout-seconds: ${MIDAS_LLM_TIMEOUT_SECONDS:180}
+    http-max-retries: ${MIDAS_LLM_HTTP_MAX_RETRIES:5}
+    base-url: ${MIDAS_LLM_BASE_URL:http://localhost:11434}
+    api-key: ${MIDAS_LLM_API_KEY:}
+    model: ${MIDAS_LLM_MODEL:gemini-2.5-flash}
+
+  # ── Nous / OpenAI-compatible LLM (NousRestClient — optional alternate provider) ─
+  # Switch between providers by changing base-url and api-key:
+  #   OpenRouter (cloud):  base-url=https://openrouter.ai/api  api-key=sk-or-...
+  #   LM Studio (local):   base-url=http://localhost:1234       api-key=  (leave empty)
+  nous:
+    base-url: ${MIDAS_NOUS_BASE_URL:http://localhost:1234}
+    api-key: ${MIDAS_NOUS_API_KEY:}
+    model: ${MIDAS_NOUS_MODEL:nous-hermes-2-mistral-7b-dpo}
+    timeout-seconds: ${MIDAS_NOUS_TIMEOUT_SECONDS:120}
+    http-max-retries: ${MIDAS_NOUS_MAX_RETRIES:2}
+
+  # ── Evolution Agent (ContinuousImprovementService) ────────────────────────
+  # cron: every hour on the hour; override for faster test cycles with fixedDelay
+  # Set to "-" to disable the scheduler entirely.
+  evolution:
+    cron: ${MIDAS_EVOLUTION_CRON:0 0 * * * *}
+
+  # ── Telegram Bot ──────────────────────────────────────────────────────────
+  telegram:
+    enabled: ${MIDAS_TELEGRAM_ENABLED:false}
+    bot-username: ${MIDAS_TELEGRAM_BOT_USERNAME:midas_pipeline_bot}
+    bot-token: ${MIDAS_TELEGRAM_BOT_TOKEN:}
+    # Whitelist of Telegram chat IDs permitted to use the bot.
+    # Leave empty (default) to allow any chat. When set, all other chats receive
+    # a "⛔️ Доступ запрещен" reply and the pipeline is NOT started.
+    # Add your Telegram chat IDs here locally, or leave empty to allow any chat.
+    allowed-chat-ids: []
+
+logging:
+  level:
+    com.midas.d3: DEBUG
+    org.springframework.statemachine: INFO
+    org.flywaydb: INFO

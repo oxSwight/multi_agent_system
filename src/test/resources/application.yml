@@ -1,0 +1,62 @@
+# ── Test application configuration ────────────────────────────────────────────
+# This file shadows src/main/resources/application.yml for ALL tests.
+# Key changes:
+#   - Datasource: H2 in-memory (auto-configured; no explicit URL needed)
+#   - Flyway: disabled  (H2 schema is created by Hibernate ddl-auto=create-drop)
+#   - JPA ddl-auto: create-drop  (Hibernate creates tables from entity annotations)
+#   - LLM / Telegram: dummy values  (no real HTTP calls made in tests)
+#   - Logging: WARN level to keep test output clean
+# ──────────────────────────────────────────────────────────────────────────────
+
+spring:
+  application:
+    name: midas-d3
+
+  # H2 is auto-configured by Spring Boot when it is on the test classpath and
+  # no spring.datasource.url is specified. The embedded database URL, username,
+  # and password are set automatically (sa / '' / jdbc:h2:mem:<random>).
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    open-in-view: false
+
+  # Flyway must be explicitly disabled: it is on the main classpath and would
+  # otherwise attempt to run V1__init_schema.sql (PostgreSQL SQL) against H2.
+  flyway:
+    enabled: false
+
+midas:
+  security:
+    jwt:
+      secret: c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0
+
+  context:
+    max-artifact-size-kb: 512
+  validation:
+    max-retries: 3
+  llm:
+    timeout-seconds: 5
+    base-url: http://localhost:11434
+    api-key: ''
+    model: test-model
+  nous:
+    base-url: http://localhost:1234
+    api-key: ''
+    model: test-model
+    timeout-seconds: 5
+    http-max-retries: 1
+  telegram:
+    enabled: false
+    bot-username: test_bot
+    bot-token: ''
+    allowed-chat-ids:
+  # Disable scheduled evolution cycles in tests — service is called directly.
+  evolution:
+    cron: '-'
+
+logging:
+  level:
+    com.midas.d3: WARN
+    org.springframework.statemachine: WARN
+    org.flywaydb: WARN

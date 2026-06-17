@@ -1,0 +1,14 @@
+# Backend .dockerignore
+# Excludes everything not needed for the Maven build,
+# keeping the Docker build context small and fast.
+
+target/
+.mvn/
+midas-dashboard/
+.git/
+.gitignore
+.vscode/
+*.md
+docker-compose*.yml
+Dockerfile*
+.env*
