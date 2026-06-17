@@ -43,6 +43,7 @@ public class SoftwareArchitectValidator extends AbstractGoalKeeperValidator {
 
     @Override
     protected void collectViolations(JsonNode root, List<String> violations) {
+        requireBooleanField(root, "has_external_integrations", violations);
         requireStringField(root, "architecture_style", violations);
         requireObjectField(root, "tech_stack", violations);
         requireArrayField(root, "components", 1, violations);

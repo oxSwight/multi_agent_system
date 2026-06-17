@@ -107,11 +107,13 @@ class PipelineTopologyTest {
     }
 
     @Test
-    @DisplayName("context-aware routing keeps INTEGRATION_STRATEGY when no explicit skip flag is present")
-    void nextStageWithContext_keepsIntegrationWhenFlagAbsent() throws Exception {
+    @DisplayName("context-aware routing keeps INTEGRATION_STRATEGY when has_external_integrations is true")
+    void nextStageWithContext_keepsIntegrationWhenFlagTrue() throws Exception {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         var spec = mapper.readTree("{\"business_goal\":\"SaaS app\"}");
-        var arch = mapper.readTree("{\"architecture_style\":\"CLIENT_SERVER\"}");
+        var arch = mapper.readTree("""
+                {"architecture_style":"CLIENT_SERVER","has_external_integrations":true}
+                """);
         var ctx = MidasContext.start("Build SaaS", "run-001")
                 .withTechnicalSpec(spec)
                 .withArchitectureDesign(arch);

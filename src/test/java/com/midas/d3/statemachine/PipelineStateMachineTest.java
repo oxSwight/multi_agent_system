@@ -268,6 +268,7 @@ class PipelineStateMachineTest {
         // Stage 2
         sendSubmit("""
             {
+              "has_external_integrations": true,
               "architecture_style": "CLIENT_SERVER",
               "tech_stack": {"language": "Java", "framework": "Spring Boot",
                              "platform_apis": [], "build_tool": "Maven"},
@@ -361,8 +362,34 @@ class PipelineStateMachineTest {
     }
 
     @Test
-    @DisplayName("Dynamic routing: architecture without skip flag still routes to INTEGRATION_STRATEGY")
-    void architectureReview_withoutSkipFlag_routesToIntegrationStage() {
+    @DisplayName("Dynamic routing: architecture with has_external_integrations=true routes to INTEGRATION_STRATEGY")
+    void architectureReview_withExternalIntegrations_routesToIntegrationStage() {
+        sendStart("Build a task management system");
+        sendSubmit(VALID_TECH_SPEC);
+        assertState(MidasState.ARCHITECTURE_DESIGN);
+
+        sendSubmit("""
+            {
+              "has_external_integrations": true,
+              "architecture_style": "CLIENT_SERVER",
+              "tech_stack": {"language": "Java", "framework": "Spring Boot",
+                             "platform_apis": [], "build_tool": "Maven"},
+              "components": [{"name": "TaskController", "type": "CONTROLLER", "responsibility": "Tasks API"}],
+              "file_layout": ["src/main/java/com/example/TaskController.java"],
+              "data_persistence": {
+                "type": "RELATIONAL",
+                "schema": [{"table_name": "tasks", "columns": [{"name": "id", "type": "BIGINT", "is_primary": true, "is_nullable": false}]}]
+              },
+              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_payload": {}, "expected_response": {}}]
+            }
+            """);
+
+        assertState(MidasState.INTEGRATION_STRATEGY);
+    }
+
+    @Test
+    @DisplayName("ARCHITECTURE_DESIGN missing has_external_integrations stays in stage and increments retry")
+    void architectureReview_missingIntegrationFlag_retries() {
         sendStart("Build a task management system");
         sendSubmit(VALID_TECH_SPEC);
         assertState(MidasState.ARCHITECTURE_DESIGN);
@@ -382,7 +409,8 @@ class PipelineStateMachineTest {
             }
             """);
 
-        assertState(MidasState.INTEGRATION_STRATEGY);
+        assertState(MidasState.ARCHITECTURE_DESIGN);
+        assertThat(extractContext().getValidationRetries()).isEqualTo(1);
     }
 
     // ── Phase 3: Product-Owner quality gate (blocking) ────────────────────────
@@ -556,6 +584,7 @@ class PipelineStateMachineTest {
         assertState(MidasState.ARCHITECTURE_DESIGN);
         sendSubmit("""
             {
+              "has_external_integrations": true,
               "architecture_style": "CLIENT_SERVER",
               "tech_stack": {"language": "Java", "framework": "Spring Boot",
                              "platform_apis": [], "build_tool": "Maven"},

@@ -181,6 +181,7 @@ public class AgentSystemPrompts {
 
             REQUIRED JSON SCHEMA:
             {
+              "has_external_integrations": true|false,
               "architecture_style": "CLIENT_ONLY | STATIC | SPA | CLIENT_SERVER | SERVERLESS | MONOLITH",
               "tech_stack": {
                 "language": "String",
@@ -204,6 +205,9 @@ public class AgentSystemPrompts {
             }
 
             GUARDRAILS:
+            - has_external_integrations is REQUIRED (boolean, never omitted). Set false when the product is
+              self-contained with no third-party APIs, scraping, or external auth; set true when any external
+              service dependency exists. This flag drives pipeline routing — omitting it is a schema failure.
             - data_persistence.schema is non-empty ONLY when type is RELATIONAL or EMBEDDED_DB; otherwise [].
             - api_contracts is non-empty ONLY when architecture_style is CLIENT_SERVER/SERVERLESS/MONOLITH; otherwise [].
             - components and file_layout must each have at least 1 item and must match the chosen runtime.

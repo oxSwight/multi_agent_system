@@ -66,6 +66,7 @@ class PipelineControllerIT {
 
     private static final String VALID_ARCHITECTURE = """
             {
+              "has_external_integrations": true,
               "architecture_style": "CLIENT_SERVER",
               "tech_stack": {"language": "Java", "framework": "Spring Boot",
                              "platform_apis": [], "build_tool": "Maven"},

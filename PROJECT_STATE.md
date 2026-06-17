@@ -228,17 +228,28 @@ Architecture Design output or the stored Technical Specification,
 `PipelineTopology.nextStage(stage, ctx)` bypasses `INTEGRATION_STRATEGY` and
 routes directly to `CODE_GENERATION`. `ARCHITECTURE_CHOICE` uses
 `SkipIntegrationStageGuard` as its first branch; `StoreArtifactAction` uses
-context-aware routing for agent auto-dispatch. Covered by
-`PipelineTopologyTest`, `SkipIntegrationStageGuardTest`, and
+context-aware routing for agent auto-dispatch. The Software Architect prompt
+and `SoftwareArchitectValidator` **strictly require** `has_external_integrations`
+(boolean, non-null) — omission triggers `ValidationHookException` and retry,
+closing the cost-optimization leak where a missing flag defaulted to running
+the Integration stage. Covered by `PipelineTopologyTest`,
+`SkipIntegrationStageGuardTest`, `GoalKeeperValidatorTest`, and
 `PipelineStateMachineTest`.
 
-### In Progress — Phase 4 Verification
+**Test status (2026-06-17):** `257` tests run, **0 failures** — suite green
+after Phase 4 strict-schema finalization. Run: `.\mvnw.cmd test`
 
-> **Branch:** `main`
-> **Test status (2026-06-17):** `250` tests run, **0 failures** — suite green
-> after Phase 3 cleanup + dynamic integration skip. Run: `.\mvnw.cmd test`
+### In Progress
 
-Awaiting product-owner verification before merge.
+_(none)_
+
+### Next Up (Post Phase 4)
+
+- **Phase 5 candidate:** HYBRID implementation fan-out (see §4 Agent Handoff).
+- Human-in-the-loop review of Controller REJECT reports before pipeline reset.
+- Extend dynamic routing to additional skip-eligible stages if product rules emerge.
+
+---
 
 ### Previously — Phase 3 Handoff Checklist (archived)
 
@@ -279,24 +290,38 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 6. ~~Re-run full suite (`.\mvnw.cmd test`) and confirm `250` tests, zero failures.~~
 7. ~~Commit Phase 3 changes on the feature branch.~~
 
-### Next Up (Post Phase 4)
-
-- Human-in-the-loop review of Controller REJECT reports before pipeline reset.
-- Extend dynamic routing to additional skip-eligible stages if product rules emerge.
-
 ---
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 3 cleanup + Phase 4 dynamic integration skip implemented;
-awaiting verification.
+**Working tree:** Phase 4 complete — dynamic integration skip + strict
+`has_external_integrations` schema enforcement on Architecture Design.
 
-**What the next agent should do first:**
+**Phase 5 proposal (awaiting strategic decision — do not implement yet):**
 
-1. Confirm product-owner sign-off on integration-skip semantics
-   (`has_external_integrations: false` on architecture or technical spec).
-2. Optional: add `ProductReviewRejectionAction` unit test (P1 item 5).
-3. Open PR / merge once verified.
+Recommend **HYBRID Implementation Fan-Out within `CODE_GENERATION`**.
+
+| Option | Structural safety | ROI | Verdict |
+| --- | --- | --- | --- |
+| Client-only backend skip | Highest (extends Phase 4 routing pattern) | Low–medium — Integration skip already captures the main cost lever; there is no separate backend stage anymore | Defer |
+| **HYBRID fan-out at Implementation** | **Medium — bounded fork/merge inside one topology stage** | **Highest — fixes the core semantic/workload mismatch for `execution_model: HYBRID` projects** | **Recommend** |
+| Bounded Controller feedback loop | Lowest — backward SSM transitions, partial re-runs, context pollution | Medium — quality gains but REJECT→ERROR is intentional and tested | Defer |
+
+**Rationale:** Phase 4 proved that topology-driven routing + strict schema flags
+is the safe evolution path. The remaining pain point from the original Workforce
+Evaluation is workload mismatch: a single Implementation Engineer must emit
+both client surface (e.g. `content_script.ts`, popup UI) and server surface
+(e.g. Spring controllers) in one monolithic JSON map when
+`runtime_environment.execution_model` is `HYBRID`. That strains context window,
+hurts file coherence, and is the main quality bottleneck for hybrid products.
+
+A bounded fan-out keeps the seven-stage SSM shape intact: when
+`execution_model == HYBRID`, `PipelineTopology` forks `CODE_GENERATION` into
+two internal passes (Client Implementation + Server Implementation) that merge
+into `generatedSourceCode` before `TEST_GENERATION`. Reuse existing
+`PipelineTopology.nextStage(stage, ctx)`, `ContextReducer` role slices, and
+Zero-Placeholder validators — no new terminal states, no backward loops.
+Strict boolean routing flags (mirroring Phase 4) gate the fork.
 
 **Do not** change REJECT→ERROR semantics unless product owner explicitly
 requests a feedback-loop design; current behaviour is intentional and covered

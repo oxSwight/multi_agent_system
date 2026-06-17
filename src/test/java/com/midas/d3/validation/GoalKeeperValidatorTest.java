@@ -146,6 +146,7 @@ class GoalKeeperValidatorTest {
             // A browser extension: NO database, NO REST endpoints — must pass.
             String json = """
                 {
+                  "has_external_integrations": false,
                   "architecture_style": "CLIENT_ONLY",
                   "tech_stack": {"language": "TypeScript", "framework": "none",
                                  "platform_apis": ["Manifest V3", "chrome.storage"], "build_tool": "none"},
@@ -166,6 +167,7 @@ class GoalKeeperValidatorTest {
         void validate_validServerArchitecture_returnsNode() {
             String json = """
                 {
+                  "has_external_integrations": true,
                   "architecture_style": "CLIENT_SERVER",
                   "tech_stack": {"language": "Java", "framework": "Spring Boot",
                                  "platform_apis": [], "build_tool": "Maven"},
@@ -185,9 +187,66 @@ class GoalKeeperValidatorTest {
         }
 
         @Test
+        void validate_missingHasExternalIntegrations_throwsValidationHookException() {
+            String json = """
+                {
+                  "architecture_style": "CLIENT_ONLY",
+                  "tech_stack": {"language": "TypeScript", "framework": "none",
+                                 "platform_apis": [], "build_tool": "none"},
+                  "components": [{"name": "popup", "type": "UI", "responsibility": "UI"}],
+                  "file_layout": ["manifest.json"],
+                  "data_persistence": {"type": "BROWSER_STORAGE", "schema": []},
+                  "api_contracts": []
+                }
+                """;
+            assertThatThrownBy(() -> architectValidator.validate(json))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("has_external_integrations");
+        }
+
+        @Test
+        void validate_nullHasExternalIntegrations_throwsValidationHookException() {
+            String json = """
+                {
+                  "has_external_integrations": null,
+                  "architecture_style": "CLIENT_ONLY",
+                  "tech_stack": {"language": "TypeScript", "framework": "none",
+                                 "platform_apis": [], "build_tool": "none"},
+                  "components": [{"name": "popup", "type": "UI", "responsibility": "UI"}],
+                  "file_layout": ["manifest.json"],
+                  "data_persistence": {"type": "BROWSER_STORAGE", "schema": []},
+                  "api_contracts": []
+                }
+                """;
+            assertThatThrownBy(() -> architectValidator.validate(json))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("has_external_integrations");
+        }
+
+        @Test
+        void validate_nonBooleanHasExternalIntegrations_throwsValidationHookException() {
+            String json = """
+                {
+                  "has_external_integrations": "false",
+                  "architecture_style": "CLIENT_ONLY",
+                  "tech_stack": {"language": "TypeScript", "framework": "none",
+                                 "platform_apis": [], "build_tool": "none"},
+                  "components": [{"name": "popup", "type": "UI", "responsibility": "UI"}],
+                  "file_layout": ["manifest.json"],
+                  "data_persistence": {"type": "BROWSER_STORAGE", "schema": []},
+                  "api_contracts": []
+                }
+                """;
+            assertThatThrownBy(() -> architectValidator.validate(json))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("has_external_integrations");
+        }
+
+        @Test
         void validate_serverStyleMissingApiContracts_throwsValidationHookException() {
             String json = """
                 {
+                  "has_external_integrations": false,
                   "architecture_style": "MONOLITH",
                   "tech_stack": {"language": "Java", "framework": "Spring Boot",
                                  "platform_apis": [], "build_tool": "Maven"},
@@ -206,6 +265,7 @@ class GoalKeeperValidatorTest {
         void validate_invalidHttpMethod_throwsValidationHookException() {
             String json = """
                 {
+                  "has_external_integrations": true,
                   "architecture_style": "CLIENT_SERVER",
                   "tech_stack": {"language": "Java", "framework": "Spring Boot",
                                  "platform_apis": [], "build_tool": "Maven"},

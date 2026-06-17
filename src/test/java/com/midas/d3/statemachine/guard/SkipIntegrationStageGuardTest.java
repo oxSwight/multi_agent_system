@@ -44,10 +44,10 @@ class SkipIntegrationStageGuardTest {
     }
 
     @Test
-    @DisplayName("returns false when validated architecture omits the skip flag")
-    void evaluate_falseWhenFlagAbsent() throws Exception {
+    @DisplayName("returns false when validated architecture declares external integrations")
+    void evaluate_falseWhenFlagTrue() throws Exception {
         var validated = objectMapper.readTree("""
-                {"architecture_style":"CLIENT_SERVER"}
+                {"architecture_style":"CLIENT_SERVER","has_external_integrations":true}
                 """);
         var ctx = MidasContext.start("Build SaaS", "run-001");
 
