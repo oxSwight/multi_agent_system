@@ -117,12 +117,13 @@ class PipelineCompletionActionTest {
 
         File fakeZip = File.createTempFile("test_artifact", ".zip");
         when(packagingService.packageResults(ctx)).thenReturn(fakeZip);
+        when(telegramBot.sendArtifactDocument(eq(chatId), eq(fakeZip), contains("✅"))).thenReturn(true);
 
         action.execute(stateContext);
 
         verify(packagingService).packageResults(ctx);
         verify(telegramBot).sendArtifactDocument(eq(chatId), eq(fakeZip), contains("✅"));
-        // ZIP must be deleted after send (file should be gone)
+        verify(telegramBot).updatePipelineCompletionMessage(eq(ctx), eq(true));
         assertThat(fakeZip).doesNotExist();
     }
 
@@ -141,6 +142,7 @@ class PipelineCompletionActionTest {
         action.execute(stateContext);
 
         verify(telegramBot, never()).sendArtifactDocument(anyLong(), any(), anyString());
+        verify(telegramBot, never()).updatePipelineCompletionMessage(any(), anyBoolean());
         verify(telegramBot).sendHtmlMessage(eq(chatId), contains("Disk full"));
     }
 
@@ -191,13 +193,11 @@ class PipelineCompletionActionTest {
 
         File tempZip = File.createTempFile("sendfail_test", ".zip");
         when(packagingService.packageResults(ctx)).thenReturn(tempZip);
-        // sendArtifactDocument is a void method; mock an unexpected runtime exception
-        doThrow(new RuntimeException("Telegram unavailable"))
-                .when(telegramBot).sendArtifactDocument(anyLong(), any(), anyString());
+        doReturn(false).when(telegramBot).sendArtifactDocument(anyLong(), any(), anyString());
 
         action.execute(stateContext);
 
-        // ZIP must still be cleaned up despite the exception
+        verify(telegramBot, never()).updatePipelineCompletionMessage(any(), anyBoolean());
         assertThat(tempZip).as("Temp ZIP should be deleted even after send failure").doesNotExist();
     }
 

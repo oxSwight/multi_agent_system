@@ -318,7 +318,54 @@ for QA source filtering). `HYBRID` retains parallel client/server fan-out;
 **Test status (2026-06-17):** `287` tests run, **0 failures** — suite green
 after Phase 7A surface routing. Run: `.\mvnw.cmd test`
 
-### Planned — Phase 6C+ / 7B (TBD)
+**Phase 8A — Package Completeness (egress / ZIP polish).**
+Extended `ArtifactPackagingService` so the delivered ZIP is a complete, context-aware
+artifact bundle:
+
+| Deliverable | Implementation |
+| --- | --- |
+| 7th artifact | `7_ProductReview.md` from `productReviewReport` (Controller gate) |
+| Verdict surface | `README.md` **Product Review Verdict** section — verdict, summary, recommendations |
+| Skip-aware packaging | Omits `3_IntegrationStrategy.md` when absent; README **Pipeline Routing** note when `has_external_integrations: false` |
+
+`PipelineCompletionAction` unchanged — it already delegates to `ArtifactPackagingService`.
+Covered by `ArtifactPackagingServiceTest` (product review, skip note, full context).
+
+**Test status (2026-06-17):** `289` tests run, **0 failures** — suite green
+after Phase 8A package completeness. Run: `.\mvnw.cmd test`
+
+**Phase 8B — REST Artifact Egress.**
+Added `GET /api/v1/pipelines/{runId}/artifacts` to stream the persisted ZIP archive
+with `Content-Type: application/zip` and `Content-Disposition: attachment`. Returns
+404 when the run is not `COMPLETED`, when no artifact path is recorded, or when the
+ZIP file is absent on disk. `PipelineArtifactService` resolves artifacts via the
+in-memory orchestrator state (when active) and the `midas_run.artifact_path` column.
+
+| Layer | Files |
+| --- | --- |
+| REST | `PipelineController`, `PipelineArtifactService`, `ArtifactNotFoundException` |
+| Error mapping | `GlobalExceptionHandler` — 404 for `ArtifactNotFoundException` |
+| Tests | `PipelineArtifactServiceTest`, `PipelineControllerIT` (artifacts happy path + 404) |
+
+**Phase 8C — Telegram Notification Alignment.**
+On successful `sendDocument`, `PipelineCompletionAction` updates the progress message
+via `TelegramPipelineBot.updatePipelineCompletionMessage` to confirm archive delivery
+and surface the Controller verdict (`PASS` / `PASS_WITH_NOTES`). Stage 4 progress label
+is now execution-model neutral ("Генерация исходного кода"). Interim `COMPLETED` state
+shows packaging-in-progress until delivery completes.
+
+| Layer | Files |
+| --- | --- |
+| Progress UI | `TelegramStateListener` — stage 4 label, interim/final completion renderers |
+| Delivery | `TelegramPipelineBot`, `PipelineCompletionAction` |
+| Tests | `TelegramStateListenerTest`, `PipelineCompletionActionTest` |
+
+**Phase 8D (CLI egress) — skipped for MVP.**
+
+**MIDAS MVP — feature-complete (2026-06-17).** Phases 1–8C delivered; CLI egress
+deferred post-MVP.
+
+### Planned — Post-MVP (TBD)
 
 > **Branch:** `main`
 > **Candidates:** Further dynamic routing, HITL Controller feedback loop.
@@ -373,7 +420,27 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 7A complete — execution-model surface routing verified.
+**Working tree:** Phase 8B + 8C complete — MIDAS MVP feature-complete.
+
+**Phase 8B verification (complete):**
+
+1. `GET /api/v1/pipelines/{runId}/artifacts` streams persisted ZIP when run is `COMPLETED`.
+2. Returns 404 for non-`COMPLETED` runs, missing artifact path, or absent filesystem file.
+3. Aligns with existing JWT-protected REST conventions and `GlobalExceptionHandler` error shape.
+
+**Phase 8C verification (complete):**
+
+1. Successful Telegram `sendDocument` triggers final progress-message update confirming delivery.
+2. Controller verdict (`PASS` / `PASS_WITH_NOTES`) surfaced in the final Telegram message.
+3. Stage 4 label is execution-model neutral ("Генерация исходного кода").
+
+**Phase 8A verification (complete):**
+
+1. `7_ProductReview.md` included when `productReviewReport` is present.
+2. README surfaces Controller verdict (`PASS` / `PASS_WITH_NOTES`), summary, and recommendations.
+3. Integration stage skip (`has_external_integrations: false`, no `integrationStrategy`) packages
+   without failure and notes bypass in README.
+4. `PipelineCompletionAction` unchanged — packaging delegated to `ArtifactPackagingService`.
 
 **Phase 7A verification (complete):**
 

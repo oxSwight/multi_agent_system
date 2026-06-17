@@ -175,10 +175,78 @@ class ArtifactPackagingServiceTest {
         }
     }
 
+    @Test
+    @DisplayName("productReviewReport → 7_ProductReview.md with verdict surfaced in README")
+    void packageResults_withProductReview_containsReportAndReadmeVerdict() throws IOException {
+        ObjectNode review = objectMapper.createObjectNode();
+        review.put("verdict", "PASS_WITH_NOTES");
+        review.put("summary", "Intent met; minor polish suggested.");
+        ObjectNode remediation = objectMapper.createObjectNode();
+        remediation.putArray("required_changes");
+        remediation.putArray("recommendations").add("Add input debounce");
+        review.set("remediation_block", remediation);
+        review.putArray("coverage_matrix")
+                .add(objectMapper.createObjectNode()
+                        .put("requested_feature", "Create task")
+                        .put("status", "COVERED")
+                        .put("evidence", "implemented"));
+
+        MidasContext ctx = MidasContext.start("Task app", "run-review-001")
+                .withProductReviewReport(review);
+
+        File zip = service.packageResults(ctx);
+        try {
+            Set<String> entries = listZipEntries(zip);
+            assertThat(entries).contains("7_ProductReview.md");
+
+            String report = readZipEntry(zip, "7_ProductReview.md");
+            assertThat(report)
+                    .contains("```json")
+                    .contains("PASS_WITH_NOTES")
+                    .contains("coverage_matrix");
+
+            String readme = readZipEntry(zip, "README.md");
+            assertThat(readme)
+                    .contains("Product Review Verdict")
+                    .contains("PASS_WITH_NOTES")
+                    .contains("Intent met; minor polish suggested.")
+                    .contains("Add input debounce");
+        } finally {
+            zip.delete();
+        }
+    }
+
+    @Test
+    @DisplayName("Skipped integration stage → no 3_IntegrationStrategy.md, bypass noted in README")
+    void packageResults_skippedIntegrationStrategy_notesBypassInReadme() throws IOException {
+        ObjectNode architecture = objectMapper.createObjectNode();
+        architecture.put("has_external_integrations", false);
+        architecture.put("database_type", "PG");
+
+        MidasContext ctx = MidasContext.start("Self-contained app", "run-skip-int-001")
+                .withTechnicalSpec(objectMapper.createObjectNode().put("business_goal", "Local only"))
+                .withArchitectureDesign(architecture);
+
+        File zip = service.packageResults(ctx);
+        try {
+            Set<String> entries = listZipEntries(zip);
+            assertThat(entries)
+                    .doesNotContain("3_IntegrationStrategy.md")
+                    .contains("README.md");
+
+            String readme = readZipEntry(zip, "README.md");
+            assertThat(readme)
+                    .contains("Integration Strategy")
+                    .contains("dynamically bypassed");
+        } finally {
+            zip.delete();
+        }
+    }
+
     // ── Full context ──────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Fully populated context produces ZIP with all 9 expected entry groups")
+    @DisplayName("Fully populated context produces ZIP with all expected entry groups including product review")
     void packageResults_fullContext_allEntriesPresent() throws IOException {
         ObjectNode code = objectMapper.createObjectNode();
         code.put("Main.java", "class Main {}");
@@ -191,13 +259,27 @@ class ArtifactPackagingServiceTest {
         secOps.put("Dockerfile", "FROM eclipse-temurin:21-jre");
         secOps.put("docker-compose.yml", "version: '3.8'");
 
+        ObjectNode review = objectMapper.createObjectNode();
+        review.put("verdict", "PASS");
+        review.put("summary", "All features delivered.");
+        review.putArray("coverage_matrix")
+                .add(objectMapper.createObjectNode()
+                        .put("requested_feature", "Core")
+                        .put("status", "COVERED")
+                        .put("evidence", "implemented"));
+        ObjectNode remediation = objectMapper.createObjectNode();
+        remediation.putArray("required_changes");
+        remediation.putArray("recommendations");
+        review.set("remediation_block", remediation);
+
         MidasContext ctx = MidasContext.start("Full pipeline", "run-full-001")
                 .withTechnicalSpec(objectMapper.createObjectNode().put("business_goal", "Full"))
                 .withArchitectureDesign(objectMapper.createObjectNode().put("database_type", "PG"))
                 .withIntegrationStrategy(objectMapper.createObjectNode().put("parsing_logic", "none"))
                 .withGeneratedSourceCode(code)
                 .withGeneratedTests(tests)
-                .withSecOpsArtifacts(secOps);
+                .withSecOpsArtifacts(secOps)
+                .withProductReviewReport(review);
 
         File zip = service.packageResults(ctx);
         try {
@@ -210,6 +292,7 @@ class ArtifactPackagingServiceTest {
                     .contains("src/Main.java")
                     .contains("tests/MainTest.java")
                     .contains("6_SecOps_Report.md")
+                    .contains("7_ProductReview.md")
                     .contains("Dockerfile")
                     .contains("docker-compose.yml");
         } finally {

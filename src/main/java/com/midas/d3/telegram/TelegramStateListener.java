@@ -1,5 +1,7 @@
 package com.midas.d3.telegram;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.context.MidasContext;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
 import lombok.extern.slf4j.Slf4j;
@@ -81,7 +83,7 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
                 HEADER + "[🟩🟩🟩⬜⬜⬜⬜] <i>Агент 3 — Стратегия Интеграции...</i>";
 
             case CODE_GENERATION ->
-                HEADER + "[🟩🟩🟩🟩⬜⬜⬜] <i>Агент 4 — Генерация Backend Кода...</i>";
+                HEADER + "[🟩🟩🟩🟩⬜⬜⬜] <i>Агент 4 — Генерация исходного кода...</i>";
 
             case TEST_GENERATION ->
                 HEADER + "[🟩🟩🟩🟩🟩⬜⬜] <i>Агент 5 — Генерация Тестов (QA)...</i>";
@@ -95,16 +97,49 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
             case COMPLETED ->
                 HEADER + "[🟩🟩🟩🟩🟩🟩🟩]\n\n" +
                 "✅ <b>Пайплайн успешно завершен!</b>\n" +
-                "Все 7 артефактов сгенерированы и валидированы.\n" +
-                "Используйте <code>GET /api/v1/pipelines/{runId}/context</code> для получения результатов.";
+                "📦 Формирование и отправка архива артефактов...";
 
             case ERROR ->
                 HEADER + "[❌ ОШИБКА]\n\n" +
                 "Пайплайн завершился с ошибкой.\n" +
                 "Используйте <code>GET /api/v1/pipelines/{runId}/context</code> для деталей.";
 
-            default -> null; // IDLE — no update needed
+            default -> null;
         };
+    }
+
+    public static String renderFinalCompletion(MidasContext ctx, boolean documentDelivered) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(HEADER).append("[🟩🟩🟩🟩🟩🟩🟩]\n\n");
+        sb.append("✅ <b>Пайплайн успешно завершен!</b>\n");
+        sb.append("Все 7 артефактов сгенерированы и валидированы.\n");
+        if (documentDelivered) {
+            sb.append("📦 <b>Архив артефактов доставлен в чат.</b>\n");
+        }
+        String verdict = extractProductReviewVerdict(ctx);
+        if (verdict != null) {
+            sb.append("Контроль качества: <b>").append(verdict).append("</b>\n");
+        }
+        sb.append("\nREST: <code>GET /api/v1/pipelines/")
+                .append(ctx.getPipelineRunId())
+                .append("/artifacts</code>");
+        return sb.toString();
+    }
+
+    static String extractProductReviewVerdict(MidasContext ctx) {
+        JsonNode report = ctx.getProductReviewReport();
+        if (report == null) {
+            return null;
+        }
+        JsonNode verdictNode = report.get("verdict");
+        if (verdictNode == null || !verdictNode.isTextual()) {
+            return null;
+        }
+        String verdict = verdictNode.asText().strip();
+        if ("PASS".equals(verdict) || "PASS_WITH_NOTES".equals(verdict)) {
+            return verdict;
+        }
+        return null;
     }
 
     // ── Telegram API call ─────────────────────────────────────────────────────

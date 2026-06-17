@@ -39,6 +39,7 @@ import java.util.zip.ZipOutputStream;
  *   ├── tests/
  *   │   └── …/FileTest.java                ← Agent 5: generated test files (verbatim paths)
  *   ├── 6_SecOps_Report.md                 ← Agent 6: security audit findings
+ *   ├── 7_ProductReview.md                 ← Agent 7: Controller quality-gate report
  *   ├── Dockerfile                         ← Agent 6: production Dockerfile
  *   └── docker-compose.yml                 ← Agent 6: docker-compose manifest
  * </pre>
@@ -119,29 +120,77 @@ public class ArtifactPackagingService {
         if (ctx.getSecOpsArtifacts() != null) {
             writeSecOpsArtifacts(dir, ctx.getSecOpsArtifacts());
         }
+        if (ctx.getProductReviewReport() != null) {
+            writeJsonAsMarkdown(dir, "7_ProductReview.md",
+                    "Product Review — Controller Quality Gate", ctx.getProductReviewReport());
+        }
     }
 
     /**
      * Always-present README with run metadata so the archive is never completely empty.
      */
     private void writeRunMetadata(MidasContext ctx, Path dir) throws IOException {
-        String content = String.format("""
-                # MIDAS Pipeline Run Report
+        StringBuilder sb = new StringBuilder();
+        sb.append("# MIDAS Pipeline Run Report\n\n");
+        sb.append("| Field | Value |\n|---|---|\n");
+        sb.append("| **Run ID** | `").append(ctx.getPipelineRunId()).append("` |\n");
+        sb.append("| **Created** | `").append(ctx.getCreatedAt()).append("` |\n");
+        sb.append("| **Pipeline** | MIDAS D3 Software Pipeline |\n\n");
 
-                | Field | Value |
-                |---|---|
-                | **Run ID** | `%s` |
-                | **Created** | `%s` |
-                | **Pipeline** | MIDAS D3 Software Pipeline |
+        JsonNode review = ctx.getProductReviewReport();
+        if (review != null) {
+            sb.append("## Product Review Verdict\n\n");
+            JsonNode verdictNode = review.get("verdict");
+            if (verdictNode != null && verdictNode.isTextual() && !verdictNode.asText().isBlank()) {
+                sb.append("| **Verdict** | **").append(verdictNode.asText().strip()).append("** |\n\n");
+            }
+            JsonNode summary = review.get("summary");
+            if (summary != null && summary.isTextual() && !summary.asText().isBlank()) {
+                sb.append("**Summary:** ").append(summary.asText().strip()).append("\n\n");
+            }
+            appendProductReviewNotes(sb, review);
+        }
 
-                ## Original Idea
+        if (isIntegrationStageSkipped(ctx)) {
+            sb.append("## Pipeline Routing\n\n");
+            sb.append("The **Integration Strategy** stage was dynamically bypassed ");
+            sb.append("(no external integrations required for this product).\n\n");
+        }
 
-                > %s
-                """,
-                ctx.getPipelineRunId(),
-                ctx.getCreatedAt(),
-                ctx.getRawUserIdea().replace("\n", "\n> "));
-        Files.writeString(dir.resolve("README.md"), content, StandardCharsets.UTF_8);
+        sb.append("## Original Idea\n\n");
+        sb.append("> ").append(ctx.getRawUserIdea().replace("\n", "\n> ")).append("\n");
+
+        Files.writeString(dir.resolve("README.md"), sb.toString(), StandardCharsets.UTF_8);
+    }
+
+    private void appendProductReviewNotes(StringBuilder sb, JsonNode report) {
+        JsonNode block = report.get("remediation_block");
+        if (block == null || !block.isObject()) {
+            return;
+        }
+        JsonNode recommendations = block.get("recommendations");
+        if (recommendations == null || !recommendations.isArray() || recommendations.isEmpty()) {
+            return;
+        }
+        sb.append("### Notes & Recommendations\n\n");
+        for (JsonNode item : recommendations) {
+            if (item.isTextual() && !item.asText().isBlank()) {
+                sb.append("- ").append(item.asText().strip()).append("\n");
+            }
+        }
+        sb.append("\n");
+    }
+
+    private boolean isIntegrationStageSkipped(MidasContext ctx) {
+        if (ctx.getIntegrationStrategy() != null) {
+            return false;
+        }
+        JsonNode architecture = ctx.getArchitectureDesign();
+        if (architecture == null) {
+            return false;
+        }
+        JsonNode flag = architecture.get("has_external_integrations");
+        return flag != null && flag.isBoolean() && !flag.asBoolean();
     }
 
     /**

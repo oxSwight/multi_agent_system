@@ -1,5 +1,6 @@
 package com.midas.d3.telegram;
 
+import com.midas.d3.context.MidasContext;
 import com.midas.d3.security.JwtService;
 import com.midas.d3.statemachine.HumanInTheLoopRegistry;
 import com.midas.d3.statemachine.PipelineOrchestrator;
@@ -276,7 +277,7 @@ public class TelegramPipelineBot extends TelegramLongPollingBot {
      * @param file    artifact file to send (usually a ZIP archive)
      * @param caption HTML-formatted caption displayed below the document
      */
-    public void sendArtifactDocument(long chatId, File file, String caption) {
+    public boolean sendArtifactDocument(long chatId, File file, String caption) {
         try {
             execute(SendDocument.builder()
                     .chatId(String.valueOf(chatId))
@@ -286,10 +287,20 @@ public class TelegramPipelineBot extends TelegramLongPollingBot {
                     .build());
             log.info("[TelegramPipelineBot] Artifact document [{}] sent to chat [{}].",
                     file.getName(), chatId);
+            return true;
         } catch (TelegramApiException e) {
             log.error("[TelegramPipelineBot] Failed to send document to chat [{}]: {}",
                     chatId, e.getMessage(), e);
+            return false;
         }
+    }
+
+    public void updatePipelineCompletionMessage(MidasContext ctx, boolean documentDelivered) {
+        if (ctx.getTelegramChatId() == null || ctx.getTelegramMessageId() == null) {
+            return;
+        }
+        editMessage(ctx.getTelegramChatId(), ctx.getTelegramMessageId(),
+                TelegramStateListener.renderFinalCompletion(ctx, documentDelivered));
     }
 
     /**

@@ -54,6 +54,14 @@ public class GlobalExceptionHandler {
                 HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), req.getRequestURI());
     }
 
+    @ExceptionHandler(ArtifactNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ErrorResponse handleArtifactNotFound(ArtifactNotFoundException ex, HttpServletRequest req) {
+        log.warn("[API] ArtifactNotFound at {}: {}", req.getRequestURI(), ex.getMessage());
+        return ErrorResponse.of(
+                HttpStatus.NOT_FOUND.value(), "Not Found", ex.getMessage(), req.getRequestURI());
+    }
+
     // ── 400 Bad Request ──────────────────────────────────────────────────────
 
     @ExceptionHandler(IllegalArgumentException.class)

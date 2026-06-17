@@ -1,7 +1,7 @@
 package com.midas.d3.statemachine.action;
 
-import com.midas.d3.config.AsyncConfig;
 import com.midas.d3.context.MidasContext;
+import com.midas.d3.config.AsyncConfig;
 import com.midas.d3.persistence.PersistenceService;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
@@ -145,7 +145,10 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
             // Persist the artifact path and mark COMPLETED before sending over the network.
             persistenceService.completeRun(runId, zipFile.getAbsolutePath());
 
-            bot.sendArtifactDocument(chatId, zipFile, CAPTION_SUCCESS);
+            boolean delivered = bot.sendArtifactDocument(chatId, zipFile, CAPTION_SUCCESS);
+            if (delivered) {
+                bot.updatePipelineCompletionMessage(ctx, true);
+            }
 
             log.info("[PipelineCompletionAction] Artifact ZIP delivered to chat [{}] for run [{}].",
                     chatId, runId);

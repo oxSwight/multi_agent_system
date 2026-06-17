@@ -486,6 +486,65 @@ class PipelineControllerIT {
     // ── Full happy-path through all 7 stages ─────────────────────────────────
 
     @Test
+    @DisplayName("GET /{runId}/artifacts before completion → 404")
+    void getArtifacts_runNotCompleted_returns404() {
+        String runId = startRun("Artifact not ready yet");
+        try {
+            given()
+                .when()
+                    .get("/" + runId + "/artifacts")
+                .then()
+                    .statusCode(404)
+                    .body("status", equalTo(404))
+                    .body("message", containsString("not COMPLETED"));
+        } finally {
+            cleanup(runId);
+        }
+    }
+
+    @Test
+    @DisplayName("GET /unknown/artifacts → 404")
+    void getArtifacts_unknownRun_returns404() {
+        given()
+            .when()
+                .get("/unknown-artifact-run/artifacts")
+            .then()
+                .statusCode(404);
+    }
+
+    @Test
+    @DisplayName("Happy path: completed pipeline → GET /artifacts streams application/zip")
+    void getArtifacts_completedRun_streamsZip() {
+        String runId = startRun("Build a full-stack task management system");
+        try {
+            submit(runId, VALID_TECH_SPEC,    "ARCHITECTURE_DESIGN");
+            submit(runId, VALID_ARCHITECTURE, "INTEGRATION_STRATEGY");
+            submit(runId, VALID_INTEGRATION,  "CODE_GENERATION");
+            submit(runId, VALID_CODE_GEN,     "TEST_GENERATION");
+            submit(runId, VALID_TESTS,        "SECOPS_AUDIT");
+            submit(runId, VALID_SECOPS,       "PRODUCT_REVIEW");
+            submit(runId, VALID_CONTROLLER,   "COMPLETED");
+
+            awaitArtifactAvailable(runId);
+
+            byte[] body = given()
+                .when()
+                    .get("/" + runId + "/artifacts")
+                .then()
+                    .statusCode(200)
+                    .header("Content-Type", containsString("application/zip"))
+                    .header("Content-Disposition", containsString("attachment"))
+                    .extract().asByteArray();
+
+            assertThat(body.length).isGreaterThan(22);
+            assertThat(body[0]).isEqualTo((byte) 0x50);
+            assertThat(body[1]).isEqualTo((byte) 0x4B);
+        } finally {
+            cleanup(runId);
+        }
+    }
+
+    @Test
     @DisplayName("Happy path: start + 7 valid submissions → COMPLETED, all artifacts present")
     void happyPath_fullPipeline_completesWithAllArtifacts() {
         String runId = startRun("Build a full-stack task management system");
@@ -595,6 +654,27 @@ class PipelineControllerIT {
             .then()
                 .statusCode(200)
                 .body("state", equalTo(expectedState));
+    }
+
+    private void awaitArtifactAvailable(String runId) {
+        int attempts = 50;
+        for (int i = 0; i < attempts; i++) {
+            int status = given()
+                    .when()
+                    .get("/" + runId + "/artifacts")
+                    .then()
+                    .extract().statusCode();
+            if (status == 200) {
+                return;
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Interrupted while waiting for artifact packaging", e);
+            }
+        }
+        throw new AssertionError("Artifact ZIP not available for run " + runId + " after polling");
     }
 
     /** Silently resets a run; swallows errors so test teardown never masks real failures. */

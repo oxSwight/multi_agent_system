@@ -5,9 +5,15 @@ import com.midas.d3.context.MidasContext;
 import com.midas.d3.statemachine.PipelineOrchestrator;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.File;
 import java.util.Map;
 
 /**
@@ -18,7 +24,8 @@ import java.util.Map;
  *  POST   /api/v1/pipelines                 — start a new pipeline run        → 201
  *  POST   /api/v1/pipelines/{runId}/submit  — submit an LLM result            → 200
  *  GET    /api/v1/pipelines/{runId}/status  — query the current state         → 200
- *  GET    /api/v1/pipelines/{runId}/context — full context snapshot           → 200
+ *  GET    /api/v1/pipelines/{runId}/context   — full context snapshot           → 200
+ *  GET    /api/v1/pipelines/{runId}/artifacts — stream persisted artifact ZIP → 200 / 404
  *  DELETE /api/v1/pipelines/{runId}         — reset / remove the run          → 204
  *  GET    /api/v1/pipelines/count           — number of in-memory active runs → 200
  * </pre>
@@ -31,6 +38,7 @@ import java.util.Map;
 public class PipelineController {
 
     private final PipelineOrchestrator orchestrator;
+    private final PipelineArtifactService artifactService;
 
     // ── POST /api/v1/pipelines ────────────────────────────────────────────────
 
@@ -88,6 +96,18 @@ public class PipelineController {
                 .orElseThrow(() -> new PipelineOrchestrator.PipelineNotFoundException(
                         "No context found for run: " + runId));
         return PipelineContextResponse.from(ctx, orchestrator.getState(runId).name());
+    }
+
+    @GetMapping("/{runId}/artifacts")
+    public ResponseEntity<Resource> streamArtifacts(@PathVariable String runId) {
+        File zipFile = artifactService.resolveArtifactZip(runId);
+        Resource resource = new FileSystemResource(zipFile);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + zipFile.getName() + "\"")
+                .contentType(MediaType.parseMediaType("application/zip"))
+                .contentLength(zipFile.length())
+                .body(resource);
     }
 
     // ── DELETE /api/v1/pipelines/{runId} ─────────────────────────────────────
