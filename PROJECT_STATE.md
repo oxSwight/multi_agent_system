@@ -239,13 +239,32 @@ the Integration stage. Covered by `PipelineTopologyTest`,
 **Test status (2026-06-17):** `257` tests run, **0 failures** — suite green
 after Phase 4 strict-schema finalization. Run: `.\mvnw.cmd test`
 
-### In Progress
+### In Progress — Phase 5 (HYBRID Implementation Fan-Out)
 
-_(none)_
+> **Branch:** `main`
+> **Test status (2026-06-17):** `273` tests run, **0 failures** — suite green
+> after HYBRID fan-out implementation. Run: `.\mvnw.cmd test`
 
-### Next Up (Post Phase 4)
+When `runtime_environment.execution_model` is `HYBRID`, `CODE_GENERATION` forks
+into two bounded internal LLM passes (client surface, then server surface) inside
+`CodeGenerationCoordinator`. Non-HYBRID models (`CLIENT_SIDE`, `SERVER_SIDE`, `CLI`)
+bypass the fork and use the standard single-pass `IMPLEMENTATION_ENGINEER_PROMPT`.
 
-- **Phase 5 candidate:** HYBRID implementation fan-out (see §4 Agent Handoff).
+Key components:
+
+| Layer | Files |
+| --- | --- |
+| Detection | `HybridExecutionModel`, `PipelineTopology.requiresHybridImplementationFanOut(ctx)` |
+| Context slicing | `ContextReducer.reduceImplementationPass(ctx, surface)`, `ArchitectureSurfaceSlicer` |
+| Orchestration | `CodeGenerationCoordinator` (used by `AgentOrchestrationService` + `ImplementationEngineerAgent`) |
+| Merge | `ImplementationSourceMerger` — disjoint path union with duplicate-path fail-fast |
+| Prompts | `HYBRID_CLIENT_IMPLEMENTATION_PROMPT`, `HYBRID_SERVER_IMPLEMENTATION_PROMPT` |
+| Unit tests | `HybridExecutionModelTest`, `ArchitectureSurfaceSlicerTest`, `ImplementationSourceMergerTest`, `CodeGenerationCoordinatorTest`, `ContextReducerTest`, `PipelineTopologyTest`, `AgentOrchestrationServiceTest` |
+
+Awaiting product-owner verification before merge.
+
+### Next Up (Post Phase 5)
+
 - Human-in-the-loop review of Controller REJECT reports before pipeline reset.
 - Extend dynamic routing to additional skip-eligible stages if product rules emerge.
 
@@ -294,34 +313,15 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-17)
 
-**Working tree:** Phase 4 complete — dynamic integration skip + strict
-`has_external_integrations` schema enforcement on Architecture Design.
+**Working tree:** Phase 5 HYBRID fan-out implemented; awaiting verification.
 
-**Phase 5 proposal (awaiting strategic decision — do not implement yet):**
+**What the next agent / reviewer should verify:**
 
-Recommend **HYBRID Implementation Fan-Out within `CODE_GENERATION`**.
-
-| Option | Structural safety | ROI | Verdict |
-| --- | --- | --- | --- |
-| Client-only backend skip | Highest (extends Phase 4 routing pattern) | Low–medium — Integration skip already captures the main cost lever; there is no separate backend stage anymore | Defer |
-| **HYBRID fan-out at Implementation** | **Medium — bounded fork/merge inside one topology stage** | **Highest — fixes the core semantic/workload mismatch for `execution_model: HYBRID` projects** | **Recommend** |
-| Bounded Controller feedback loop | Lowest — backward SSM transitions, partial re-runs, context pollution | Medium — quality gains but REJECT→ERROR is intentional and tested | Defer |
-
-**Rationale:** Phase 4 proved that topology-driven routing + strict schema flags
-is the safe evolution path. The remaining pain point from the original Workforce
-Evaluation is workload mismatch: a single Implementation Engineer must emit
-both client surface (e.g. `content_script.ts`, popup UI) and server surface
-(e.g. Spring controllers) in one monolithic JSON map when
-`runtime_environment.execution_model` is `HYBRID`. That strains context window,
-hurts file coherence, and is the main quality bottleneck for hybrid products.
-
-A bounded fan-out keeps the seven-stage SSM shape intact: when
-`execution_model == HYBRID`, `PipelineTopology` forks `CODE_GENERATION` into
-two internal passes (Client Implementation + Server Implementation) that merge
-into `generatedSourceCode` before `TEST_GENERATION`. Reuse existing
-`PipelineTopology.nextStage(stage, ctx)`, `ContextReducer` role slices, and
-Zero-Placeholder validators — no new terminal states, no backward loops.
-Strict boolean routing flags (mirroring Phase 4) gate the fork.
+1. HYBRID projects (`execution_model: HYBRID` on technical spec) trigger two LLM
+   passes at `CODE_GENERATION` with sliced context and merged `generatedSourceCode`.
+2. Non-HYBRID projects still use a single implementation pass (no regression).
+3. Merge rejects duplicate file paths across client/server passes.
+4. SSM topology unchanged — fan-out is internal to `CODE_GENERATION`; no backward loops.
 
 **Do not** change REJECT→ERROR semantics unless product owner explicitly
 requests a feedback-loop design; current behaviour is intentional and covered

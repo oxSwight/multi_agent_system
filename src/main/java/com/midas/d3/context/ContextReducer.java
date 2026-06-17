@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.midas.d3.agent.implementation.ArchitectureSurfaceSlicer;
+import com.midas.d3.agent.implementation.ImplementationSurface;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -151,6 +153,36 @@ public class ContextReducer {
 
         return AgentContextView.builder()
                 .agentName(role.name())
+                .pipelineRunId(context.getPipelineRunId())
+                .rawUserIdea(context.getRawUserIdea())
+                .requiredArtifacts(artifacts)
+                .estimatedTokenBudget(estimatedTokens)
+                .build();
+    }
+
+    /**
+     * Builds a context view for one bounded HYBRID implementation pass. Starts from the standard
+     * {@link AgentRole#IMPLEMENTATION_ENGINEER} dependency set, then slices {@code architectureDesign}
+     * to the client or server surface so each LLM call avoids irrelevant boilerplate.
+     */
+    public AgentContextView reduceImplementationPass(MidasContext context, ImplementationSurface surface) {
+        Objects.requireNonNull(surface, "surface must not be null");
+        AgentContextView base = reduce(context, AgentRole.IMPLEMENTATION_ENGINEER);
+        Map<String, JsonNode> artifacts = new LinkedHashMap<>(base.safeArtifacts());
+
+        JsonNode architecture = artifacts.get("architectureDesign");
+        if (architecture != null && !architecture.isNull()) {
+            artifacts.put("architectureDesign",
+                    ArchitectureSurfaceSlicer.slice(architecture, surface, objectMapper));
+        }
+
+        int estimatedTokens = estimateTokens(context.getRawUserIdea(), artifacts);
+
+        log.debug("ContextReducer → HYBRID {} pass artifacts={} estimatedTokens={}",
+                surface, artifacts.keySet(), estimatedTokens);
+
+        return AgentContextView.builder()
+                .agentName("IMPLEMENTATION_ENGINEER_" + surface.name())
                 .pipelineRunId(context.getPipelineRunId())
                 .rawUserIdea(context.getRawUserIdea())
                 .requiredArtifacts(artifacts)

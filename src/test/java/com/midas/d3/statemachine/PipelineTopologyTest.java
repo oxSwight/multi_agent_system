@@ -135,6 +135,30 @@ class PipelineTopologyTest {
     }
 
     @Test
+    @DisplayName("requiresHybridImplementationFanOut is true when execution_model is HYBRID")
+    void requiresHybridFanOut_trueForHybridContext() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var spec = mapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var ctx = MidasContext.start("Build hybrid", "run-001").withTechnicalSpec(spec);
+
+        assertThat(topology.requiresHybridImplementationFanOut(ctx)).isTrue();
+    }
+
+    @Test
+    @DisplayName("requiresHybridImplementationFanOut is false for SERVER_SIDE projects")
+    void requiresHybridFanOut_falseForServerSide() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var spec = mapper.readTree("""
+                {"runtime_environment":{"execution_model":"SERVER_SIDE"}}
+                """);
+        var ctx = MidasContext.start("Build API", "run-001").withTechnicalSpec(spec);
+
+        assertThat(topology.requiresHybridImplementationFanOut(ctx)).isFalse();
+    }
+
+    @Test
     @DisplayName("only the last processing stage (PRODUCT_REVIEW) is final (successor = COMPLETED)")
     void onlyLastStageIsFinal() {
         assertThat(topology.isFinalStage(MidasState.PRODUCT_REVIEW)).isTrue();

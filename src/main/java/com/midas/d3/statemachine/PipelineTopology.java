@@ -1,6 +1,7 @@
 package com.midas.d3.statemachine;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.agent.implementation.HybridExecutionModel;
 import com.midas.d3.context.MidasContext;
 import org.springframework.stereotype.Component;
 
@@ -184,6 +185,15 @@ public class PipelineTopology {
             return true;
         }
         return explicitNoExternalIntegrations(ctx.getTechnicalSpec());
+    }
+
+    /**
+     * {@code true} when {@code CODE_GENERATION} must fork into bounded client/server passes
+     * ({@code runtime_environment.execution_model == HYBRID}).
+     */
+    public boolean requiresHybridImplementationFanOut(MidasContext ctx) {
+        Objects.requireNonNull(ctx, "ctx must not be null");
+        return HybridExecutionModel.isHybrid(ctx);
     }
 
     /** {@code true} iff {@code stage} is the final processing stage (its successor is COMPLETED). */

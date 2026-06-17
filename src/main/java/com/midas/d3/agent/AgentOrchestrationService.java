@@ -2,6 +2,8 @@ package com.midas.d3.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.agent.base.AgentResult;
+import com.midas.d3.agent.implementation.CodeGenerationCoordinator;
 import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
@@ -54,6 +56,7 @@ public class AgentOrchestrationService {
     private final LlmClient             llmClient;
     private final AgentSystemPrompts    agentSystemPrompts;
     private final ObjectMapper          objectMapper;
+    private final CodeGenerationCoordinator codeGenerationCoordinator;
 
     /** Maps pipeline stages to their ContextReducer agent roles. */
     private static final Map<MidasState, ContextReducer.AgentRole> STAGE_TO_ROLE =
@@ -106,6 +109,15 @@ public class AgentOrchestrationService {
 
         MidasContext context = pipelineOrchestrator.getContext(runId)
                 .orElseThrow(() -> new IllegalStateException("MidasContext not found for run: " + runId));
+
+        if (currentState == MidasState.CODE_GENERATION) {
+            AgentResult result = codeGenerationCoordinator.execute(context, "ImplementationEngineer");
+            pipelineOrchestrator.submitResult(runId, result.rawLlmOutput());
+            MidasState newState = pipelineOrchestrator.getState(runId);
+            log.info("[AgentOrchestrationService] Run [{}] — CODE_GENERATION done. New state: [{}].",
+                    runId, newState);
+            return newState;
+        }
 
         // 1. Reduce context to minimal required artifacts
         ContextReducer.AgentRole role = STAGE_TO_ROLE.get(currentState);

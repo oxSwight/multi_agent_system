@@ -1,8 +1,11 @@
 package com.midas.d3.agent.impl;
 
 import com.midas.d3.agent.AgentSystemPrompts;
+import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.base.BaseMidasAgent;
+import com.midas.d3.agent.implementation.CodeGenerationCoordinator;
 import com.midas.d3.context.ContextReducer;
+import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import org.springframework.stereotype.Component;
@@ -22,10 +25,19 @@ import org.springframework.stereotype.Component;
 @Component
 public class ImplementationEngineerAgent extends BaseMidasAgent {
 
-    public ImplementationEngineerAgent(LlmClient         llmClient,
-                                       ContextReducer    contextReducer,
-                                       ValidatorRegistry validatorRegistry) {
+    private final CodeGenerationCoordinator codeGenerationCoordinator;
+
+    public ImplementationEngineerAgent(LlmClient                  llmClient,
+                                       ContextReducer             contextReducer,
+                                       ValidatorRegistry          validatorRegistry,
+                                       CodeGenerationCoordinator  codeGenerationCoordinator) {
         super(llmClient, contextReducer, validatorRegistry);
+        this.codeGenerationCoordinator = codeGenerationCoordinator;
+    }
+
+    @Override
+    protected AgentResult tryCustomExecution(MidasContext context) {
+        return codeGenerationCoordinator.execute(context, getAgentName());
     }
 
     @Override

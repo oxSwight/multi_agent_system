@@ -2,6 +2,8 @@ package com.midas.d3.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.config.JacksonConfig;
+import com.midas.d3.agent.base.AgentResult;
+import com.midas.d3.agent.implementation.CodeGenerationCoordinator;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
@@ -35,6 +37,7 @@ class AgentOrchestrationServiceTest {
     @Mock private ContextReducer        contextReducer;
     @Mock private LlmClient             llmClient;
     @Mock private AgentSystemPrompts    agentSystemPrompts;
+    @Mock private CodeGenerationCoordinator codeGenerationCoordinator;
 
     private ObjectMapper objectMapper;
     private AgentOrchestrationService service;
@@ -55,7 +58,8 @@ class AgentOrchestrationServiceTest {
     void setUp() {
         objectMapper = new JacksonConfig().objectMapper();
         service = new AgentOrchestrationService(
-                pipelineOrchestrator, contextReducer, llmClient, agentSystemPrompts, objectMapper);
+                pipelineOrchestrator, contextReducer, llmClient, agentSystemPrompts,
+                objectMapper, codeGenerationCoordinator);
     }
 
     // ── Happy path ────────────────────────────────────────────────────────────
@@ -165,6 +169,35 @@ class AgentOrchestrationServiceTest {
             assertThatThrownBy(() -> service.runCurrentStage(RUN_ID))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("MidasContext not found");
+        }
+    }
+
+    // ── CODE_GENERATION / HYBRID fan-out ────────────────────────────────────
+
+    @Nested
+    class CodeGenerationStage {
+
+        @Test
+        @DisplayName("CODE_GENERATION delegates to CodeGenerationCoordinator instead of direct LLM call")
+        void runCurrentStage_codeGeneration_usesCoordinator() throws Exception {
+            when(pipelineOrchestrator.getState(RUN_ID)).thenReturn(MidasState.CODE_GENERATION);
+            when(pipelineOrchestrator.getContext(RUN_ID)).thenReturn(
+                    Optional.of(com.midas.d3.context.MidasContext.start("Build hybrid", RUN_ID)));
+            when(codeGenerationCoordinator.execute(any(), eq("ImplementationEngineer")))
+                    .thenReturn(new AgentResult(
+                            new JacksonConfig().objectMapper().createObjectNode(),
+                            "{\"App.java\":\"class App {}\"}",
+                            2));
+            when(pipelineOrchestrator.getState(RUN_ID))
+                    .thenReturn(MidasState.CODE_GENERATION)
+                    .thenReturn(MidasState.TEST_GENERATION);
+
+            MidasState result = service.runCurrentStage(RUN_ID);
+
+            assertThat(result).isEqualTo(MidasState.TEST_GENERATION);
+            verify(codeGenerationCoordinator).execute(any(), eq("ImplementationEngineer"));
+            verify(llmClient, never()).call(any());
+            verify(pipelineOrchestrator).submitResult(eq(RUN_ID), eq("{\"App.java\":\"class App {}\"}"));
         }
     }
 

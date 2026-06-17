@@ -1,6 +1,7 @@
 package com.midas.d3.context;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.agent.implementation.ImplementationSurface;
 import com.midas.d3.config.JacksonConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -131,6 +132,37 @@ class ContextReducerTest {
         assertThatThrownBy(() -> reducer.reduce(ctx, ContextReducer.AgentRole.CONTROLLER))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("secOpsArtifacts");
+    }
+
+    @Test
+    void reduce_implementationPass_clientSlice_omitsServerFileLayout() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var arch = objectMapper.readTree("""
+                {
+                  "architecture_style":"CLIENT_SERVER",
+                  "components":[
+                    {"name":"popup","type":"UI","responsibility":"UI"},
+                    {"name":"Api","type":"CONTROLLER","responsibility":"API"}
+                  ],
+                  "file_layout":["manifest.json","src/main/java/com/example/App.java"],
+                  "api_contracts":[{"method":"GET","path":"/api/items"}]
+                }
+                """);
+        var ctx = MidasContext.start("Build hybrid", "run-001")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch);
+
+        var view = reducer.reduceImplementationPass(ctx, ImplementationSurface.CLIENT);
+
+        assertThat(view.getAgentName()).isEqualTo("IMPLEMENTATION_ENGINEER_CLIENT");
+        assertThat(view.safeArtifacts().get("architectureDesign").get("file_layout"))
+                .hasSize(1);
+        assertThat(view.safeArtifacts().get("architectureDesign").get("file_layout").get(0).asText())
+                .isEqualTo("manifest.json");
+        assertThat(view.safeArtifacts().get("architectureDesign").get("api_contracts"))
+                .isEmpty();
     }
 
     @Test

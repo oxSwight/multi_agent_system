@@ -94,6 +94,14 @@ public abstract class BaseMidasAgent {
     /** Full system prompt that is sent to the LLM on every call. */
     public abstract String getSystemPrompt();
 
+    /**
+     * Optional hook for agents whose execution protocol differs from the default single-pass loop.
+     * Return non-null to bypass {@link #execute(MidasContext)}'s built-in retry protocol entirely.
+     */
+    protected AgentResult tryCustomExecution(MidasContext context) {
+        return null;
+    }
+
     // ── Template method (sealed execution protocol) ───────────────────────────
 
     /**
@@ -105,6 +113,11 @@ public abstract class BaseMidasAgent {
      * @throws LlmCallException        if a non-retryable transport error occurs
      */
     public final AgentResult execute(MidasContext context) {
+        AgentResult custom = tryCustomExecution(context);
+        if (custom != null) {
+            return custom;
+        }
+
         MidasState stage = resolveStage();
 
         AgentContextView view = contextReducer.reduce(context, getRole());
