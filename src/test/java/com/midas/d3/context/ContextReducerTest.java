@@ -1,5 +1,6 @@
 package com.midas.d3.context;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.agent.implementation.ImplementationSurface;
 import com.midas.d3.config.JacksonConfig;
@@ -7,6 +8,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -355,5 +358,210 @@ class ContextReducerTest {
         var ctx = MidasContext.start("Build a todo app with authentication", "run-001");
         var view = reducer.reduce(ctx, ContextReducer.AgentRole.SYSTEM_ANALYST);
         assertThat(view.getEstimatedTokenBudget()).isGreaterThan(0);
+    }
+
+    // ── Patch reducer methods ────────────────────────────────────────────────
+
+    @Test
+    void reducePatchImplementationPass_includesFilteredBaselineSource() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var source = objectMapper.readTree("""
+                {
+                  "src/App.java": "public class App {}",
+                  "src/Service.java": "public class Service {}",
+                  "src/Util.java": "public class Util {}"
+                }
+                """);
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","remediation_mode":"SURGICAL_PATCH"}
+                """);
+        var ctx = MidasContext.start("Build an app", "run-patch-01")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withGeneratedSourceCode(source)
+                .withRemediationDirective(directive);
+
+        var view = reducer.reducePatchImplementationPass(ctx, List.of("src/App.java", "src/Service.java"));
+
+        assertThat(view.getAgentName()).isEqualTo("IMPLEMENTATION_ENGINEER_PATCH");
+        assertThat(view.safeArtifacts()).containsKeys("technicalSpec", "architectureDesign",
+                "generatedSourceCode", "remediationDirective");
+        JsonNode filteredSource = view.safeArtifacts().get("generatedSourceCode");
+        assertThat(filteredSource.size()).isEqualTo(2);
+        assertThat(filteredSource.has("src/App.java")).isTrue();
+        assertThat(filteredSource.has("src/Service.java")).isTrue();
+        assertThat(filteredSource.has("src/Util.java")).isFalse();
+    }
+
+    @Test
+    void reducePatchImplementationPass_missingRequiredSpec_throws() throws Exception {
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var ctx = MidasContext.start("Build an app", "run-patch-02")
+                .withArchitectureDesign(arch);
+
+        assertThatThrownBy(() -> reducer.reducePatchImplementationPass(ctx, List.of("src/App.java")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("technicalSpec");
+    }
+
+    @Test
+    void reducePatchImplementationPass_noBaselineSource_omitsSourceArtifact() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var ctx = MidasContext.start("Build an app", "run-patch-03")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch);
+
+        var view = reducer.reducePatchImplementationPass(ctx, List.of("src/App.java"));
+
+        assertThat(view.safeArtifacts()).doesNotContainKey("generatedSourceCode");
+    }
+
+    @Test
+    void reducePatchTestPass_usesFilteredPatchedSource() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var patchedSource = objectMapper.readTree("""
+                {
+                  "src/App.java": "public class App { public static void main(String[] a) {} }",
+                  "src/Service.java": "public class Service { public void run() {} }"
+                }
+                """);
+        var ctx = MidasContext.start("Build an app", "run-patch-04")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch);
+
+        var view = reducer.reducePatchTestPass(ctx, List.of("src/App.java"), patchedSource);
+
+        assertThat(view.getAgentName()).isEqualTo("QA_ENGINEER_PATCH");
+        assertThat(view.safeArtifacts()).containsKeys("technicalSpec", "architectureDesign", "generatedSourceCode");
+        JsonNode filteredSource = view.safeArtifacts().get("generatedSourceCode");
+        assertThat(filteredSource.size()).isEqualTo(1);
+        assertThat(filteredSource.has("src/App.java")).isTrue();
+        assertThat(filteredSource.has("src/Service.java")).isFalse();
+    }
+
+    @Test
+    void reducePatchTestPass_withRemediationDirective_preservesDirective() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var patchedSource = objectMapper.readTree("{\"src/App.java\":\"code\"}");
+        var directive = objectMapper.readTree("{\"source_verdict\":\"REJECT\",\"remediation_mode\":\"SURGICAL_PATCH\"}");
+        var ctx = MidasContext.start("Build an app", "run-patch-05")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withRemediationDirective(directive);
+
+        var view = reducer.reducePatchTestPass(ctx, List.of("src/App.java"), patchedSource);
+
+        assertThat(view.safeArtifacts()).containsKey("remediationDirective");
+    }
+
+    @Test
+    void reducePatchTestPass_missingRequiredArch_throws() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var patchedSource = objectMapper.readTree("{\"src/App.java\":\"code\"}");
+        var ctx = MidasContext.start("Build an app", "run-patch-06")
+                .withTechnicalSpec(spec);
+
+        assertThatThrownBy(() -> reducer.reducePatchTestPass(ctx, List.of("src/App.java"), patchedSource))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("architectureDesign");
+    }
+
+    @Test
+    void reducePatchSecOpsPass_usesFilteredPatchedSourceAndTests() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var patchedSource = objectMapper.readTree("""
+                {
+                  "src/App.java": "public class App {}",
+                  "src/Util.java": "public class Util {}"
+                }
+                """);
+        var patchedTests = objectMapper.readTree("""
+                {
+                  "src/AppTest.java": "class AppTest {}",
+                  "src/UtilTest.java": "class UtilTest {}"
+                }
+                """);
+        var ctx = MidasContext.start("Build an app", "run-patch-07")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch);
+
+        var view = reducer.reducePatchSecOpsPass(
+                ctx,
+                List.of("src/App.java", "src/AppTest.java"),
+                patchedSource,
+                patchedTests);
+
+        assertThat(view.getAgentName()).isEqualTo("SECOPS_ENGINEER_PATCH");
+        assertThat(view.safeArtifacts()).containsKeys(
+                "technicalSpec", "architectureDesign", "generatedSourceCode", "generatedTests");
+
+        JsonNode filteredSource = view.safeArtifacts().get("generatedSourceCode");
+        assertThat(filteredSource.size()).isEqualTo(1);
+        assertThat(filteredSource.has("src/App.java")).isTrue();
+        assertThat(filteredSource.has("src/Util.java")).isFalse();
+
+        JsonNode filteredTests = view.safeArtifacts().get("generatedTests");
+        assertThat(filteredTests.size()).isEqualTo(1);
+        assertThat(filteredTests.has("src/AppTest.java")).isTrue();
+        assertThat(filteredTests.has("src/UtilTest.java")).isFalse();
+    }
+
+    @Test
+    void reducePatchSecOpsPass_missingRequiredSpec_throws() throws Exception {
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var source = objectMapper.readTree("{\"src/App.java\":\"code\"}");
+        var tests = objectMapper.readTree("{\"src/AppTest.java\":\"test\"}");
+        var ctx = MidasContext.start("Build an app", "run-patch-08")
+                .withArchitectureDesign(arch);
+
+        assertThatThrownBy(() -> reducer.reducePatchSecOpsPass(
+                ctx, List.of("src/App.java"), source, tests))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("technicalSpec");
+    }
+
+    @Test
+    void reducePatchSecOpsPass_withRemediationDirective_preservesDirective() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var source = objectMapper.readTree("{\"src/App.java\":\"code\"}");
+        var tests = objectMapper.readTree("{\"src/AppTest.java\":\"test\"}");
+        var directive = objectMapper.readTree("{\"source_verdict\":\"REJECT\",\"remediation_mode\":\"SURGICAL_PATCH\"}");
+        var ctx = MidasContext.start("Build an app", "run-patch-09")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withRemediationDirective(directive);
+
+        var view = reducer.reducePatchSecOpsPass(
+                ctx, List.of("src/App.java"), source, tests);
+
+        assertThat(view.safeArtifacts()).containsKey("remediationDirective");
+        assertThat(view.safeArtifacts()).doesNotContainKey("featureManifest");
+    }
+
+    @Test
+    void reducePatchImplementationPass_nullContext_throwsNullPointer() {
+        assertThatThrownBy(() -> reducer.reducePatchImplementationPass(null, List.of("a")))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void reducePatchTestPass_nullPatchedSource_throwsNullPointer() throws Exception {
+        var ctx = MidasContext.start("idea", "run-001");
+        assertThatThrownBy(() -> reducer.reducePatchTestPass(ctx, List.of("a"), null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void reducePatchSecOpsPass_nullPatchedTests_throwsNullPointer() throws Exception {
+        var ctx = MidasContext.start("idea", "run-001");
+        var source = objectMapper.readTree("{\"src/App.java\":\"code\"}");
+        assertThatThrownBy(() -> reducer.reducePatchSecOpsPass(ctx, List.of("a"), source, null))
+                .isInstanceOf(NullPointerException.class);
     }
 }

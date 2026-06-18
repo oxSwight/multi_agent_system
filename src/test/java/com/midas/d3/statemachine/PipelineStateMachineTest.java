@@ -508,8 +508,14 @@ class PipelineStateMachineTest {
         assertThat(ctx.getRemediationDirective().get("source_verdict").asText()).isEqualTo("REJECT");
         assertThat(ctx.getRemediationDirective().get("required_changes").isArray()).isTrue();
         assertThat(ctx.getRemediationDirective().get("required_changes")).isNotEmpty();
-        assertThat(ctx.getGeneratedSourceCode()).isNull();
-        assertThat(ctx.getGeneratedTests()).isNull();
+        assertThat(ctx.getRemediationDirective().get("remediation_mode").asText()).isEqualTo("SURGICAL_PATCH");
+        assertThat(ctx.getRemediationDirective().get("affected_paths").isArray()).isTrue();
+        assertThat(ctx.getRemediationDirective().get("affected_paths")).isNotEmpty();
+        assertThat(ctx.getRemediationDirective().get("affected_features").isArray()).isTrue();
+        assertThat(ctx.getRemediationDirective().get("affected_features")).isNotEmpty();
+        assertThat(ctx.getGeneratedSourceCode()).isNotNull();
+        assertThat(ctx.getGeneratedTests()).isNotNull();
+        assertThat(ctx.getFeatureManifest()).isNotNull();
         assertThat(ctx.getSecOpsArtifacts()).isNull();
         assertThat(ctx.getTechnicalSpec()).isNotNull();
         assertThat(ctx.getArchitectureDesign()).isNotNull();

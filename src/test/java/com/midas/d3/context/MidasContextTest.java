@@ -103,7 +103,14 @@ class MidasContextTest {
     void withRemediationDirective_roundTripsViaAccessor() throws Exception {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         var directive = mapper.readTree("""
-                {"source_verdict":"REJECT","required_changes":["Fix assignment"],"remediation_attempt":1}
+                {
+                  "source_verdict":"REJECT",
+                  "required_changes":["Fix assignment"],
+                  "remediation_attempt":1,
+                  "remediation_mode":"SURGICAL_PATCH",
+                  "affected_paths":["src/main/java/com/example/TaskController.java"],
+                  "affected_features":["assign-task"]
+                }
                 """);
         var ctx = MidasContext.start("idea", "run-001")
                 .withProductReviewRemediationAttempts(1)
@@ -112,5 +119,9 @@ class MidasContextTest {
         assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
         assertThat(ctx.getRemediationDirectiveOpt()).isPresent();
         assertThat(ctx.getRemediationDirective().get("source_verdict").asText()).isEqualTo("REJECT");
+        assertThat(ctx.getRemediationDirective().get("remediation_mode").asText()).isEqualTo("SURGICAL_PATCH");
+        assertThat(ctx.getRemediationDirective().get("affected_paths").get(0).asText())
+                .isEqualTo("src/main/java/com/example/TaskController.java");
+        assertThat(ctx.getRemediationDirective().get("affected_features").get(0).asText()).isEqualTo("assign-task");
     }
 }

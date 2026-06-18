@@ -78,8 +78,50 @@ class TelegramStateListenerTest {
         String message = TelegramStateListener.renderRemediationInProgress(ctx);
 
         assertThat(message).contains("Контролер выявил недочеты");
-        assertThat(message).contains("Попытка 1 из 1");
-        assertThat(message).contains("Корректировка исходного кода");
+        assertThat(message).contains("попытка 1 из 1");
+        assertThat(message).contains("Полная перегенерация");
+    }
+
+    @Test
+    @DisplayName("renderRemediationInProgress differentiates surgical patch vs full regeneration")
+    void renderRemediationInProgress_surgicalMode_usesSurgicalLabel() throws Exception {
+        JsonNode directive = MAPPER.readTree("""
+                {
+                  "source_verdict":"REJECT",
+                  "remediation_mode":"SURGICAL_PATCH",
+                  "remediation_attempt":1,
+                  "max_remediation_attempts":1
+                }
+                """);
+        MidasContext ctx = MidasContext.start("Build a CRM", "run-surgical-ui")
+                .withProductReviewRemediationAttempts(1)
+                .withRemediationDirective(directive);
+
+        String message = TelegramStateListener.renderRemediationInProgress(ctx);
+
+        assertThat(message).contains("Точечная корректировка");
+        assertThat(message).doesNotContain("Полная перегенерация");
+    }
+
+    @Test
+    @DisplayName("renderRemediationInProgress shows full regeneration label for FULL_REGEN mode")
+    void renderRemediationInProgress_fullRegenMode_usesFullRegenLabel() throws Exception {
+        JsonNode directive = MAPPER.readTree("""
+                {
+                  "source_verdict":"REJECT",
+                  "remediation_mode":"FULL_REGEN",
+                  "remediation_attempt":1,
+                  "max_remediation_attempts":1
+                }
+                """);
+        MidasContext ctx = MidasContext.start("Build a CRM", "run-full-regen-ui")
+                .withProductReviewRemediationAttempts(1)
+                .withRemediationDirective(directive);
+
+        String message = TelegramStateListener.renderRemediationInProgress(ctx);
+
+        assertThat(message).contains("Полная перегенерация");
+        assertThat(message).doesNotContain("Точечная корректировка");
     }
 
     @Test

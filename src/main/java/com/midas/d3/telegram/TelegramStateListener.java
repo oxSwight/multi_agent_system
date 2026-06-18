@@ -7,6 +7,7 @@ import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineContextKeys;
 import com.midas.d3.statemachine.PipelineTopology;
+import com.midas.d3.statemachine.remediation.RemediationDirectiveSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.statemachine.StateContext;
 import org.springframework.statemachine.listener.StateMachineListenerAdapter;
@@ -158,10 +159,17 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
     static String renderRemediationInProgress(MidasContext ctx) {
         int attempt = ctx.getProductReviewRemediationAttempts();
         int maxAttempts = remediationMaxAttempts(ctx);
+        boolean surgical = RemediationDirectiveSupport.isSurgicalPatch(ctx.getRemediationDirective());
+        String modeLabel = surgical
+                ? "Точечная корректировка"
+                : "Полная перегенерация";
+        String agentLine = surgical
+                ? "<i>Агент 4 — Точечная корректировка исходного кода...</i>"
+                : "<i>Агент 4 — Полная перегенерация исходного кода...</i>";
         return HEADER + "[🟩🟩🟩🟩⬜⬜⬜]\n\n" +
                 "⚠️ <b>Контролер выявил недочеты.</b>\n" +
-                "Запущен цикл автоматического исправления (Попытка " + attempt + " из " + maxAttempts + ")...\n\n" +
-                "<i>Агент 4 — Корректировка исходного кода...</i>";
+                "Запущен цикл автоматического исправления (" + modeLabel + ", попытка " + attempt + " из " + maxAttempts + ")...\n\n" +
+                agentLine;
     }
 
     private static int remediationMaxAttempts(MidasContext ctx) {

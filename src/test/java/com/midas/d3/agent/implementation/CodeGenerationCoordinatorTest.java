@@ -1,336 +1,450 @@
-package com.midas.d3.agent.implementation;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.midas.d3.agent.AgentSystemPrompts;
-import com.midas.d3.agent.base.AgentResult;
-import com.midas.d3.config.JacksonConfig;
-import com.midas.d3.context.AgentContextView;
-import com.midas.d3.context.ContextReducer;
-import com.midas.d3.context.MidasContext;
-import com.midas.d3.llm.LlmCallException;
-import com.midas.d3.llm.LlmCallRequest;
-import com.midas.d3.llm.LlmCallResult;
-import com.midas.d3.llm.LlmClient;
-import com.midas.d3.llm.LlmModelPolicy;
-import com.midas.d3.statemachine.MidasState;
-import com.midas.d3.statemachine.ValidatorRegistry;
-import com.midas.d3.validation.FeatureManifestValidator;
-import com.midas.d3.validation.ImplementationEngineerValidator;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
-@DisplayName("CodeGenerationCoordinator")
-class CodeGenerationCoordinatorTest {
-
-    private static final String SERVER_ENVELOPE = """
-            {
-              "source_files": {
-                "src/main/java/com/example/App.java": "public class App {}"
-              },
-              "feature_manifest": [
-                {
-                  "feature_id": "app",
-                  "feature_name": "App",
-                  "files": ["src/main/java/com/example/App.java"],
-                  "entry_points": ["App"]
-                }
-              ]
-            }
-            """;
-
-    private static final String CLIENT_ENVELOPE = """
-            {
-              "source_files": {
-                "manifest.json": "{}",
-                "src/popup.ts": "export const ok = true;"
-              },
-              "feature_manifest": [
-                {
-                  "feature_id": "popup-ui",
-                  "feature_name": "Popup UI",
-                  "files": ["src/popup.ts"],
-                  "entry_points": ["ok"]
-                }
-              ]
-            }
-            """;
-
-    private static final String CLI_ENVELOPE = """
-            {
-              "source_files": {
-                "cmd/main.go": "package main"
-              },
-              "feature_manifest": [
-                {
-                  "feature_id": "cli-main",
-                  "feature_name": "CLI main",
-                  "files": ["cmd/main.go"],
-                  "entry_points": ["main"]
-                }
-              ]
-            }
-            """;
-
-    @Mock private ContextReducer contextReducer;
-    @Mock private LlmClient llmClient;
-    @Mock private LlmModelPolicy llmModelPolicy;
-    @Mock private ValidatorRegistry validatorRegistry;
-
-    private ObjectMapper objectMapper;
-    private ImplementationEngineerValidator validator;
-    private CodeGenerationCoordinator coordinator;
-    private ExecutorService agentTaskExecutor;
-
-    @BeforeEach
-    void setUp() {
-        objectMapper = new JacksonConfig().objectMapper();
-        validator = new ImplementationEngineerValidator(objectMapper, new FeatureManifestValidator());
-        agentTaskExecutor = Executors.newFixedThreadPool(2);
-        coordinator = new CodeGenerationCoordinator(
-                contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
-        when(validatorRegistry.getValidator(MidasState.CODE_GENERATION))
-                .thenReturn(Optional.of(validator));
-        when(llmModelPolicy.resolve(MidasState.CODE_GENERATION)).thenReturn("gemini-1.5-pro");
-    }
-
-    @AfterEach
-    void tearDown() {
-        agentTaskExecutor.shutdownNow();
-    }
-
-    @Test
-    @DisplayName("SERVER_SIDE model executes a single surface-routed pass with server prompt")
-    void execute_serverSide_surfaceRoutedSinglePass() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"SERVER_SIDE"}}
-                """);
-        var ctx = MidasContext.start("Build API", "run-001").withTechnicalSpec(spec);
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-001", "IMPLEMENTATION_ENGINEER_SERVER"));
-
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
-
-        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
-
-        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
-        verify(llmClient, times(1)).call(captor.capture());
-        assertThat(captor.getValue().getSystemPrompt())
-                .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
-        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-1.5-pro");
-        verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER));
-        assertThat(result.validatedOutput().get("source_files").has("src/main/java/com/example/App.java")).isTrue();
-        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
-        assertThat(result.attemptsUsed()).isEqualTo(1);
-    }
-
-    @Test
-    @DisplayName("CLIENT_SIDE model executes a single surface-routed pass with client prompt")
-    void execute_clientSide_surfaceRoutedSinglePass() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"CLIENT_SIDE"}}
-                """);
-        var ctx = MidasContext.start("Build extension", "run-client").withTechnicalSpec(spec);
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-client", "IMPLEMENTATION_ENGINEER_CLIENT"));
-
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
-
-        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
-
-        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
-        verify(llmClient, times(1)).call(captor.capture());
-        assertThat(captor.getValue().getSystemPrompt())
-                .isEqualTo(AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT);
-        verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT));
-        assertThat(result.validatedOutput().get("source_files").has("manifest.json")).isTrue();
-        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
-        assertThat(result.attemptsUsed()).isEqualTo(1);
-    }
-
-    @Test
-    @DisplayName("CLI model executes a single generic LLM pass")
-    void execute_cli_genericSinglePass() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"CLI"}}
-                """);
-        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
-        stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
-
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
-
-        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
-
-        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
-        verify(llmClient, times(1)).call(captor.capture());
-        assertThat(captor.getValue().getSystemPrompt())
-                .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
-        verify(contextReducer).reduce(any(), eq(ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER));
-        assertThat(result.validatedOutput().get("source_files").has("cmd/main.go")).isTrue();
-        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
-        assertThat(result.attemptsUsed()).isEqualTo(1);
-    }
-
-    @Test
-    @DisplayName("HYBRID model executes client and server passes then merges outputs and manifests")
-    void execute_hybrid_fanOut_mergesBothPasses() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"HYBRID"}}
-                """);
-        var arch = objectMapper.readTree("""
-                {"architecture_style":"CLIENT_SERVER","file_layout":["manifest.json","App.java"]}
-                """);
-        var ctx = MidasContext.start("Build hybrid app", "run-hybrid")
-                .withTechnicalSpec(spec)
-                .withArchitectureDesign(arch);
-
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_CLIENT"));
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
-
-        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
-        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
-
-        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
-
-        verify(llmClient, times(2)).call(any(LlmCallRequest.class));
-        assertThat(result.validatedOutput().get("source_files").size()).isEqualTo(3);
-        assertThat(result.validatedOutput().get("source_files").has("manifest.json")).isTrue();
-        assertThat(result.validatedOutput().get("source_files").has("src/main/java/com/example/App.java")).isTrue();
-        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(2);
-        assertThat(result.attemptsUsed()).isEqualTo(2);
-    }
-
-    @Test
-    @DisplayName("HYBRID model uses dedicated client and server system prompts")
-    void execute_hybrid_usesDedicatedPromptsForEachPass() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"HYBRID"}}
-                """);
-        var ctx = MidasContext.start("Build hybrid app", "run-hybrid").withTechnicalSpec(spec);
-
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_CLIENT"));
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
-        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
-        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
-
-        coordinator.execute(ctx, "ImplementationEngineerAgent");
-
-        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
-        verify(llmClient, times(2)).call(captor.capture());
-        assertThat(captor.getAllValues())
-                .extracting(LlmCallRequest::getSystemPrompt)
-                .containsExactlyInAnyOrder(
-                        AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT,
-                        AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
-    }
-
-    @Test
-    @DisplayName("HYBRID parallel pass surfaces non-retryable LLM failure without hanging")
-    void execute_hybrid_propagatesPassFailure() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"HYBRID"}}
-                """);
-        var ctx = MidasContext.start("Build hybrid app", "run-hybrid-fail").withTechnicalSpec(spec);
-
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_CLIENT"));
-        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_SERVER"));
-        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
-        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenThrow(LlmCallException.emptyResponse("ImplementationEngineerAgentServer"));
-
-        assertThatThrownBy(() -> coordinator.execute(ctx, "ImplementationEngineerAgent"))
-                .isInstanceOf(LlmCallException.class);
-    }
-
-    @Test
-    @DisplayName("CLI model appends PRODUCT REVIEW REMEDIATION block when directive is present")
-    void execute_cli_withRemediationDirective_appendsRemediationBlock() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"CLI"}}
-                """);
-        var directive = objectMapper.readTree("""
-                {"source_verdict":"REJECT","required_changes":["Add export command"]}
-                """);
-        var ctx = MidasContext.start("Build CLI tool", "run-remediate")
-                .withTechnicalSpec(spec)
-                .withRemediationDirective(directive);
-        stubImplementationView("run-remediate", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
-
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
-
-        coordinator.execute(ctx, "ImplementationEngineerAgent");
-
-        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
-        verify(llmClient, times(1)).call(captor.capture());
-        assertThat(captor.getValue().getSystemPrompt())
-                .startsWith(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT)
-                .contains("--- PRODUCT REVIEW REMEDIATION ---")
-                .contains("Add export command")
-                .contains("Do NOT introduce new features");
-    }
-
-    @Test
-    @DisplayName("CLI model without remediation directive uses base prompt unchanged")
-    void execute_cli_withoutRemediationDirective_usesBasePrompt() throws Exception {
-        var spec = objectMapper.readTree("""
-                {"runtime_environment":{"execution_model":"CLI"}}
-                """);
-        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
-        stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
-
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
-
-        coordinator.execute(ctx, "ImplementationEngineerAgent");
-
-        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
-        verify(llmClient, times(1)).call(captor.capture());
-        assertThat(captor.getValue().getSystemPrompt())
-                .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
-    }
-
-    private void stubImplementationView(String runId, ContextReducer.AgentRole role) {
-        when(contextReducer.reduce(any(), eq(role)))
-                .thenReturn(view(runId, role.name()));
-    }
-
-    private AgentContextView view(String runId, String agentName) {
-        return AgentContextView.builder()
-                .agentName(agentName)
-                .pipelineRunId(runId)
-                .rawUserIdea("idea")
-                .requiredArtifacts(Map.of())
-                .estimatedTokenBudget(10)
-                .build();
-    }
-}
+package com.midas.d3.agent.implementation;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.agent.AgentSystemPrompts;
+import com.midas.d3.agent.base.AgentResult;
+import com.midas.d3.config.JacksonConfig;
+import com.midas.d3.context.AgentContextView;
+import com.midas.d3.context.ContextReducer;
+import com.midas.d3.context.MidasContext;
+import com.midas.d3.llm.LlmCallException;
+import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
+import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
+import com.midas.d3.statemachine.MidasState;
+import com.midas.d3.statemachine.ValidatorRegistry;
+import com.midas.d3.validation.FeatureManifestValidator;
+import com.midas.d3.validation.ImplementationEngineerValidator;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.atLeast;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("CodeGenerationCoordinator")
+class CodeGenerationCoordinatorTest {
+
+    private static final String SERVER_ENVELOPE = """
+            {
+              "source_files": {
+                "src/main/java/com/example/App.java": "public class App {}"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "app",
+                  "feature_name": "App",
+                  "files": ["src/main/java/com/example/App.java"],
+                  "entry_points": ["App"]
+                }
+              ]
+            }
+            """;
+
+    private static final String CLIENT_ENVELOPE = """
+            {
+              "source_files": {
+                "manifest.json": "{}",
+                "src/popup.ts": "export const ok = true;"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "popup-ui",
+                  "feature_name": "Popup UI",
+                  "files": ["src/popup.ts"],
+                  "entry_points": ["ok"]
+                }
+              ]
+            }
+            """;
+
+    private static final String CLI_ENVELOPE = """
+            {
+              "source_files": {
+                "cmd/main.go": "package main"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "cli-main",
+                  "feature_name": "CLI main",
+                  "files": ["cmd/main.go"],
+                  "entry_points": ["main"]
+                }
+              ]
+            }
+            """;
+
+    @Mock private ContextReducer contextReducer;
+    @Mock private LlmClient llmClient;
+    @Mock private LlmModelPolicy llmModelPolicy;
+    @Mock private ValidatorRegistry validatorRegistry;
+
+    private ObjectMapper objectMapper;
+    private ImplementationEngineerValidator validator;
+    private CodeGenerationCoordinator coordinator;
+    private ExecutorService agentTaskExecutor;
+
+    @BeforeEach
+    void setUp() {
+        objectMapper = new JacksonConfig().objectMapper();
+        validator = new ImplementationEngineerValidator(objectMapper, new FeatureManifestValidator());
+        agentTaskExecutor = Executors.newFixedThreadPool(2);
+        coordinator = new CodeGenerationCoordinator(
+                contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
+        when(validatorRegistry.getValidator(MidasState.CODE_GENERATION))
+                .thenReturn(Optional.of(validator));
+        when(llmModelPolicy.resolve(MidasState.CODE_GENERATION)).thenReturn("gemini-1.5-pro");
+    }
+
+    @AfterEach
+    void tearDown() {
+        agentTaskExecutor.shutdownNow();
+    }
+
+    @Test
+    @DisplayName("SERVER_SIDE model executes a single surface-routed pass with server prompt")
+    void execute_serverSide_surfaceRoutedSinglePass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"SERVER_SIDE"}}
+                """);
+        var ctx = MidasContext.start("Build API", "run-001").withTechnicalSpec(spec);
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
+                .thenReturn(view("run-001", "IMPLEMENTATION_ENGINEER_SERVER"));
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
+        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-1.5-pro");
+        verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER));
+        assertThat(result.validatedOutput().get("source_files").has("src/main/java/com/example/App.java")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
+        assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CLIENT_SIDE model executes a single surface-routed pass with client prompt")
+    void execute_clientSide_surfaceRoutedSinglePass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLIENT_SIDE"}}
+                """);
+        var ctx = MidasContext.start("Build extension", "run-client").withTechnicalSpec(spec);
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
+                .thenReturn(view("run-client", "IMPLEMENTATION_ENGINEER_CLIENT"));
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT);
+        verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT));
+        assertThat(result.validatedOutput().get("source_files").has("manifest.json")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
+        assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("CLI model executes a single generic LLM pass")
+    void execute_cli_genericSinglePass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
+        stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
+        verify(contextReducer).reduce(any(), eq(ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER));
+        assertThat(result.validatedOutput().get("source_files").has("cmd/main.go")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
+        assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("HYBRID model executes client and server passes then merges outputs and manifests")
+    void execute_hybrid_fanOut_mergesBothPasses() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var arch = objectMapper.readTree("""
+                {"architecture_style":"CLIENT_SERVER","file_layout":["manifest.json","App.java"]}
+                """);
+        var ctx = MidasContext.start("Build hybrid app", "run-hybrid")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch);
+
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
+                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_CLIENT"));
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
+                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
+
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
+                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
+                .thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        verify(llmClient, times(2)).call(any(LlmCallRequest.class));
+        assertThat(result.validatedOutput().get("source_files").size()).isEqualTo(3);
+        assertThat(result.validatedOutput().get("source_files").has("manifest.json")).isTrue();
+        assertThat(result.validatedOutput().get("source_files").has("src/main/java/com/example/App.java")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(2);
+        assertThat(result.attemptsUsed()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("HYBRID model uses dedicated client and server system prompts")
+    void execute_hybrid_usesDedicatedPromptsForEachPass() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var ctx = MidasContext.start("Build hybrid app", "run-hybrid").withTechnicalSpec(spec);
+
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
+                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_CLIENT"));
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
+                .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
+                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
+                .thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
+
+        coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(2)).call(captor.capture());
+        assertThat(captor.getAllValues())
+                .extracting(LlmCallRequest::getSystemPrompt)
+                .containsExactlyInAnyOrder(
+                        AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT,
+                        AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
+    }
+
+    @Test
+    @DisplayName("HYBRID parallel pass surfaces non-retryable LLM failure without hanging")
+    void execute_hybrid_propagatesPassFailure() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+        var ctx = MidasContext.start("Build hybrid app", "run-hybrid-fail").withTechnicalSpec(spec);
+
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
+                .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_CLIENT"));
+        when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
+                .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_SERVER"));
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
+                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
+        when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
+                .thenThrow(LlmCallException.emptyResponse("ImplementationEngineerAgentServer"));
+
+        assertThatThrownBy(() -> coordinator.execute(ctx, "ImplementationEngineerAgent"))
+                .isInstanceOf(LlmCallException.class);
+    }
+
+    @Test
+    @DisplayName("CLI model appends PRODUCT REVIEW REMEDIATION block when directive is present")
+    void execute_cli_withRemediationDirective_appendsRemediationBlock() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","required_changes":["Add export command"]}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-remediate")
+                .withTechnicalSpec(spec)
+                .withRemediationDirective(directive);
+        stubImplementationView("run-remediate", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
+
+        coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .startsWith(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT)
+                .contains("--- PRODUCT REVIEW REMEDIATION ---")
+                .contains("Add export command")
+                .contains("Do NOT introduce new features");
+    }
+
+    @Test
+    @DisplayName("CLI model without remediation directive uses base prompt unchanged")
+    void execute_cli_withoutRemediationDirective_usesBasePrompt() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
+        stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
+
+        coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
+    }
+
+    @Test
+    @DisplayName("SURGICAL_PATCH merges delta into baseline and uses patch prompt")
+    void execute_surgicalPatch_mergesBaselineAndUsesPatchPrompt() throws Exception {
+        var spec = objectMapper.readTree("""
+                {
+                  "runtime_environment":{"execution_model":"CLI"},
+                  "core_features":["CLI main"]
+                }
+                """);
+        var baselineSource = objectMapper.readTree("""
+                {
+                  "cmd/main.go": "package main\\nfunc main() {}",
+                  "cmd/util.go": "package main\\nfunc helper() {}"
+                }
+                """);
+        var manifest = objectMapper.readTree("""
+                [{
+                  "feature_id":"cli-main",
+                  "feature_name":"CLI main",
+                  "files":["cmd/main.go"],
+                  "entry_points":["main"]
+                }]
+                """);
+        var directive = objectMapper.readTree("""
+                {
+                  "source_verdict":"REJECT",
+                  "remediation_mode":"SURGICAL_PATCH",
+                  "affected_paths":["cmd/main.go"],
+                  "required_changes":["Add export flag"]
+                }
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-patch")
+                .withTechnicalSpec(spec)
+                .withGeneratedSourceCode(baselineSource)
+                .withFeatureManifest(manifest)
+                .withRemediationDirective(directive);
+
+        when(contextReducer.reducePatchImplementationPass(eq(ctx), eq(java.util.List.of("cmd/main.go"))))
+                .thenReturn(view("run-patch", "IMPLEMENTATION_ENGINEER_PATCH"));
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
+                {
+                  "source_files": {
+                    "cmd/main.go": "package main\\nfunc main() { export() }\\nfunc export() {}"
+                  }
+                }
+                """));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .startsWith(AgentSystemPrompts.IMPLEMENTATION_PATCH_PROMPT)
+                .contains("PATCH SCOPE (SURGICAL_PATCH mode)")
+                .contains("cmd/main.go");
+        assertThat(result.validatedOutput().get("source_files").get("cmd/main.go").asText()).contains("export");
+        assertThat(result.validatedOutput().get("source_files").get("cmd/util.go").asText()).contains("helper");
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("SURGICAL_PATCH falls back to full regeneration when merged envelope is rejected")
+    void execute_surgicalPatch_validationFailure_fallsBackToFullRegen() throws Exception {
+        var spec = objectMapper.readTree("""
+                {
+                  "runtime_environment":{"execution_model":"CLI"},
+                  "core_features":["CLI main"]
+                }
+                """);
+        var baselineSource = objectMapper.readTree("""
+                {"cmd/main.go":"package main"}
+                """);
+        var manifest = objectMapper.readTree("""
+                [{
+                  "feature_id":"cli-main",
+                  "feature_name":"CLI main",
+                  "files":["cmd/main.go"],
+                  "entry_points":["main"]
+                }]
+                """);
+        var directive = objectMapper.readTree("""
+                {
+                  "source_verdict":"REJECT",
+                  "remediation_mode":"SURGICAL_PATCH",
+                  "affected_paths":["cmd/main.go"],
+                  "required_changes":["Fix main"]
+                }
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-patch-fallback")
+                .withTechnicalSpec(spec)
+                .withGeneratedSourceCode(baselineSource)
+                .withFeatureManifest(manifest)
+                .withRemediationDirective(directive);
+
+        when(contextReducer.reducePatchImplementationPass(eq(ctx), eq(java.util.List.of("cmd/main.go"))))
+                .thenReturn(view("run-patch-fallback", "IMPLEMENTATION_ENGINEER_PATCH"));
+        stubImplementationView("run-patch-fallback", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(argThat(req -> req != null && req.getSystemPrompt().contains("SURGICAL PATCH on an existing codebase"))))
+                .thenReturn(LlmCallResult.ofText("""
+                        {"source_files":{"cmd/main.go":"// TODO fix"}}
+                        """));
+        when(llmClient.call(argThat(req -> req != null && req.getSystemPrompt().startsWith(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT))))
+                .thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        verify(llmClient, atLeast(2)).call(any(LlmCallRequest.class));
+        assertThat(result.validatedOutput().get("source_files").has("cmd/main.go")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
+    }
+
+    private void stubImplementationView(String runId, ContextReducer.AgentRole role) {
+        when(contextReducer.reduce(any(), eq(role)))
+                .thenReturn(view(runId, role.name()));
+    }
+
+    private AgentContextView view(String runId, String agentName) {
+        return AgentContextView.builder()
+                .agentName(agentName)
+                .pipelineRunId(runId)
+                .rawUserIdea("idea")
+                .requiredArtifacts(Map.of())
+                .estimatedTokenBudget(10)
+                .build();
+    }
+}

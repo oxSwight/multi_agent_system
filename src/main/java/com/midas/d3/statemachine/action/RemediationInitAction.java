@@ -11,6 +11,9 @@ import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineContextKeys;
 import com.midas.d3.statemachine.PipelineTopology;
+import com.midas.d3.statemachine.remediation.PatchRemediationPlanner;
+import com.midas.d3.statemachine.remediation.RemediationMode;
+import com.midas.d3.statemachine.remediation.RemediationPlan;
 import com.midas.d3.validation.ControllerValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +32,7 @@ public class RemediationInitAction implements Action<MidasState, MidasEvent> {
     private final ObjectMapper objectMapper;
     private final PipelineTopology topology;
     private final AgentDispatcher agentDispatcher;
+    private final PatchRemediationPlanner patchRemediationPlanner;
 
     @Override
     public void execute(StateContext<MidasState, MidasEvent> context) {
@@ -47,22 +51,31 @@ public class RemediationInitAction implements Action<MidasState, MidasEvent> {
         }
 
         int nextAttempt = current.getProductReviewRemediationAttempts() + 1;
-        JsonNode directive = buildRemediationDirective(report, nextAttempt);
+        RemediationPlan plan = patchRemediationPlanner.plan(current, report);
+        JsonNode directive = buildRemediationDirective(report, nextAttempt, plan);
 
         MidasContext remediated = current
                 .withProductReviewReport(report)
-                .withGeneratedSourceCode(null)
-                .withGeneratedTests(null)
-                .withSecOpsArtifacts(null)
                 .withRemediationDirective(directive)
                 .withProductReviewRemediationAttempts(nextAttempt)
-                .withValidationRetries(0)
-                .appendAudit(AuditEntry.warn(
-                        MidasState.PRODUCT_REVIEW.name(),
-                        "Product review remediation initiated",
-                        "Remediation loop " + nextAttempt + "/"
-                                + topology.maxProductReviewRemediations()
-                                + " → CODE_GENERATION"));
+                .withValidationRetries(0);
+
+        if (plan.mode() == RemediationMode.FULL_REGEN) {
+            remediated = remediated
+                    .withGeneratedSourceCode(null)
+                    .withGeneratedTests(null)
+                    .withFeatureManifest(null)
+                    .withSecOpsArtifacts(null);
+        } else {
+            remediated = remediated.withSecOpsArtifacts(null);
+        }
+
+        remediated = remediated.appendAudit(AuditEntry.warn(
+                MidasState.PRODUCT_REVIEW.name(),
+                "Product review remediation initiated",
+                "Remediation loop " + nextAttempt + "/"
+                        + topology.maxProductReviewRemediations()
+                        + " → CODE_GENERATION (" + plan.mode().name() + ")"));
 
         vars.put(PipelineContextKeys.MIDAS_CONTEXT, remediated);
         vars.remove(PipelineContextKeys.LAST_VALIDATED_NODE);
@@ -74,7 +87,7 @@ public class RemediationInitAction implements Action<MidasState, MidasEvent> {
         agentDispatcher.dispatchIfAutoMode(context.getStateMachine(), MidasState.CODE_GENERATION);
     }
 
-    private JsonNode buildRemediationDirective(JsonNode report, int remediationAttempt) {
+    private JsonNode buildRemediationDirective(JsonNode report, int remediationAttempt, RemediationPlan plan) {
         ObjectNode directive = objectMapper.createObjectNode();
         directive.put("source_verdict", ControllerValidator.VERDICT_REJECT);
         directive.put("summary", report.path("summary").asText("").strip());
@@ -83,7 +96,18 @@ public class RemediationInitAction implements Action<MidasState, MidasEvent> {
         directive.set("coverage_gaps", filterCoverageGaps(report.path("coverage_matrix")));
         directive.put("remediation_attempt", remediationAttempt);
         directive.put("max_remediation_attempts", topology.maxProductReviewRemediations());
+        directive.put("remediation_mode", plan.mode().name());
+        directive.set("affected_paths", toStringArray(plan.affectedPaths()));
+        directive.set("affected_features", toStringArray(plan.affectedFeatures()));
         return directive;
+    }
+
+    private ArrayNode toStringArray(java.util.List<String> values) {
+        ArrayNode array = objectMapper.createArrayNode();
+        for (String value : values) {
+            array.add(value);
+        }
+        return array;
     }
 
     private ArrayNode filterCoverageGaps(JsonNode coverageMatrix) {

@@ -56,6 +56,55 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         return root;
     }
 
+    public JsonNode validatePatchOutput(String rawJson, List<String> allowedPaths)
+            throws ValidationHookException {
+        if (rawJson == null || rawJson.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output is null or blank — no JSON to validate.");
+        }
+
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(rawJson.strip());
+        } catch (JsonProcessingException e) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "JSON parse error: " + e.getOriginalMessage());
+        }
+
+        if (!root.isObject()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "Expected JSON object at root, got: " + root.getNodeType());
+        }
+
+        JsonNode sourceFiles = root.get("source_files");
+        if (sourceFiles == null || !sourceFiles.isObject()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "Patch output must contain a 'source_files' object.");
+        }
+
+        Set<String> allowed = new HashSet<>(allowedPaths);
+        List<String> violations = new java.util.ArrayList<>();
+        if (sourceFiles.isEmpty()) {
+            violations.add("Patch source_files map must not be empty.");
+        }
+        validateSourceFiles(sourceFiles, violations);
+
+        Iterator<Map.Entry<String, JsonNode>> fields = sourceFiles.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            if (!allowed.contains(entry.getKey())) {
+                violations.add("Patch source_files contains disallowed path [" + entry.getKey()
+                        + "] — only affected_paths are permitted.");
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            throw new ValidationHookException(agentName(), stage(), violations);
+        }
+
+        return sourceFiles;
+    }
+
     @Override
     protected void collectViolations(JsonNode root, List<String> violations) {
         collectViolations(root, violations, null);
