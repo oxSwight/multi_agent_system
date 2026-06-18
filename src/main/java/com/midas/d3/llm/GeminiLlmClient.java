@@ -61,7 +61,7 @@ public class GeminiLlmClient implements LlmClient {
     public GeminiLlmClient(
             WebClient.Builder webClientBuilder,
             @Value("${midas.llm.api-key:}") String apiKey,
-            @Value("${midas.llm.model:gemini-2.0-flash}") String model,
+            @Value("${midas.llm.model:gemini-1.5-flash}") String model,
             @Value("${midas.llm.timeout-seconds:120}") int timeoutSeconds,
             @Value("${midas.llm.http-max-retries:2}") int httpMaxRetries) {
 
@@ -82,11 +82,12 @@ public class GeminiLlmClient implements LlmClient {
     public LlmCallResult call(LlmCallRequest request) throws LlmCallException {
         validateApiKey(request.getAgentName());
 
+        String effectiveModel = resolveModel(request);
         GeminiRequest body = GeminiRequest.of(request.getSystemPrompt(), request.getUserMessage());
-        String url = model + ":generateContent";
+        String url = effectiveModel + ":generateContent";
 
         log.info("[GeminiLlmClient] Calling [{}] for run [{}]  model={}",
-                request.getAgentName(), request.getPipelineRunId(), model);
+                request.getAgentName(), request.getPipelineRunId(), effectiveModel);
 
         int serverErrorAttempts = 0;
         int rateLimitAttempts = 0;
@@ -111,6 +112,7 @@ public class GeminiLlmClient implements LlmClient {
                 return LlmCallResult.of(
                         response.extractText()
                                 .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName())),
+                        effectiveModel,
                         response.extractPromptTokens(),
                         response.extractCompletionTokens());
 
@@ -193,7 +195,15 @@ public class GeminiLlmClient implements LlmClient {
     }
 
     @Override
-    public String modelId() {
+    public String defaultModelId() {
+        return model;
+    }
+
+    private String resolveModel(LlmCallRequest request) {
+        String override = request.getModelOverride();
+        if (override != null && !override.isBlank()) {
+            return override.trim();
+        }
         return model;
     }
 

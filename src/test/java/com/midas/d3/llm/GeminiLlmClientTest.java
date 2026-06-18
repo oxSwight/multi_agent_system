@@ -13,6 +13,7 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -20,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("GeminiLlmClient Rate Limit Tests")
 class GeminiLlmClientTest {
 
+    private static final String DEFAULT_MODEL = "gemini-1.5-flash";
     private static final String SUCCESS_BODY = """
             {"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":512,"candidatesTokenCount":128,"totalTokenCount":640}}
             """;
@@ -35,8 +37,53 @@ class GeminiLlmClientTest {
         LlmCallResult result = newClient(exchange).call(requestForRun("run-tokens-001"));
 
         assertThat(result.text()).isEqualTo("ok");
+        assertThat(result.modelUsed()).isEqualTo(DEFAULT_MODEL);
         assertThat(result.promptTokens()).isEqualTo(512);
         assertThat(result.completionTokens()).isEqualTo(128);
+    }
+
+    @Test
+    @DisplayName("Uses default model in URL path when no override is present")
+    void call_withoutModelOverride_usesDefaultModelInUrlPath() {
+        AtomicReference<String> capturedPath = new AtomicReference<>();
+        ExchangeFunction exchange = request -> {
+            capturedPath.set(request.url().getPath());
+            return Mono.just(ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                    .body(SUCCESS_BODY)
+                    .build());
+        };
+
+        LlmCallResult result = newClient(exchange).call(requestForRun("run-default-model"));
+
+        assertThat(capturedPath.get()).contains(DEFAULT_MODEL + ":generateContent");
+        assertThat(result.modelUsed()).isEqualTo(DEFAULT_MODEL);
+    }
+
+    @Test
+    @DisplayName("Uses modelOverride in URL path when present on request")
+    void call_withModelOverride_usesOverrideInUrlPath() {
+        AtomicReference<String> capturedPath = new AtomicReference<>();
+        ExchangeFunction exchange = request -> {
+            capturedPath.set(request.url().getPath());
+            return Mono.just(ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                    .body(SUCCESS_BODY)
+                    .build());
+        };
+
+        LlmCallRequest request = LlmCallRequest.of(
+                MidasState.CODE_GENERATION,
+                "ImplementationEngineerAgent",
+                "system",
+                "user",
+                "run-model-override-001",
+                "gemini-1.5-pro");
+
+        LlmCallResult result = newClient(exchange).call(request);
+
+        assertThat(capturedPath.get()).contains("gemini-1.5-pro:generateContent");
+        assertThat(result.modelUsed()).isEqualTo("gemini-1.5-pro");
     }
 
     @Test
@@ -98,7 +145,7 @@ class GeminiLlmClientTest {
         return new GeminiLlmClient(
                 WebClient.builder().exchangeFunction(exchange),
                 "test-api-key",
-                "gemini-2.0-flash",
+                DEFAULT_MODEL,
                 10,
                 0);
     }

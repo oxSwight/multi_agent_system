@@ -9,6 +9,7 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
@@ -68,13 +69,16 @@ public abstract class BaseMidasAgent {
     protected final LlmClient         llmClient;
     protected final ContextReducer    contextReducer;
     protected final ValidatorRegistry validatorRegistry;
+    protected final LlmModelPolicy      llmModelPolicy;
 
     protected BaseMidasAgent(LlmClient         llmClient,
                              ContextReducer    contextReducer,
-                             ValidatorRegistry validatorRegistry) {
+                             ValidatorRegistry validatorRegistry,
+                             LlmModelPolicy    llmModelPolicy) {
         this.llmClient        = llmClient;
         this.contextReducer   = contextReducer;
         this.validatorRegistry = validatorRegistry;
+        this.llmModelPolicy   = llmModelPolicy;
     }
 
     // ── Abstract template methods ─────────────────────────────────────────────
@@ -133,6 +137,7 @@ public abstract class BaseMidasAgent {
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
+        String modelUsed = "";
 
         for (int attempt = 1; attempt <= MAX_AGENT_RETRIES; attempt++) {
             String userMessage = (attempt == 1)
@@ -145,9 +150,10 @@ public abstract class BaseMidasAgent {
             try {
                 LlmCallResult llmResult = llmClient.call(
                         LlmCallRequest.of(stage, getAgentName(), effectiveSystemPrompt(context),
-                                userMessage, context.getPipelineRunId()));
+                                userMessage, context.getPipelineRunId(), llmModelPolicy.resolve(stage)));
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
+                modelUsed = llmResult.modelUsed();
                 String raw = llmResult.text();
 
                 // ── Human-in-the-Loop early-exit ─────────────────────────────
@@ -157,7 +163,7 @@ public abstract class BaseMidasAgent {
                 if (raw != null && raw.stripLeading().startsWith(AgentResult.NEED_INFO_PREFIX)) {
                     log.info("[{}] Analyst returned [NEED_INFO] on attempt {}/{} — pausing for user input.",
                             getAgentName(), attempt, MAX_AGENT_RETRIES);
-                    return new AgentResult(null, raw.strip(), attempt, totalPromptTokens, totalCompletionTokens);
+                    return new AgentResult(null, raw.strip(), attempt, totalPromptTokens, totalCompletionTokens, modelUsed);
                 }
 
                 String sanitized = JsonSanitizer.sanitize(raw);
@@ -169,7 +175,7 @@ public abstract class BaseMidasAgent {
                 JsonNode validated = validator.validate(sanitized);
 
                 log.info("[{}] Attempt {}/{} — validation passed.", getAgentName(), attempt, MAX_AGENT_RETRIES);
-                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens);
+                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens, modelUsed);
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());

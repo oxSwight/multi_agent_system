@@ -10,6 +10,7 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
@@ -53,6 +54,7 @@ class BaseMidasAgentTest {
     @Mock private ContextReducer      contextReducer;
     @Mock private ValidatorRegistry   validatorRegistry;
     @Mock private GoalKeeperValidator goalKeeperValidator;
+    @Mock private LlmModelPolicy      llmModelPolicy;
 
     // ── Subject Under Test ────────────────────────────────────────────────────
 
@@ -78,7 +80,7 @@ class BaseMidasAgentTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        agent = new SystemAnalystAgent(llmClient, contextReducer, validatorRegistry);
+        agent = new SystemAnalystAgent(llmClient, contextReducer, validatorRegistry, llmModelPolicy);
 
         context = MidasContext.start(USER_IDEA, RUN_ID);
         contextView = AgentContextView.builder()
@@ -94,6 +96,7 @@ class BaseMidasAgentTest {
                 .thenReturn(contextView);
         when(validatorRegistry.getValidator(MidasState.SYSTEM_ANALYSIS))
                 .thenReturn(Optional.of(goalKeeperValidator));
+        lenient().when(llmModelPolicy.resolve(MidasState.SYSTEM_ANALYSIS)).thenReturn("gemini-1.5-flash");
     }
 
     // ── Happy Path ─────────────────────────────────────────────────────────────
@@ -140,6 +143,7 @@ class BaseMidasAgentTest {
             assertThat(req.getAgentName()).isEqualTo("SystemAnalystAgent");
             assertThat(req.getStage()).isEqualTo(MidasState.SYSTEM_ANALYSIS);
             assertThat(req.getPipelineRunId()).isEqualTo(RUN_ID);
+            assertThat(req.getModelOverride()).isEqualTo("gemini-1.5-flash");
             assertThat(req.getSystemPrompt()).isNotBlank();
             assertThat(req.getUserMessage()).contains(USER_IDEA);
         }
@@ -406,8 +410,8 @@ class BaseMidasAgentTest {
                     List.of("Missing required field: 'business_goal'"));
 
             when(llmClient.call(any()))
-                    .thenReturn(LlmCallResult.of("bad", 100, 20))
-                    .thenReturn(LlmCallResult.of(VALID_JSON, 200, 40));
+                    .thenReturn(LlmCallResult.of("bad", "test-model", 100, 20))
+                    .thenReturn(LlmCallResult.of(VALID_JSON, "test-model", 200, 40));
             when(goalKeeperValidator.validate(anyString()))
                     .thenThrow(ve)
                     .thenReturn(validNode);
@@ -416,6 +420,7 @@ class BaseMidasAgentTest {
 
             assertThat(result.promptTokens()).isEqualTo(300);
             assertThat(result.completionTokens()).isEqualTo(60);
+            assertThat(result.modelId()).isEqualTo("test-model");
         }
 
         @Test

@@ -60,7 +60,10 @@ midas:
     http-max-retries: ${MIDAS_LLM_HTTP_MAX_RETRIES:5}
     base-url: ${MIDAS_LLM_BASE_URL:http://localhost:11434}
     api-key: ${MIDAS_LLM_API_KEY:}
-    model: ${MIDAS_LLM_MODEL:gemini-2.5-flash}
+    model: ${MIDAS_LLM_MODEL:gemini-1.5-flash}
+    stage-models:
+      CODE_GENERATION: ${MIDAS_LLM_MODEL_CODE:gemini-1.5-pro}
+      TEST_GENERATION: ${MIDAS_LLM_MODEL_TEST:gemini-1.5-pro}
 
   # ── Nous / OpenAI-compatible LLM (NousRestClient — optional alternate provider) ─
   # Switch between providers by changing base-url and api-key:

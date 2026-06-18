@@ -57,10 +57,11 @@ public class NousRestClient implements LlmClient {
 
     @Override
     public LlmCallResult call(LlmCallRequest request) throws LlmCallException {
-        NousRequest body = NousRequest.of(model, request.getSystemPrompt(), request.getUserMessage());
+        String effectiveModel = resolveModel(request);
+        NousRequest body = NousRequest.of(effectiveModel, request.getSystemPrompt(), request.getUserMessage());
 
         log.info("[NousRestClient] Calling agent=[{}] run=[{}] model={}",
-                request.getAgentName(), request.getPipelineRunId(), model);
+                request.getAgentName(), request.getPipelineRunId(), effectiveModel);
 
         int serverErrorAttempts = 0;
         int rateLimitAttempts = 0;
@@ -79,8 +80,12 @@ public class NousRestClient implements LlmClient {
                     throw LlmCallException.emptyResponse(request.getAgentName());
                 }
 
-                return LlmCallResult.ofText(response.extractText()
-                        .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName())));
+                return LlmCallResult.of(
+                        response.extractText()
+                                .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName())),
+                        effectiveModel,
+                        0,
+                        0);
 
             } catch (LlmCallException e) {
                 throw e;
@@ -160,7 +165,15 @@ public class NousRestClient implements LlmClient {
     }
 
     @Override
-    public String modelId() {
+    public String defaultModelId() {
+        return model;
+    }
+
+    private String resolveModel(LlmCallRequest request) {
+        String override = request.getModelOverride();
+        if (override != null && !override.isBlank()) {
+            return override.trim();
+        }
         return model;
     }
 

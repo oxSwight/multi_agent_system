@@ -24,33 +24,36 @@ public record AgentResult(
         String   rawLlmOutput,
         int      attemptsUsed,
         int      promptTokens,
-        int      completionTokens
+        int      completionTokens,
+        String   modelId
 ) {
-    /** Prefix the System Analyst emits when it requires additional input from the user. */
     public static final String NEED_INFO_PREFIX = "[NEED_INFO]";
 
     public AgentResult(JsonNode validatedOutput, String rawLlmOutput, int attemptsUsed) {
-        this(validatedOutput, rawLlmOutput, attemptsUsed, 0, 0);
+        this(validatedOutput, rawLlmOutput, attemptsUsed, 0, 0, "");
+    }
+
+    public AgentResult(JsonNode validatedOutput, String rawLlmOutput, int attemptsUsed,
+                       int promptTokens, int completionTokens) {
+        this(validatedOutput, rawLlmOutput, attemptsUsed, promptTokens, completionTokens, "");
     }
 
     public AgentResult {
-        // validatedOutput is intentionally nullable for NEED_INFO responses
         Objects.requireNonNull(rawLlmOutput, "rawLlmOutput must not be null");
+        Objects.requireNonNull(modelId, "modelId must not be null");
         if (attemptsUsed < 1) {
             throw new IllegalArgumentException("attemptsUsed must be >= 1, got: " + attemptsUsed);
         }
     }
 
-    /**
-     * Factory for Human-in-the-Loop responses where the LLM returned questions
-     * instead of a JSON artifact.
-     *
-     * @param questionsText full raw text from the LLM (must start with {@value #NEED_INFO_PREFIX})
-     * @param attempt       attempt number (1-based)
-     */
     public static AgentResult needsInfo(String questionsText, int attempt) {
         Objects.requireNonNull(questionsText, "questionsText must not be null");
-        return new AgentResult(null, questionsText, attempt, 0, 0);
+        return new AgentResult(null, questionsText, attempt, 0, 0, "");
+    }
+
+    public static AgentResult needsInfo(String questionsText, int attempt, String modelId) {
+        Objects.requireNonNull(questionsText, "questionsText must not be null");
+        return new AgentResult(null, questionsText, attempt, 0, 0, modelId != null ? modelId : "");
     }
 
     /**

@@ -12,6 +12,7 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineOrchestrator;
@@ -56,6 +57,7 @@ public class AgentOrchestrationService {
     private final PipelineOrchestrator  pipelineOrchestrator;
     private final ContextReducer        contextReducer;
     private final LlmClient             llmClient;
+    private final LlmModelPolicy        llmModelPolicy;
     private final AgentSystemPrompts    agentSystemPrompts;
     private final ObjectMapper          objectMapper;
     private final CodeGenerationCoordinator codeGenerationCoordinator;
@@ -147,7 +149,8 @@ public class AgentOrchestrationService {
 
         // 4. Call LLM (may throw LlmCallException — callers handle retries)
         LlmCallResult llmResult = llmClient.call(
-                LlmCallRequest.of(currentState, agentName, systemPrompt, userMessage, runId));
+                LlmCallRequest.of(currentState, agentName, systemPrompt, userMessage, runId,
+                        llmModelPolicy.resolve(currentState)));
         String rawOutput = llmResult.text();
 
         log.debug("[AgentOrchestrationService][{}] Raw LLM output ({} chars): {}…",

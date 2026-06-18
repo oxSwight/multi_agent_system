@@ -39,7 +39,10 @@ midas:
     timeout-seconds: 5
     base-url: http://localhost:11434
     api-key: ''
-    model: test-model
+    model: gemini-1.5-flash
+    stage-models:
+      CODE_GENERATION: gemini-1.5-pro
+      TEST_GENERATION: gemini-1.5-pro
   nous:
     base-url: http://localhost:1234
     api-key: ''

@@ -36,13 +36,14 @@ class PersistenceServiceTest {
         when(runRepository.getReferenceById(runId)).thenReturn(runRef);
 
         persistenceService.logAgentExecution(
-                runId, "SecOpsAgent", "{\"ok\":true}", 1200, 340, 5000L, false);
+                runId, "SecOpsAgent", "{\"ok\":true}", "gemini-1.5-flash", 1200, 340, 5000L, false);
 
         ArgumentCaptor<MidasAgentLogEntity> logCaptor = ArgumentCaptor.forClass(MidasAgentLogEntity.class);
         verify(agentLogRepository).save(logCaptor.capture());
         MidasAgentLogEntity saved = logCaptor.getValue();
         assertThat(saved.getPromptTokens()).isEqualTo(1200);
         assertThat(saved.getCompletionTokens()).isEqualTo(340);
+        assertThat(saved.getModelId()).isEqualTo("gemini-1.5-flash");
 
         verify(runRepository).incrementTokenTotals(eq(runId), eq(1200), eq(340), any());
     }
@@ -54,7 +55,7 @@ class PersistenceServiceTest {
         when(runRepository.getReferenceById(runId)).thenReturn(MidasRunEntity.builder().id(runId).build());
 
         persistenceService.logAgentExecution(
-                runId, "SystemAnalystAgent", "error", 0, 0, 100L, true);
+                runId, "SystemAnalystAgent", "error", null, 0, 0, 100L, true);
 
         verify(agentLogRepository).save(any(MidasAgentLogEntity.class));
         org.mockito.Mockito.verifyNoMoreInteractions(runRepository);

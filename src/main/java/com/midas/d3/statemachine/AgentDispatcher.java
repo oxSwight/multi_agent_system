@@ -118,7 +118,7 @@ public class AgentDispatcher {
 
                 persistenceService.logAgentExecution(
                         runId, agent.getAgentName(), result.rawLlmOutput(),
-                        result.promptTokens(), result.completionTokens(), elapsedMs, false);
+                        result.modelId(), result.promptTokens(), result.completionTokens(), elapsedMs, false);
 
                 machine.getExtendedState().getVariables()
                        .put(PipelineContextKeys.ANALYST_QUESTIONS_KEY, result.rawLlmOutput());
@@ -134,7 +134,7 @@ public class AgentDispatcher {
 
             persistenceService.logAgentExecution(
                     runId, agent.getAgentName(), result.rawLlmOutput(),
-                    result.promptTokens(), result.completionTokens(), elapsedMs, false);
+                    result.modelId(), result.promptTokens(), result.completionTokens(), elapsedMs, false);
 
             sendEvent(machine, MessageBuilder
                     .withPayload(MidasEvent.SUBMIT_RESULT)
@@ -148,7 +148,7 @@ public class AgentDispatcher {
                     agent.getAgentName(), runId);
             persistenceService.logAgentExecution(
                     runId, agent.getAgentName(), "Interrupted during inter-agent throttle",
-                    0, 0, elapsedMs, true);
+                    null, 0, 0, elapsedMs, true);
             sendCriticalFailure(machine, "Agent dispatch interrupted");
 
         } catch (AgentExecutionException e) {
@@ -158,7 +158,7 @@ public class AgentDispatcher {
 
             persistenceService.logAgentExecution(
                     runId, agent.getAgentName(), e.getMessage(),
-                    0, 0, elapsedMs, true);
+                    null, 0, 0, elapsedMs, true);
 
             sendCriticalFailure(machine, e.getMessage());
 
@@ -169,7 +169,7 @@ public class AgentDispatcher {
 
             persistenceService.logAgentExecution(
                     runId, agent.getAgentName(), e.getMessage(),
-                    0, 0, elapsedMs, true);
+                    null, 0, 0, elapsedMs, true);
 
             sendCriticalFailure(machine, e.getMessage());
 
@@ -180,7 +180,7 @@ public class AgentDispatcher {
 
             persistenceService.logAgentExecution(
                     runId, agent.getAgentName(), "Unexpected error: " + e.getMessage(),
-                    0, 0, elapsedMs, true);
+                    null, 0, 0, elapsedMs, true);
 
             sendCriticalFailure(machine, "Unexpected agent error: " + e.getMessage());
         }

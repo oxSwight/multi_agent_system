@@ -16,20 +16,22 @@ package com.midas.d3.llm;
 public interface LlmClient {
 
     /**
-     * Calls the LLM and returns the raw text response.
+     * Calls the LLM and returns the raw text response with usage metadata.
      *
-     * <p>The returned string is NOT sanitized — callers must pass it through
+     * <p>The returned text is NOT sanitized — callers must pass it through
      * {@link com.midas.d3.sanitizer.JsonSanitizer#sanitize(String)} before validation.
      *
      * @param request fully constructed call descriptor; must not be null
-     * @return raw LLM response text; never null, never blank (throws instead)
+     * @return invocation result including raw text, model used, and token counts
      * @throws LlmCallException on any transport error, timeout, or empty response
      */
     LlmCallResult call(LlmCallRequest request) throws LlmCallException;
 
     /**
-     * Returns a short human-readable identifier for this implementation
-     * (e.g., {@code "gemini-2.0-flash"}, {@code "ollama/llama3"}).
+     * Returns the configured default model identifier for this client
+     * (e.g., {@code "gemini-1.5-flash"}, {@code "ollama/llama3"}).
+     *
+     * <p>Per-request overrides via {@link LlmCallRequest#getModelOverride()} take precedence at call time.
      */
-    String modelId();
+    String defaultModelId();
 }

@@ -135,11 +135,12 @@ public class EvolutionAgent {
                 : codeContext;
 
         LlmCallRequest request = LlmCallRequest.builder()
-                .stage(null)           // EvolutionAgent is outside the pipeline state machine
+                .stage(null)
                 .agentName(AGENT_NAME)
                 .systemPrompt(SYSTEM_PROMPT)
                 .userMessage(truncated)
                 .pipelineRunId(pipelineRunId)
+                .modelOverride(llmClient.defaultModelId())
                 .build();
 
         log.info("[EvolutionAgent] Starting analysis for run [{}] ({} chars of context).",

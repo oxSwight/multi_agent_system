@@ -10,6 +10,7 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineOrchestrator;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +39,7 @@ class AgentOrchestrationServiceTest {
     @Mock private PipelineOrchestrator  pipelineOrchestrator;
     @Mock private ContextReducer        contextReducer;
     @Mock private LlmClient             llmClient;
+    @Mock private LlmModelPolicy        llmModelPolicy;
     @Mock private AgentSystemPrompts    agentSystemPrompts;
     @Mock private CodeGenerationCoordinator codeGenerationCoordinator;
     @Mock private TestGenerationCoordinator testGenerationCoordinator;
@@ -61,8 +63,9 @@ class AgentOrchestrationServiceTest {
     void setUp() {
         objectMapper = new JacksonConfig().objectMapper();
         service = new AgentOrchestrationService(
-                pipelineOrchestrator, contextReducer, llmClient, agentSystemPrompts,
+                pipelineOrchestrator, contextReducer, llmClient, llmModelPolicy, agentSystemPrompts,
                 objectMapper, codeGenerationCoordinator, testGenerationCoordinator);
+        lenient().when(llmModelPolicy.resolve(MidasState.SYSTEM_ANALYSIS)).thenReturn("gemini-1.5-flash");
     }
 
     // ── Happy path ────────────────────────────────────────────────────────────
@@ -127,6 +130,7 @@ class AgentOrchestrationServiceTest {
             assertThat(req.getAgentName()).isEqualTo("SystemAnalyst");
             assertThat(req.getPipelineRunId()).isEqualTo(RUN_ID);
             assertThat(req.getStage()).isEqualTo(MidasState.SYSTEM_ANALYSIS);
+            assertThat(req.getModelOverride()).isEqualTo("gemini-1.5-flash");
         }
     }
 

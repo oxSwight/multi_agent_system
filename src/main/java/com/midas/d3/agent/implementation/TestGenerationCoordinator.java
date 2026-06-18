@@ -14,6 +14,7 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
@@ -36,17 +37,20 @@ public class TestGenerationCoordinator {
 
     private final ContextReducer contextReducer;
     private final LlmClient llmClient;
+    private final LlmModelPolicy llmModelPolicy;
     private final ValidatorRegistry validatorRegistry;
     private final ObjectMapper objectMapper;
     private final Executor agentTaskExecutor;
 
     public TestGenerationCoordinator(ContextReducer contextReducer,
                                      LlmClient llmClient,
+                                     LlmModelPolicy llmModelPolicy,
                                      ValidatorRegistry validatorRegistry,
                                      ObjectMapper objectMapper,
                                      @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor) {
         this.contextReducer = contextReducer;
         this.llmClient = llmClient;
+        this.llmModelPolicy = llmModelPolicy;
         this.validatorRegistry = validatorRegistry;
         this.objectMapper = objectMapper;
         this.agentTaskExecutor = agentTaskExecutor;
@@ -85,7 +89,8 @@ public class TestGenerationCoordinator {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize " + surface + " test map.", e);
         }
-        return new AgentResult(pass.validated(), json, pass.attemptsUsed(), pass.promptTokens(), pass.completionTokens());
+        return new AgentResult(pass.validated(), json, pass.attemptsUsed(),
+                pass.promptTokens(), pass.completionTokens(), pass.modelId());
     }
 
     private AgentResult executeHybridFanOut(MidasContext context,
@@ -134,7 +139,8 @@ public class TestGenerationCoordinator {
 
         return new AgentResult(merged, mergedJson, totalAttempts,
                 clientPass.promptTokens() + serverPass.promptTokens(),
-                clientPass.completionTokens() + serverPass.completionTokens());
+                clientPass.completionTokens() + serverPass.completionTokens(),
+                clientPass.modelId());
     }
 
     private PassResult executePass(MidasContext context,
@@ -144,6 +150,7 @@ public class TestGenerationCoordinator {
                                    GoalKeeperValidator validator) {
         AgentContextView view = contextReducer.reduceTestGenerationPass(context, surface);
         String baseUserMessage = buildUserMessage(view, surface);
+        String modelOverride = llmModelPolicy.resolve(MidasState.TEST_GENERATION);
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
@@ -162,14 +169,15 @@ public class TestGenerationCoordinator {
                         llmAgentName,
                         effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
-                        context.getPipelineRunId()));
+                        context.getPipelineRunId(),
+                        modelOverride));
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
                 JsonNode validated = validator.validate(sanitized);
-                return new PassResult(validated, attempt, totalPromptTokens, totalCompletionTokens);
+                return new PassResult(validated, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -202,6 +210,7 @@ public class TestGenerationCoordinator {
                                           GoalKeeperValidator validator,
                                           String llmAgentName) {
         String baseUserMessage = buildUserMessage(view, null);
+        String modelOverride = llmModelPolicy.resolve(MidasState.TEST_GENERATION);
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
@@ -220,14 +229,15 @@ public class TestGenerationCoordinator {
                         llmAgentName,
                         effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
-                        context.getPipelineRunId()));
+                        context.getPipelineRunId(),
+                        modelOverride));
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
                 JsonNode validated = validator.validate(sanitized);
-                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens);
+                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -322,5 +332,5 @@ public class TestGenerationCoordinator {
         }
     }
 
-    private record PassResult(JsonNode validated, int attemptsUsed, int promptTokens, int completionTokens) {}
+    private record PassResult(JsonNode validated, int attemptsUsed, int promptTokens, int completionTokens, String modelId) {}
 }

@@ -56,6 +56,9 @@ public class MidasAgentLogEntity {
     @Builder.Default
     private int completionTokens = 0;
 
+    @Column(name = "model_id", length = 100)
+    private String modelId;
+
     /** Wall-clock execution time of {@code agent.execute()} in milliseconds. */
     @Column(name = "execution_time_ms", nullable = false)
     @Builder.Default

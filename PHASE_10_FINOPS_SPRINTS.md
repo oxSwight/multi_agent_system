@@ -102,17 +102,17 @@ Use checkboxes to track progress. Mark `[x]` only when implemented **and** tests
 
 **Target classes:** `LlmCallResult`, `LlmCallRequest`, `LlmClient`, `GeminiLlmClient`, `GeminiResponse`, `NousRestClient`, `LlmModelPolicy`, `LlmModelPolicyProperties`, `application.yml`, `application-test.yml`
 
-- [ ] Create `com.midas.d3.llm.LlmCallResult` (text, modelUsed, promptTokens, completionTokens)
-- [ ] Add optional `modelOverride` to `LlmCallRequest`; update `of(...)` factory
-- [ ] Change `LlmClient.call()` return type to `LlmCallResult`; rename/document `modelId()` → `defaultModelId()`
-- [ ] Create `LlmModelPolicy` mapping `MidasState` → model ID with fallback to `midas.llm.model`
-- [ ] Create `LlmModelPolicyProperties` bound to `midas.llm.stage-models.*`
-- [ ] Configure `application.yml`: default `gemini-1.5-flash`; Pro override for `CODE_GENERATION`, `TEST_GENERATION`
-- [ ] Update `GeminiResponse` to deserialize `usageMetadata` token counts
-- [ ] Update `GeminiLlmClient` to use per-request model in URL path and return `LlmCallResult`
-- [ ] Update `NousRestClient` for `LlmCallResult` compatibility (single-model fallback acceptable)
-- [ ] Create `LlmModelPolicyTest` — all stages resolve; unknown → fallback
-- [ ] Update `GeminiLlmClientTest` for per-request model path and usage parsing
+- [x] Create `com.midas.d3.llm.LlmCallResult` (text, modelUsed, promptTokens, completionTokens)
+- [x] Add optional `modelOverride` to `LlmCallRequest`; update `of(...)` factory
+- [x] Change `LlmClient.call()` return type to `LlmCallResult`; rename/document `modelId()` → `defaultModelId()`
+- [x] Create `LlmModelPolicy` mapping `MidasState` → model ID with fallback to `midas.llm.model`
+- [x] Create `LlmModelPolicyProperties` bound to `midas.llm.stage-models.*`
+- [x] Configure `application.yml`: default `gemini-1.5-flash`; Pro override for `CODE_GENERATION`, `TEST_GENERATION`
+- [x] Update `GeminiResponse` to deserialize `usageMetadata` token counts
+- [x] Update `GeminiLlmClient` to use per-request model in URL path and return `LlmCallResult`
+- [x] Update `NousRestClient` for `LlmCallResult` compatibility (single-model fallback acceptable)
+- [x] Create `LlmModelPolicyTest` — all stages resolve; unknown → fallback
+- [x] Update `GeminiLlmClientTest` for per-request model path and usage parsing
 
 **Gate:** Unit tests for LLM layer green; no agent integration yet.
 
@@ -124,19 +124,19 @@ Use checkboxes to track progress. Mark `[x]` only when implemented **and** tests
 
 **Target classes:** `BaseMidasAgent`, `CodeGenerationCoordinator`, `TestGenerationCoordinator`, `AgentOrchestrationService`, `AgentDispatcher`, `PersistenceService`, `MidasAgentLogEntity`, `AgentLogDto`, `DashboardService`, `db/migration/V3__agent_log_finops.sql`
 
-- [ ] Wire `LlmModelPolicy.resolve(stage)` in `BaseMidasAgent.execute()`
-- [ ] Wire model policy in `CodeGenerationCoordinator` (all pass types including HYBRID fan-out)
-- [ ] Wire model policy in `TestGenerationCoordinator` (all pass types including HYBRID fan-out)
-- [ ] Wire model policy in `AgentOrchestrationService` (REST/manual path parity)
-- [ ] Update all `llmClient.call()` consumers to handle `LlmCallResult`
-- [ ] Create Flyway **`V3__agent_log_finops.sql`**: `ALTER TABLE midas_agent_log ADD COLUMN model_id VARCHAR(100)`
-- [ ] Add `modelId` field to `MidasAgentLogEntity`
-- [ ] Update `PersistenceService.logAgentExecution()` to accept and persist `modelId`, `promptTokens`, `completionTokens`
-- [ ] Update `AgentDispatcher.runAgent()` to pass real values from `LlmCallResult` (replace hardcoded `0, 0`)
-- [ ] Update `AgentLogDto` and dashboard queries to expose `modelId` per invocation
-- [ ] Update `BaseMidasAgentTest`, `CodeGenerationCoordinatorTest`, `TestGenerationCoordinatorTest`, `AgentOrchestrationServiceTest`
-- [ ] Add or extend `AgentDispatcherTest` — verifies non-zero tokens persisted on success
-- [ ] Confirm `EvolutionAgent` explicitly uses default Flash model (not stage map)
+- [x] Wire `LlmModelPolicy.resolve(stage)` in `BaseMidasAgent.execute()`
+- [x] Wire model policy in `CodeGenerationCoordinator` (all pass types including HYBRID fan-out)
+- [x] Wire model policy in `TestGenerationCoordinator` (all pass types including HYBRID fan-out)
+- [x] Wire model policy in `AgentOrchestrationService` (REST/manual path parity)
+- [x] Update all `llmClient.call()` consumers to handle `LlmCallResult`
+- [x] Create Flyway **`V3__agent_log_finops.sql`**: `ALTER TABLE midas_agent_log ADD COLUMN model_id VARCHAR(100)`
+- [x] Add `modelId` field to `MidasAgentLogEntity`
+- [x] Update `PersistenceService.logAgentExecution()` to accept and persist `modelId`, `promptTokens`, `completionTokens`
+- [x] Update `AgentDispatcher.runAgent()` to pass real values from `LlmCallResult` (replace hardcoded `0, 0`)
+- [x] Update `AgentLogDto` and dashboard queries to expose `modelId` per invocation
+- [x] Update `BaseMidasAgentTest`, `CodeGenerationCoordinatorTest`, `TestGenerationCoordinatorTest`, `AgentOrchestrationServiceTest`
+- [x] Add or extend `AgentDispatcherTest` — verifies non-zero tokens persisted on success
+- [x] Confirm `EvolutionAgent` explicitly uses default Flash model (not stage map)
 
 **Gate:** Full `mvn test` green; `PipelineStateMachineTest` unchanged/passing; manual spot-check log output shows `model=gemini-1.5-pro` on CODE_GENERATION.
 

@@ -7,6 +7,7 @@ import com.midas.d3.agent.implementation.TestGenerationCoordinator;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import org.springframework.stereotype.Component;
 
@@ -25,8 +26,9 @@ public class QaAutomationAgent extends BaseMidasAgent {
     public QaAutomationAgent(LlmClient                  llmClient,
                              ContextReducer             contextReducer,
                              ValidatorRegistry          validatorRegistry,
+                             LlmModelPolicy             llmModelPolicy,
                              TestGenerationCoordinator  testGenerationCoordinator) {
-        super(llmClient, contextReducer, validatorRegistry);
+        super(llmClient, contextReducer, validatorRegistry, llmModelPolicy);
         this.testGenerationCoordinator = testGenerationCoordinator;
     }
 

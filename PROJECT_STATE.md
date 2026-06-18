@@ -500,14 +500,48 @@ B1 HYBRID SecOps, B6 stuck-run reaper). See `INCIDENT_001_HYBRID_CRASH_SPRINTS.m
 **Test status (2026-06-18):** `359` tests run, **0 failures** — suite green
 after INCIDENT-001 Sprint 3. Run: `.\mvnw.cmd test`
 
+**Phase 10A — FinOps: Tiered LLM Routing & Token Observability (2026-06-18).**
+Shipped per `PHASE_10_FINOPS_SPRINTS.md` sprints 10A-1 and 10A-2. Reduces blended
+LLM COGS by routing Flash to cheap pipeline stages and Pro to code/test generation,
+while persisting real per-invocation model ID and token counts in the database and
+dashboard.
+
+| Sprint | Scope |
+| --- | --- |
+| **10A-1** | `LlmCallResult` (text, modelUsed, tokens), `LlmCallRequest.modelOverride`, `LlmModelPolicy` + `midas.llm.stage-models.*`, `GeminiLlmClient` per-request model URL path |
+| **10A-2** | Policy wired through `BaseMidasAgent`, coordinators, `AgentOrchestrationService`; Flyway `V3__agent_log_finops.sql` (`model_id` column); `PersistenceService` + `AgentDispatcher` persist real usage; `AgentLogDto` exposes `modelId` |
+
+Model routing defaults (`application.yml`):
+
+| Stage | Model |
+| --- | --- |
+| Default (stages 1–3, 6–7, Evolution) | `gemini-1.5-flash` |
+| `CODE_GENERATION`, `TEST_GENERATION` | `gemini-1.5-pro` |
+
+Key components:
+
+| Layer | Files |
+| --- | --- |
+| LLM boundary | `LlmCallResult`, `LlmCallRequest`, `LlmClient.defaultModelId()`, `GeminiLlmClient`, `NousRestClient` |
+| Policy | `LlmModelPolicy`, `LlmModelPolicyProperties` — `midas.llm.model`, `midas.llm.stage-models.*` |
+| Agents | `BaseMidasAgent`, `CodeGenerationCoordinator`, `TestGenerationCoordinator`, `AgentOrchestrationService` |
+| Evolution (Flash only) | `EvolutionAgent` — `llmClient.defaultModelId()`, bypasses stage map |
+| Persistence | `V3__agent_log_finops.sql`, `MidasAgentLogEntity.modelId`, `PersistenceService.logAgentExecution`, `AgentDispatcher` |
+| Dashboard | `AgentLogDto.modelId` via `DashboardService.getRunDetails` |
+| Tests | `LlmModelPolicyTest`, `GeminiLlmClientTest`, `BaseMidasAgentTest`, coordinator tests, `AgentDispatcherTest`, `EvolutionAgentTest`, `PersistenceServiceTest` |
+
+**Test status (2026-06-18):** `383` tests run, **0 failures** — suite green
+after Phase 10A. Run: `.\mvnw.cmd test`
+
 ### Planned — Post-MVP (TBD)
 
 > **Branch:** `main`
-> **Next:** human-in-the-loop review of Controller REJECT reports; FinOps Phase 10A (separate board).
+> **Next:** FinOps Phase 10C (feature manifest envelope) per `PHASE_10_FINOPS_SPRINTS.md`.
 
 - Human-in-the-loop review of Controller REJECT reports before pipeline reset.
 - Extend dynamic routing to additional skip-eligible stages if product rules emerge.
-- FinOps Phase 10A — tiered LLM routing (separate board: `PHASE_10_FINOPS_SPRINTS.md`).
+- FinOps Phase 10C — `feature_manifest` envelope, Controller consumption (see sprint board).
+- FinOps Phase 10B — surgical remediation patch path (after 10C).
 - Checkpoint resume for orphaned runs (stretch — deferred; Sprint 3 MVP is reaper-only).
 
 ---
@@ -555,8 +589,25 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-18)
 
-**Working tree:** INCIDENT-001 **RESOLVED** — all three sprints complete (B2/B3/B5, B1, B6).
-See `INCIDENT_001_HYBRID_CRASH_SPRINTS.md`.
+**Working tree:** Phase 10A **complete** — tiered LLM routing and real token/model
+persistence shipped. See `PHASE_10_FINOPS_SPRINTS.md` (10A-1 + 10A-2 checked).
+Next sprint: **10C-1** (context field & envelope validation).
+
+**Phase 10A verification (complete):**
+
+1. `LlmModelPolicy.resolve(stage)` returns `gemini-1.5-pro` for `CODE_GENERATION` and
+   `TEST_GENERATION`; all other pipeline stages fall back to `gemini-1.5-flash`.
+2. `BaseMidasAgent`, coordinators, and `AgentOrchestrationService` pass resolved model
+   as `LlmCallRequest.modelOverride`; `GeminiLlmClient` uses it in the URL path.
+3. `EvolutionAgent` uses `llmClient.defaultModelId()` only — excluded from stage map.
+4. Flyway `V3__agent_log_finops.sql` adds `model_id`; `PersistenceService.logAgentExecution`
+   persists `modelId`, `promptTokens`, `completionTokens`; run totals updated when tokens > 0.
+5. `AgentDispatcher` forwards accumulated token usage and `modelId` from `AgentResult`.
+6. Dashboard `AgentLogDto` exposes `modelId` per invocation.
+7. Full suite: `383` tests, zero failures (`.\mvnw.cmd test`).
+
+**INCIDENT-001 — RESOLVED (2026-06-18).** Sprints 1–3 complete (B2/B3/B5 observability,
+B1 HYBRID SecOps, B6 stuck-run reaper). See `INCIDENT_001_HYBRID_CRASH_SPRINTS.md`.
 
 **INCIDENT-001 Sprint 3 verification (complete):**
 

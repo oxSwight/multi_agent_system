@@ -4,6 +4,7 @@ import com.midas.d3.agent.AgentSystemPrompts;
 import com.midas.d3.agent.base.BaseMidasAgent;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import org.springframework.stereotype.Component;
 
@@ -29,8 +30,9 @@ public class ControllerAgent extends BaseMidasAgent {
 
     public ControllerAgent(LlmClient         llmClient,
                            ContextReducer    contextReducer,
-                           ValidatorRegistry validatorRegistry) {
-        super(llmClient, contextReducer, validatorRegistry);
+                           ValidatorRegistry validatorRegistry,
+                           LlmModelPolicy    llmModelPolicy) {
+        super(llmClient, contextReducer, validatorRegistry, llmModelPolicy);
     }
 
     @Override

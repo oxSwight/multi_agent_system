@@ -28,11 +28,22 @@ public final class LlmCallRequest {
     /** Pipeline run ID for distributed tracing. */
     private final String pipelineRunId;
 
+    private final String modelOverride;
+
     public static LlmCallRequest of(MidasState stage,
                                     String agentName,
                                     String systemPrompt,
                                     String userMessage,
                                     String pipelineRunId) {
+        return of(stage, agentName, systemPrompt, userMessage, pipelineRunId, null);
+    }
+
+    public static LlmCallRequest of(MidasState stage,
+                                    String agentName,
+                                    String systemPrompt,
+                                    String userMessage,
+                                    String pipelineRunId,
+                                    String modelOverride) {
         Objects.requireNonNull(stage,        "stage must not be null");
         Objects.requireNonNull(agentName,    "agentName must not be null");
         Objects.requireNonNull(systemPrompt, "systemPrompt must not be null");
@@ -46,6 +57,7 @@ public final class LlmCallRequest {
                 .stage(stage).agentName(agentName)
                 .systemPrompt(systemPrompt).userMessage(userMessage)
                 .pipelineRunId(pipelineRunId)
+                .modelOverride(modelOverride)
                 .build();
     }
 }

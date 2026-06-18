@@ -11,6 +11,7 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
@@ -44,6 +45,7 @@ class CodeGenerationCoordinatorTest {
 
     @Mock private ContextReducer contextReducer;
     @Mock private LlmClient llmClient;
+    @Mock private LlmModelPolicy llmModelPolicy;
     @Mock private ValidatorRegistry validatorRegistry;
 
     private ObjectMapper objectMapper;
@@ -57,9 +59,10 @@ class CodeGenerationCoordinatorTest {
         validator = new ImplementationEngineerValidator(objectMapper);
         agentTaskExecutor = Executors.newFixedThreadPool(2);
         coordinator = new CodeGenerationCoordinator(
-                contextReducer, llmClient, validatorRegistry, objectMapper, agentTaskExecutor);
+                contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
         when(validatorRegistry.getValidator(MidasState.CODE_GENERATION))
                 .thenReturn(Optional.of(validator));
+        when(llmModelPolicy.resolve(MidasState.CODE_GENERATION)).thenReturn("gemini-1.5-pro");
     }
 
     @AfterEach
@@ -87,6 +90,7 @@ class CodeGenerationCoordinatorTest {
         verify(llmClient, times(1)).call(captor.capture());
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
+        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-1.5-pro");
         verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER));
         assertThat(result.validatedOutput().has("src/main/java/com/example/App.java")).isTrue();
         assertThat(result.attemptsUsed()).isEqualTo(1);
