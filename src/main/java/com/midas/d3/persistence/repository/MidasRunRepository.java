@@ -79,6 +79,15 @@ public interface MidasRunRepository extends JpaRepository<MidasRunEntity, String
     /** Returns every run ordered newest-first — used by the dashboard runs list and token-usage timeline. */
     List<MidasRunEntity> findAllByOrderByCreatedAtDesc();
 
+    @Modifying
+    @Query("UPDATE MidasRunEntity r SET r.totalPromptTokens = r.totalPromptTokens + :promptTokens, "
+            + "r.totalCompletionTokens = r.totalCompletionTokens + :completionTokens, "
+            + "r.updatedAt = :updatedAt WHERE r.id = :id")
+    void incrementTokenTotals(@Param("id") String id,
+                              @Param("promptTokens") int promptTokens,
+                              @Param("completionTokens") int completionTokens,
+                              @Param("updatedAt") Instant updatedAt);
+
     /**
      * Returns a two-element {@code Object[]} containing the SUM of prompt tokens and
      * the SUM of completion tokens across all runs.  Both elements are {@code null}
@@ -118,4 +127,6 @@ public interface MidasRunRepository extends JpaRepository<MidasRunEntity, String
      */
     Page<MidasRunEntity> findByStatusAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
             String status, Pageable pageable);
+
+    List<MidasRunEntity> findByStatusNotInAndUpdatedAtBefore(List<String> statuses, Instant updatedAt);
 }

@@ -34,6 +34,10 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
 
     @Override
     public void stateContext(StateContext<MidasState, MidasEvent> stateContext) {
+        if (stateContext.getStage() != StateContext.Stage.STATE_CHANGED) {
+            return;
+        }
+
         State<MidasState, MidasEvent> target = stateContext.getTarget();
         if (target == null || target.getId() == null) {
             return;
@@ -96,6 +100,10 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
 
             default -> null;
         };
+    }
+
+    static boolean shouldRenderForStage(StateContext.Stage stage) {
+        return stage == StateContext.Stage.STATE_CHANGED;
     }
 
     static String renderError(MidasContext ctx) {

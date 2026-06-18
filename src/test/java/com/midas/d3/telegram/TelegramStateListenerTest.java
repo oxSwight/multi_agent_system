@@ -6,6 +6,7 @@ import com.midas.d3.context.MidasContext;
 import com.midas.d3.statemachine.MidasState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.statemachine.StateContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -115,6 +116,14 @@ class TelegramStateListenerTest {
         assertThat(message).contains("Успешно исправлено автоматически");
         assertThat(message).contains("попытка 1 из 1");
         assertThat(message).contains("Контроль качества: <b>PASS</b>");
+    }
+
+    @Test
+    @DisplayName("shouldRenderForStage accepts only STATE_CHANGED to avoid pre-action ERROR render")
+    void shouldRenderForStage_onlyStateChanged() {
+        assertThat(TelegramStateListener.shouldRenderForStage(StateContext.Stage.STATE_CHANGED)).isTrue();
+        assertThat(TelegramStateListener.shouldRenderForStage(StateContext.Stage.TRANSITION)).isFalse();
+        assertThat(TelegramStateListener.shouldRenderForStage(StateContext.Stage.STATE_ENTRY)).isFalse();
     }
 
     @Test

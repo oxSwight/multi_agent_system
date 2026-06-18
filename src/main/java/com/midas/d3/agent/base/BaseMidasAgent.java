@@ -7,6 +7,7 @@ import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
@@ -130,6 +131,8 @@ public abstract class BaseMidasAgent {
                                 .formatted(stage)));
 
         String lastError = null;
+        int totalPromptTokens = 0;
+        int totalCompletionTokens = 0;
 
         for (int attempt = 1; attempt <= MAX_AGENT_RETRIES; attempt++) {
             String userMessage = (attempt == 1)
@@ -140,9 +143,12 @@ public abstract class BaseMidasAgent {
                     getAgentName(), attempt, MAX_AGENT_RETRIES, context.getPipelineRunId());
 
             try {
-                String raw = llmClient.call(
+                LlmCallResult llmResult = llmClient.call(
                         LlmCallRequest.of(stage, getAgentName(), effectiveSystemPrompt(context),
                                 userMessage, context.getPipelineRunId()));
+                totalPromptTokens += llmResult.promptTokens();
+                totalCompletionTokens += llmResult.completionTokens();
+                String raw = llmResult.text();
 
                 // ── Human-in-the-Loop early-exit ─────────────────────────────
                 // If the LLM signals insufficient input with [NEED_INFO], bypass
@@ -151,7 +157,7 @@ public abstract class BaseMidasAgent {
                 if (raw != null && raw.stripLeading().startsWith(AgentResult.NEED_INFO_PREFIX)) {
                     log.info("[{}] Analyst returned [NEED_INFO] on attempt {}/{} — pausing for user input.",
                             getAgentName(), attempt, MAX_AGENT_RETRIES);
-                    return AgentResult.needsInfo(raw.strip(), attempt);
+                    return new AgentResult(null, raw.strip(), attempt, totalPromptTokens, totalCompletionTokens);
                 }
 
                 String sanitized = JsonSanitizer.sanitize(raw);
@@ -163,7 +169,7 @@ public abstract class BaseMidasAgent {
                 JsonNode validated = validator.validate(sanitized);
 
                 log.info("[{}] Attempt {}/{} — validation passed.", getAgentName(), attempt, MAX_AGENT_RETRIES);
-                return new AgentResult(validated, sanitized, attempt);
+                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens);
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());

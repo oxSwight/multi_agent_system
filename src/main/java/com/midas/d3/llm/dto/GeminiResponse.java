@@ -21,6 +21,15 @@ public final class GeminiResponse {
 
     private List<Candidate> candidates;
     private PromptFeedback promptFeedback;
+    private UsageMetadata usageMetadata;
+
+    public int extractPromptTokens() {
+        return usageMetadata != null ? usageMetadata.promptTokenCount : 0;
+    }
+
+    public int extractCompletionTokens() {
+        return usageMetadata != null ? usageMetadata.candidatesTokenCount : 0;
+    }
 
     /**
      * Extracts the generated text from the first candidate's first part.
@@ -66,5 +75,16 @@ public final class GeminiResponse {
     public static final class PromptFeedback {
         @JsonProperty("blockReason")
         private String blockReason;
+    }
+
+    @Getter @Setter @NoArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static final class UsageMetadata {
+        @JsonProperty("promptTokenCount")
+        private int promptTokenCount;
+        @JsonProperty("candidatesTokenCount")
+        private int candidatesTokenCount;
+        @JsonProperty("totalTokenCount")
+        private int totalTokenCount;
     }
 }

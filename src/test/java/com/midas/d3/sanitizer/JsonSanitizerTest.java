@@ -85,6 +85,43 @@ class JsonSanitizerTest {
             String input = "```json\r\n" + VALID_JSON + "\r\n```";
             assertThat(JsonSanitizer.sanitize(input)).isEqualTo(VALID_JSON);
         }
+
+        @Test
+        @DisplayName("Extracts JSON from ```bash ... ``` fence (SecOps mis-tag)")
+        void sanitize_bashFence_extractsJson() {
+            String secOpsJson = """
+                    {"deployment_model": "CONTAINERIZED", "release_artifacts": []}""";
+            String input = "```bash\n" + secOpsJson + "\n```";
+            assertThat(JsonSanitizer.sanitize(input)).isEqualTo(secOpsJson);
+        }
+
+        @Test
+        @DisplayName("Prefers JSON fence when multiple code blocks are present")
+        void sanitize_multipleFences_prefersJsonBlock() {
+            String secOpsJson = """
+                    {"deployment_model": "CONTAINERIZED"}""";
+            String input = """
+                    Example shell script:
+                    ```bash
+                    #!/bin/sh
+                    echo hello
+                    ```
+                    Actual payload:
+                    ```json
+                    %s
+                    ```
+                    """.formatted(secOpsJson);
+            assertThat(JsonSanitizer.sanitize(input)).isEqualTo(secOpsJson);
+        }
+
+        @Test
+        @DisplayName("Strips preamble text before a mis-tagged fence")
+        void sanitize_preambleBeforeBashFence_extractsJson() {
+            String secOpsJson = """
+                    {"deployment_model": "BROWSER_EXTENSION_PACKAGE"}""";
+            String input = "SecOps audit output:\n```bash\n" + secOpsJson + "\n```";
+            assertThat(JsonSanitizer.sanitize(input)).isEqualTo(secOpsJson);
+        }
     }
 
     // ── Strategy 2: Bare JSON (already starts with {) ──────────────────────
@@ -93,9 +130,16 @@ class JsonSanitizerTest {
     class BareJsonInput {
 
         @Test
-        @DisplayName("Returns trimmed JSON when input starts with {")
-        void sanitize_bareJson_returnsTrimmed() {
+        @DisplayName("Returns extracted JSON object when input starts with {")
+        void sanitize_bareJson_returnsExtractedObject() {
             assertThat(JsonSanitizer.sanitize("  " + VALID_JSON + "  ")).isEqualTo(VALID_JSON);
+        }
+
+        @Test
+        @DisplayName("Strips trailing prose when bare JSON object is followed by explanation")
+        void sanitize_jsonWithTrailingProse_extractsObjectOnly() {
+            String input = VALID_JSON + "\n\nNote: this is required.";
+            assertThat(JsonSanitizer.sanitize(input)).isEqualTo(VALID_JSON);
         }
 
         @Test

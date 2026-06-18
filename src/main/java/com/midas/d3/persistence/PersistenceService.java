@@ -157,6 +157,18 @@ public class PersistenceService {
         }
     }
 
+    public void failOrphanedRun(String runId, String errorMessage, String previousStatus) {
+        try {
+            Instant now = Instant.now();
+            runRepository.updateStatus(runId, "ERROR", now);
+            String auditMessage = errorMessage + " (previous status: " + previousStatus + ")";
+            logAgentExecution(runId, "PipelineReaper", auditMessage, 0, 0, 0L, true);
+            log.warn("[PersistenceService] Marked orphaned run [{}] as ERROR (was {}).", runId, previousStatus);
+        } catch (Exception ex) {
+            log.warn("[PersistenceService] Failed to fail orphaned run [{}]: {}", runId, ex.getMessage(), ex);
+        }
+    }
+
     // ── Agent log ─────────────────────────────────────────────────────────────
 
     /**
@@ -194,6 +206,9 @@ public class PersistenceService {
                     .isError(isError)
                     .build();
             agentLogRepository.save(entry);
+            if (promptTokens > 0 || completionTokens > 0) {
+                runRepository.incrementTokenTotals(runId, promptTokens, completionTokens, Instant.now());
+            }
             log.debug("[PersistenceService] Logged agent [{}] execution for run [{}]: {}ms, error={}.",
                     agentType, runId, executionTimeMs, isError);
         } catch (Exception ex) {

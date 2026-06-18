@@ -21,8 +21,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GeminiLlmClientTest {
 
     private static final String SUCCESS_BODY = """
-            {"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}
+            {"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":512,"candidatesTokenCount":128,"totalTokenCount":640}}
             """;
+
+    @Test
+    @DisplayName("Extracts prompt and completion token counts from usageMetadata")
+    void call_successBody_returnsTokenCounts() {
+        ExchangeFunction exchange = request -> Mono.just(ClientResponse.create(HttpStatus.OK)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .body(SUCCESS_BODY)
+                .build());
+
+        LlmCallResult result = newClient(exchange).call(requestForRun("run-tokens-001"));
+
+        assertThat(result.text()).isEqualTo("ok");
+        assertThat(result.promptTokens()).isEqualTo(512);
+        assertThat(result.completionTokens()).isEqualTo(128);
+    }
 
     @Test
     @DisplayName("Fails fast after max rapid 429 retries with clear rate-limit message")
@@ -73,9 +88,9 @@ class GeminiLlmClientTest {
                     .build());
         };
 
-        String text = newClient(exchange).call(requestForRun("run-rate-limit-002"));
+        LlmCallResult result = newClient(exchange).call(requestForRun("run-rate-limit-002"));
 
-        assertThat(text).isEqualTo("ok");
+        assertThat(result.text()).isEqualTo("ok");
         assertThat(calls.get()).isEqualTo(2);
     }
 

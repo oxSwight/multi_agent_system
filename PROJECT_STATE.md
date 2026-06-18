@@ -350,11 +350,13 @@ On successful `sendDocument`, `PipelineCompletionAction` updates the progress me
 via `TelegramPipelineBot.updatePipelineCompletionMessage` to confirm archive delivery
 and surface the Controller verdict (`PASS` / `PASS_WITH_NOTES`). Stage 4 progress label
 is now execution-model neutral ("Генерация исходного кода"). Interim `COMPLETED` state
-shows packaging-in-progress until delivery completes.
+shows packaging-in-progress until delivery completes. **INCIDENT-001 Sprint 1 (2026-06-18):**
+ERROR transitions render only after failure actions complete (`STATE_CHANGED` gate) so
+`Причина: <lastErrorMessage>` is visible instead of a generic error shell.
 
 | Layer | Files |
 | --- | --- |
-| Progress UI | `TelegramStateListener` — stage 4 label, interim/final completion renderers |
+| Progress UI | `TelegramStateListener` — stage 4 label, interim/final completion renderers, ERROR reason after `STATE_CHANGED` |
 | Delivery | `TelegramPipelineBot`, `PipelineCompletionAction` |
 | Tests | `TelegramStateListenerTest`, `PipelineCompletionActionTest` |
 
@@ -419,13 +421,66 @@ deferred post-MVP. Phase 9 (9A topology + 9B prompt injection + 9C UX) complete.
 The pipeline is resilient (bounded self-healing remediation loop) and **ready for
 production End-to-End (E2E) testing**.
 
+**INCIDENT-001 Sprint 1 — Urgent Observability & UX (2026-06-18).**
+Post-mortem on HYBRID run `d1a9b788-c40f-411f-b5a7-b7fe33e5d26b` identified
+silent Telegram failures and zero token persistence. Sprint 1 (see
+`INCIDENT_001_HYBRID_CRASH_SPRINTS.md`) shipped three production fixes without
+topology changes:
+
+| Fix | Problem | Solution |
+| --- | --- | --- |
+| **B2 — JSON fence stripping** | SecOps LLM output wrapped in mis-tagged fences (e.g. ` ```bash `) caused `Unrecognized token 'bash'` parse failures before semantic validation | Extended `JsonSanitizer` — any language tag, preamble strip, JSON-preferring multi-fence scan, outer-object extraction; defense-in-depth sanitize in `ValidateAndCaptureAction` |
+| **B3 — Telegram ERROR UX** | `TelegramStateListener` rendered ERROR before failure actions wrote `lastErrorMessage` — user saw generic `[❌ ОШИБКА]` and `message is not modified` on edit | Listener renders only on `StateContext.Stage.STATE_CHANGED` (post-action); `renderError` surfaces `lastErrorMessage` or latest ERROR audit detail |
+| **B5 — Gemini token persistence** | `usageMetadata` from Gemini was discarded; all `prompt_tokens` / `completion_tokens` persisted as 0 | `LlmCallResult` + `GeminiResponse.usageMetadata` → `AgentResult` → `AgentDispatcher` → `PersistenceService.logAgentExecution`; run totals via `MidasRunRepository.incrementTokenTotals` |
+
+Key components:
+
+| Layer | Files |
+| --- | --- |
+| Sanitization | `JsonSanitizer`, `ValidateAndCaptureAction` |
+| Telegram UX | `TelegramStateListener` — `STATE_CHANGED` gate, `shouldRenderForStage`, `renderError` |
+| LLM / tokens | `LlmCallResult`, `LlmClient`, `GeminiResponse`, `GeminiLlmClient`, `AgentResult`, `BaseMidasAgent`, coordinators, `AgentDispatcher` |
+| Persistence | `PersistenceService.logAgentExecution`, `MidasRunRepository.incrementTokenTotals` |
+| Tests | `JsonSanitizerTest`, `TelegramStateListenerTest`, `GeminiLlmClientTest`, `BaseMidasAgentTest`, `PersistenceServiceTest` |
+
+**Test status (2026-06-18):** `346` tests run, **0 failures** — suite green
+after INCIDENT-001 Sprint 1. Run: `.\mvnw.cmd test`
+
+**INCIDENT-001 Sprint 2 — SecOps HYBRID Resilience (2026-06-18).**
+Post-mortem root cause B1: HYBRID pipelines (browser extension + backend) were
+forced into a single `deployment_model` enum value; the LLM chose `CONTAINERIZED`
+for the server portion but omitted extension release artifacts on remediation,
+triggering a terminal `CRITICAL_FAILURE`. Sprint 2 adds first-class `HYBRID`
+support in the SecOps policy layer without topology changes.
+
+| Fix | Problem | Solution |
+| --- | --- | --- |
+| **B1 — HYBRID deployment model** | `SecOpsEngineerValidator` required Dockerfile only for `CONTAINERIZED`; HYBRID projects had no schema path accepting both client and server artifact surfaces in one JSON object | `deployment_model: HYBRID` — requires valid Dockerfile (with `FROM`) **and** client/extension release artifacts (packaging, manifest summary); `BROWSER_EXTENSION_PACKAGE` and `CONTAINERIZED` semantics unchanged |
+| **B1 — Prompt alignment** | SecOps prompt contradicted HYBRID reality (Dockerfile = FAILURE for extensions) | `SECOPS_ENGINEER_PROMPT` instructs dual-surface audit and dual artifact sets; schema enum includes `HYBRID`; reinforces raw JSON output (no markdown fences) |
+
+Key components:
+
+| Layer | Files |
+| --- | --- |
+| Validation | `SecOpsEngineerValidator` — `HYBRID` Dockerfile + extension-artifact union rules |
+| Prompt | `AgentSystemPrompts.SECOPS_ENGINEER_PROMPT` |
+| Tests | `GoalKeeperValidatorTest.SecOpsEngineerValidatorTests` — HYBRID happy path, missing Dockerfile, missing extension artifacts, legacy models unchanged |
+
+**Test status (2026-06-18):** `351` tests run, **0 failures** — suite green
+after INCIDENT-001 Sprint 2. Run: `.\mvnw.cmd test`
+
+**INCIDENT-001 Sprint 3 — blocked** until Sprint 2 is reviewed and owner
+approves (stuck-run reaper — see incident board).
+
 ### Planned — Post-MVP (TBD)
 
 > **Branch:** `main`
-> **Next:** Human-in-the-loop review of Controller REJECT reports before pipeline reset.
+> **Next:** INCIDENT-001 Sprint 3 (stuck-run reaper) after Sprint 2 review; human-in-the-loop review of Controller REJECT reports.
 
+- **INCIDENT-001 Sprint 3** — stuck-run reaper after backend restarts (blocked on Sprint 2 approval).
 - Human-in-the-loop review of Controller REJECT reports before pipeline reset.
 - Extend dynamic routing to additional skip-eligible stages if product rules emerge.
+- FinOps Phase 10A — tiered LLM routing (separate board: `PHASE_10_FINOPS_SPRINTS.md`).
 
 ---
 
@@ -470,10 +525,28 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ---
 
-## 4. Agent Handoff Snapshot (2026-06-17)
+## 4. Agent Handoff Snapshot (2026-06-18)
 
-**Working tree:** Clean — Phase 9 (9A + 9B + 9C) committed. MVP 100% complete;
-standby for manual production E2E testing.
+**Working tree:** INCIDENT-001 Sprint 2 complete (B1 HYBRID SecOps) — awaiting owner
+review before Sprint 3. See `INCIDENT_001_HYBRID_CRASH_SPRINTS.md`.
+
+**INCIDENT-001 Sprint 2 verification (complete):**
+
+1. `SecOpsEngineerValidator` accepts `deployment_model: HYBRID` when release_artifacts
+   contain both a valid Dockerfile (with `FROM`) and client/extension artifacts.
+2. HYBRID rejects missing Dockerfile, missing extension artifacts, and Dockerfile without `FROM`.
+3. Legacy `BROWSER_EXTENSION_PACKAGE` (no Dockerfile) and `CONTAINERIZED` (Dockerfile required)
+   behaviour unchanged.
+4. `SECOPS_ENGINEER_PROMPT` documents HYBRID dual-surface audit and dual artifact requirements.
+5. Full suite: `351` tests, zero failures (`.\mvnw.cmd test`).
+
+**INCIDENT-001 Sprint 1 verification (complete):**
+
+1. `JsonSanitizer` strips mis-tagged fences (`bash`, multi-block) and preamble before JSON parse.
+2. `ValidateAndCaptureAction` sanitizes LLM output before GoalKeeper validation.
+3. Telegram ERROR message includes `Причина:` from `lastErrorMessage` (no pre-action race).
+4. Gemini `usageMetadata` persisted in `midas_agent_log` and aggregated on `midas_run`.
+5. Full suite: `346` tests, zero failures (`.\mvnw.cmd test`).
 
 **Phase 9C UX decision (locked):** a single interim "Correction in progress" message
 at `CODE_GENERATION` re-entry only — no remediation notices on `TEST_GENERATION` or

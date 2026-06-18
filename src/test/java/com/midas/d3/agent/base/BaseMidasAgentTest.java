@@ -8,6 +8,7 @@ import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
@@ -104,7 +105,7 @@ class BaseMidasAgentTest {
         @BeforeEach
         void stubSuccess() throws Exception {
             JsonNode validNode = new ObjectMapper().readTree(VALID_JSON);
-            when(llmClient.call(any(LlmCallRequest.class))).thenReturn(VALID_JSON);
+            when(llmClient.call(any(LlmCallRequest.class))).thenReturn(LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString())).thenReturn(validNode);
         }
 
@@ -168,7 +169,7 @@ class BaseMidasAgentTest {
                     List.of("Missing required field: 'business_goal'"));
 
             // Attempt 1: invalid → Attempt 2: valid
-            when(llmClient.call(any())).thenReturn(INVALID_JSON, VALID_JSON);
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(INVALID_JSON), LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString()))
                     .thenThrow(ve)
                     .thenReturn(validNode);
@@ -188,7 +189,7 @@ class BaseMidasAgentTest {
                     "SystemAnalyst", "SYSTEM_ANALYSIS",
                     List.of("Missing required field: 'core_features'"));
 
-            when(llmClient.call(any())).thenReturn(INVALID_JSON, INVALID_JSON, VALID_JSON);
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(INVALID_JSON), LlmCallResult.ofText(INVALID_JSON), LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString()))
                     .thenThrow(ve)
                     .thenThrow(ve)
@@ -208,7 +209,7 @@ class BaseMidasAgentTest {
             ValidationHookException ve = new ValidationHookException(
                     "SystemAnalyst", "SYSTEM_ANALYSIS", List.of(violation));
 
-            when(llmClient.call(any())).thenReturn(INVALID_JSON, VALID_JSON);
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(INVALID_JSON), LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString()))
                     .thenThrow(ve)
                     .thenReturn(validNode);
@@ -234,7 +235,7 @@ class BaseMidasAgentTest {
                     "SystemAnalyst", "SYSTEM_ANALYSIS",
                     List.of("Missing 'business_goal'", "Missing 'core_features'"));
 
-            when(llmClient.call(any())).thenReturn(INVALID_JSON);
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(INVALID_JSON));
             when(goalKeeperValidator.validate(anyString())).thenThrow(ve);
 
             assertThatThrownBy(() -> agent.execute(context))
@@ -251,7 +252,7 @@ class BaseMidasAgentTest {
             ValidationHookException ve = new ValidationHookException(
                     "SystemAnalyst", "SYSTEM_ANALYSIS", "bad JSON");
 
-            when(llmClient.call(any())).thenReturn(INVALID_JSON);
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(INVALID_JSON));
             when(goalKeeperValidator.validate(anyString())).thenThrow(ve);
 
             AgentExecutionException ex = catchThrowableOfType(
@@ -276,7 +277,7 @@ class BaseMidasAgentTest {
             JsonNode validNode = new ObjectMapper().readTree(VALID_JSON);
             when(llmClient.call(any()))
                     .thenThrow(LlmCallException.timeout("SystemAnalyst"))
-                    .thenReturn(VALID_JSON);
+                    .thenReturn(LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString())).thenReturn(validNode);
 
             AgentResult result = agent.execute(context);
@@ -291,7 +292,7 @@ class BaseMidasAgentTest {
             JsonNode validNode = new ObjectMapper().readTree(VALID_JSON);
             when(llmClient.call(any()))
                     .thenThrow(LlmCallException.rateLimited("SystemAnalyst"))
-                    .thenReturn(VALID_JSON);
+                    .thenReturn(LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString())).thenReturn(validNode);
 
             AgentResult result = agent.execute(context);
@@ -308,7 +309,7 @@ class BaseMidasAgentTest {
             when(llmClient.call(any()))
                     .thenThrow(serverErr)
                     .thenThrow(serverErr)
-                    .thenReturn(VALID_JSON);
+                    .thenReturn(LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString())).thenReturn(validNode);
 
             AgentResult result = agent.execute(context);
@@ -376,8 +377,8 @@ class BaseMidasAgentTest {
 
             when(llmClient.call(any()))
                     .thenThrow(LlmCallException.timeout("SystemAnalyst"))
-                    .thenReturn(INVALID_JSON)
-                    .thenReturn(VALID_JSON);
+                    .thenReturn(LlmCallResult.ofText(INVALID_JSON))
+                    .thenReturn(LlmCallResult.ofText(VALID_JSON));
 
             when(goalKeeperValidator.validate(anyString()))
                     .thenThrow(ve)
@@ -397,10 +398,31 @@ class BaseMidasAgentTest {
     class AgentResultContract {
 
         @Test
+        @DisplayName("AgentResult accumulates token usage across retry attempts")
+        void execute_retries_accumulatesTokenUsage() throws Exception {
+            JsonNode validNode = new ObjectMapper().readTree(VALID_JSON);
+            ValidationHookException ve = new ValidationHookException(
+                    "SystemAnalyst", "SYSTEM_ANALYSIS",
+                    List.of("Missing required field: 'business_goal'"));
+
+            when(llmClient.call(any()))
+                    .thenReturn(LlmCallResult.of("bad", 100, 20))
+                    .thenReturn(LlmCallResult.of(VALID_JSON, 200, 40));
+            when(goalKeeperValidator.validate(anyString()))
+                    .thenThrow(ve)
+                    .thenReturn(validNode);
+
+            AgentResult result = agent.execute(context);
+
+            assertThat(result.promptTokens()).isEqualTo(300);
+            assertThat(result.completionTokens()).isEqualTo(60);
+        }
+
+        @Test
         @DisplayName("AgentResult is non-null with correct shape on success")
         void agentResult_contractOnSuccess() throws Exception {
             JsonNode validNode = new ObjectMapper().readTree(VALID_JSON);
-            when(llmClient.call(any())).thenReturn(VALID_JSON);
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(VALID_JSON));
             when(goalKeeperValidator.validate(anyString())).thenReturn(validNode);
 
             AgentResult result = agent.execute(context);

@@ -25,7 +25,7 @@ public interface LlmClient {
      * @return raw LLM response text; never null, never blank (throws instead)
      * @throws LlmCallException on any transport error, timeout, or empty response
      */
-    String call(LlmCallRequest request) throws LlmCallException;
+    LlmCallResult call(LlmCallRequest request) throws LlmCallException;
 
     /**
      * Returns a short human-readable identifier for this implementation

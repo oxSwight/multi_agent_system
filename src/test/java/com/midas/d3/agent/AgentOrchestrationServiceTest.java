@@ -8,6 +8,7 @@ import com.midas.d3.agent.implementation.TestGenerationCoordinator;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineOrchestrator;
@@ -84,7 +85,7 @@ class AgentOrchestrationServiceTest {
                             .build());
             when(agentSystemPrompts.getPrompt(MidasState.SYSTEM_ANALYSIS))
                     .thenReturn(Optional.of(SYSTEM_PROMPT));
-            when(llmClient.call(any())).thenReturn(VALID_LLM_OUTPUT);
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(VALID_LLM_OUTPUT));
             when(pipelineOrchestrator.getState(RUN_ID))
                     .thenReturn(MidasState.SYSTEM_ANALYSIS) // first call
                     .thenReturn(MidasState.ARCHITECTURE_DESIGN); // after submit
@@ -103,7 +104,7 @@ class AgentOrchestrationServiceTest {
         @Test
         @DisplayName("LLM output wrapped in markdown fence is sanitized before submission")
         void runCurrentStage_markdownWrappedOutput_sanitizedBeforeSubmit() throws LlmCallException {
-            when(llmClient.call(any())).thenReturn("```json\n" + VALID_LLM_OUTPUT.strip() + "\n```");
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("```json\n" + VALID_LLM_OUTPUT.strip() + "\n```"));
 
             service.runCurrentStage(RUN_ID);
 

@@ -22,10 +22,16 @@ import java.util.Objects;
 public record AgentResult(
         JsonNode validatedOutput,
         String   rawLlmOutput,
-        int      attemptsUsed
+        int      attemptsUsed,
+        int      promptTokens,
+        int      completionTokens
 ) {
     /** Prefix the System Analyst emits when it requires additional input from the user. */
     public static final String NEED_INFO_PREFIX = "[NEED_INFO]";
+
+    public AgentResult(JsonNode validatedOutput, String rawLlmOutput, int attemptsUsed) {
+        this(validatedOutput, rawLlmOutput, attemptsUsed, 0, 0);
+    }
 
     public AgentResult {
         // validatedOutput is intentionally nullable for NEED_INFO responses
@@ -44,7 +50,7 @@ public record AgentResult(
      */
     public static AgentResult needsInfo(String questionsText, int attempt) {
         Objects.requireNonNull(questionsText, "questionsText must not be null");
-        return new AgentResult(null, questionsText, attempt);
+        return new AgentResult(null, questionsText, attempt, 0, 0);
     }
 
     /**

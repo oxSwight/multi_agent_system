@@ -4,7 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Validates Agent 6 (SecOps Engineer) output against the v2, runtime-aware schema.
@@ -25,6 +29,12 @@ import java.util.List;
 @Component
 public class SecOpsEngineerValidator extends AbstractGoalKeeperValidator {
 
+    private static final Set<String> DOCKER_ARTIFACT_KEYS = Set.of(
+            "dockerfile", "docker-compose.yml", "docker-compose.yaml");
+
+    private static final List<String> EXTENSION_ARTIFACT_KEY_MARKERS = List.of(
+            "manifest", "extension", "package", "chrome", "store", "packaging", "web-store", "webstore");
+
     public SecOpsEngineerValidator(ObjectMapper objectMapper) {
         super(objectMapper);
     }
@@ -40,7 +50,6 @@ public class SecOpsEngineerValidator extends AbstractGoalKeeperValidator {
         boolean hasReleaseArtifacts = releaseArtifacts != null
                 && releaseArtifacts.isObject() && !releaseArtifacts.isEmpty();
 
-        // Legacy support: top-level Dockerfile/docker-compose.yml count as release artifacts.
         JsonNode legacyDockerfile = root.get("Dockerfile");
         boolean hasLegacyDockerfile = legacyDockerfile != null
                 && legacyDockerfile.isTextual() && !legacyDockerfile.asText().isBlank();
@@ -54,16 +63,20 @@ public class SecOpsEngineerValidator extends AbstractGoalKeeperValidator {
                     + "'release_artifacts' object (or a legacy 'Dockerfile').");
         }
 
-        // Docker is required ONLY for containerized deployments.
-        String deploymentModel = root.path("deployment_model").asText("").toUpperCase();
-        if ("CONTAINERIZED".equals(deploymentModel)) {
+        String deploymentModel = root.path("deployment_model").asText("").toUpperCase(Locale.ROOT);
+        if ("CONTAINERIZED".equals(deploymentModel) || "HYBRID".equals(deploymentModel)) {
             String dockerfileContent = resolveDockerfile(root, releaseArtifacts);
             if (dockerfileContent == null || dockerfileContent.isBlank()) {
-                violations.add("deployment_model is CONTAINERIZED but no Dockerfile was provided "
+                violations.add("deployment_model is " + deploymentModel + " but no Dockerfile was provided "
                         + "(expected a 'Dockerfile' entry in release_artifacts or at the top level).");
             } else if (!dockerfileContent.contains("FROM")) {
                 violations.add("The provided Dockerfile does not contain a FROM instruction.");
             }
+        }
+
+        if ("HYBRID".equals(deploymentModel) && !hasClientExtensionArtifacts(releaseArtifacts)) {
+            violations.add("deployment_model is HYBRID but no client/extension release artifacts were provided "
+                    + "(expected packaging steps, store instructions, or manifest summary in release_artifacts).");
         }
     }
 
@@ -77,5 +90,37 @@ public class SecOpsEngineerValidator extends AbstractGoalKeeperValidator {
         }
         JsonNode legacy = root.get("Dockerfile");
         return (legacy != null && legacy.isTextual()) ? legacy.asText() : null;
+    }
+
+    private boolean hasClientExtensionArtifacts(JsonNode releaseArtifacts) {
+        if (releaseArtifacts == null || !releaseArtifacts.isObject() || releaseArtifacts.isEmpty()) {
+            return false;
+        }
+        Iterator<Map.Entry<String, JsonNode>> fields = releaseArtifacts.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            String key = entry.getKey();
+            if (DOCKER_ARTIFACT_KEYS.contains(key.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            String keyLower = key.toLowerCase(Locale.ROOT);
+            for (String marker : EXTENSION_ARTIFACT_KEY_MARKERS) {
+                if (keyLower.contains(marker)) {
+                    return true;
+                }
+            }
+            JsonNode value = entry.getValue();
+            if (value != null && value.isTextual()) {
+                String valueLower = value.asText().toLowerCase(Locale.ROOT);
+                if (valueLower.contains("manifest.json")
+                        || valueLower.contains("web store")
+                        || valueLower.contains("chrome web store")
+                        || valueLower.contains("browser extension")
+                        || valueLower.contains("extension.zip")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

@@ -146,7 +146,7 @@ public class EvolutionAgent {
                 pipelineRunId, truncated.length());
 
         try {
-            String report = llmClient.call(request);
+            String report = llmClient.call(request).text();
             log.info("[EvolutionAgent] Analysis complete for run [{}] ({} chars in report).",
                     pipelineRunId, report.length());
             return report;

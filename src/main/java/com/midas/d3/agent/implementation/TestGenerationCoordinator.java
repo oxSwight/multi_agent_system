@@ -11,6 +11,7 @@ import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.sanitizer.JsonSanitizer;
@@ -84,7 +85,7 @@ public class TestGenerationCoordinator {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize " + surface + " test map.", e);
         }
-        return new AgentResult(pass.validated(), json, pass.attemptsUsed());
+        return new AgentResult(pass.validated(), json, pass.attemptsUsed(), pass.promptTokens(), pass.completionTokens());
     }
 
     private AgentResult executeHybridFanOut(MidasContext context,
@@ -131,7 +132,9 @@ public class TestGenerationCoordinator {
                 clientPass.validated().size(),
                 serverPass.validated().size());
 
-        return new AgentResult(merged, mergedJson, totalAttempts);
+        return new AgentResult(merged, mergedJson, totalAttempts,
+                clientPass.promptTokens() + serverPass.promptTokens(),
+                clientPass.completionTokens() + serverPass.completionTokens());
     }
 
     private PassResult executePass(MidasContext context,
@@ -142,6 +145,8 @@ public class TestGenerationCoordinator {
         AgentContextView view = contextReducer.reduceTestGenerationPass(context, surface);
         String baseUserMessage = buildUserMessage(view, surface);
         String lastError = null;
+        int totalPromptTokens = 0;
+        int totalCompletionTokens = 0;
 
         for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
             String userMessage = attempt == 1
@@ -152,16 +157,19 @@ public class TestGenerationCoordinator {
                     surface, attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
 
             try {
-                String raw = llmClient.call(LlmCallRequest.of(
+                LlmCallResult llmResult = llmClient.call(LlmCallRequest.of(
                         MidasState.TEST_GENERATION,
                         llmAgentName,
                         effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
                         context.getPipelineRunId()));
+                totalPromptTokens += llmResult.promptTokens();
+                totalCompletionTokens += llmResult.completionTokens();
+                String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
                 JsonNode validated = validator.validate(sanitized);
-                return new PassResult(validated, attempt);
+                return new PassResult(validated, attempt, totalPromptTokens, totalCompletionTokens);
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -195,6 +203,8 @@ public class TestGenerationCoordinator {
                                           String llmAgentName) {
         String baseUserMessage = buildUserMessage(view, null);
         String lastError = null;
+        int totalPromptTokens = 0;
+        int totalCompletionTokens = 0;
 
         for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
             String userMessage = attempt == 1
@@ -205,16 +215,19 @@ public class TestGenerationCoordinator {
                     attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
 
             try {
-                String raw = llmClient.call(LlmCallRequest.of(
+                LlmCallResult llmResult = llmClient.call(LlmCallRequest.of(
                         MidasState.TEST_GENERATION,
                         llmAgentName,
                         effectiveSystemPrompt(context, systemPrompt),
                         userMessage,
                         context.getPipelineRunId()));
+                totalPromptTokens += llmResult.promptTokens();
+                totalCompletionTokens += llmResult.completionTokens();
+                String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
                 JsonNode validated = validator.validate(sanitized);
-                return new AgentResult(validated, sanitized, attempt);
+                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens);
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -309,5 +322,5 @@ public class TestGenerationCoordinator {
         }
     }
 
-    private record PassResult(JsonNode validated, int attemptsUsed) {}
+    private record PassResult(JsonNode validated, int attemptsUsed, int promptTokens, int completionTokens) {}
 }

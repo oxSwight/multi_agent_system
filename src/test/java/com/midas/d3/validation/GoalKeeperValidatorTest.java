@@ -341,6 +341,81 @@ class GoalKeeperValidatorTest {
                     .isInstanceOf(ValidationHookException.class)
                     .hasMessageContaining("release artifact");
         }
+
+        @Test
+        void validate_hybridWithBothSurfaces_passes() {
+            String json = """
+                {
+                  "security_audit_report": [
+                    "LOW: host_permissions scoped to api.example.com — OK",
+                    "MEDIUM: JWT secret must be injected via env, not hardcoded"
+                  ],
+                  "deployment_model": "HYBRID",
+                  "release_artifacts": {
+                    "Dockerfile": "FROM eclipse-temurin:21-jre\\nUSER app\\nWORKDIR /app",
+                    "docker-compose.yml": "version: '3.8'\\nservices:\\n  api:\\n    build: .",
+                    "package.sh": "zip -r extension.zip manifest.json src/",
+                    "manifest_summary": "permissions: storage; host_permissions: https://api.example.com/*"
+                  }
+                }
+                """;
+            JsonNode result = secOpsValidator.validate(json);
+            assertThat(result.get("deployment_model").asText()).isEqualTo("HYBRID");
+            assertThat(result.get("release_artifacts").get("Dockerfile").asText()).contains("FROM");
+            assertThat(result.get("release_artifacts").get("manifest_summary").asText())
+                    .contains("permissions");
+        }
+
+        @Test
+        void validate_hybridMissingDockerfile_throwsValidationHookException() {
+            String json = """
+                {
+                  "security_audit_report": ["LOW: manifest permissions OK"],
+                  "deployment_model": "HYBRID",
+                  "release_artifacts": {
+                    "package.sh": "zip -r extension.zip manifest.json src/",
+                    "manifest_summary": "permissions: storage only"
+                  }
+                }
+                """;
+            assertThatThrownBy(() -> secOpsValidator.validate(json))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("Dockerfile");
+        }
+
+        @Test
+        void validate_hybridMissingExtensionArtifacts_throwsValidationHookException() {
+            String json = """
+                {
+                  "security_audit_report": ["MEDIUM: env-injected secrets required"],
+                  "deployment_model": "HYBRID",
+                  "release_artifacts": {
+                    "Dockerfile": "FROM eclipse-temurin:21-jre\\nUSER app",
+                    "docker-compose.yml": "version: '3.8'"
+                  }
+                }
+                """;
+            assertThatThrownBy(() -> secOpsValidator.validate(json))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("client/extension release artifacts");
+        }
+
+        @Test
+        void validate_hybridDockerfileWithoutFrom_throwsValidationHookException() {
+            String json = """
+                {
+                  "security_audit_report": ["LOW: manifest permissions OK"],
+                  "deployment_model": "HYBRID",
+                  "release_artifacts": {
+                    "Dockerfile": "USER app\\nWORKDIR /app",
+                    "package.sh": "zip -r extension.zip manifest.json src/"
+                  }
+                }
+                """;
+            assertThatThrownBy(() -> secOpsValidator.validate(json))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("FROM");
+        }
     }
 
     // ── ValidationHookException ──────────────────────────────────────────────

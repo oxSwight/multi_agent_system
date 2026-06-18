@@ -79,7 +79,7 @@ public class GeminiLlmClient implements LlmClient {
     // ── LlmClient ─────────────────────────────────────────────────────────────
 
     @Override
-    public String call(LlmCallRequest request) throws LlmCallException {
+    public LlmCallResult call(LlmCallRequest request) throws LlmCallException {
         validateApiKey(request.getAgentName());
 
         GeminiRequest body = GeminiRequest.of(request.getSystemPrompt(), request.getUserMessage());
@@ -108,8 +108,11 @@ public class GeminiLlmClient implements LlmClient {
                     throw LlmCallException.emptyResponse(request.getAgentName());
                 }
 
-                return response.extractText()
-                        .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
+                return LlmCallResult.of(
+                        response.extractText()
+                                .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName())),
+                        response.extractPromptTokens(),
+                        response.extractCompletionTokens());
 
             } catch (LlmCallException e) {
                 throw e;

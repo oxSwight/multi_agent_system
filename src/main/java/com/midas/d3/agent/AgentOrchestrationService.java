@@ -10,6 +10,7 @@ import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
@@ -145,8 +146,9 @@ public class AgentOrchestrationService {
         String agentName = STAGE_TO_AGENT_NAME.get(currentState);
 
         // 4. Call LLM (may throw LlmCallException — callers handle retries)
-        String rawOutput = llmClient.call(
+        LlmCallResult llmResult = llmClient.call(
                 LlmCallRequest.of(currentState, agentName, systemPrompt, userMessage, runId));
+        String rawOutput = llmResult.text();
 
         log.debug("[AgentOrchestrationService][{}] Raw LLM output ({} chars): {}…",
                 agentName, rawOutput.length(),

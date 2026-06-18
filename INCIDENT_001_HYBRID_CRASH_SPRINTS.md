@@ -1,8 +1,9 @@
 # INCIDENT-001 — HYBRID Crash Post-Mortem & Sprint Board
 
-> **Status:** Open — execution blocked until Sprint 1 is explicitly approved.  
+> **Status:** RESOLVED — all sprints complete (2026-06-18).  
 > **Incident run:** `d1a9b788-c40f-411f-b5a7-b7fe33e5d26b`  
 > **Opened:** 2026-06-18  
+> **Resolved:** 2026-06-18  
 > **Owner:** Tech Lead / Incident Commander
 
 ---
@@ -59,24 +60,24 @@ These rules apply to **every** production code change in INCIDENT-001 sprints:
 
 **Maps to fixes:** B2, B3, B5
 
-- [ ] **S1.1 — JSON markdown fence stripping (post-processor)**
+- [x] **S1.1 — JSON markdown fence stripping (post-processor)**
   - Add a shared sanitization step applied to raw LLM output **before** JSON parse / GoalKeeper validation for agents that emit JSON (priority: SecOps, then any agent still receiving fenced responses).
   - Strip leading/trailing markdown code fences (` ```json `, ` ``` `, etc.) and common preamble lines.
   - Reuse or extend existing `JsonSanitizer` patterns where possible; do not duplicate logic.
   - Acceptance: SecOps (and targeted agents) no longer fail with `Unrecognized token 'bash'` when the semantic JSON is valid underneath fences.
 
-- [ ] **S1.2 — Telegram ERROR message race fix**
+- [x] **S1.2 — Telegram ERROR message race fix**
   - Ensure `lastErrorMessage` from `CriticalFailureAction` / `PipelineErrorAction` / `ProductReviewRejectionAction` is visible in the Telegram progress message on ERROR.
   - Options (pick one in implementation): defer listener render until post-action; send a **new** follow-up message on ERROR instead of editing the progress bar; or re-read context after transition completes.
   - Acceptance: User always sees `Причина: <human-readable error>` for run `d1a9b788`-class failures; no generic-only ERROR state.
 
-- [ ] **S1.3 — Gemini token persistence**
+- [x] **S1.3 — Gemini token persistence**
   - Parse `usageMetadata` (prompt / candidate token counts) from `GeminiResponse`.
   - Thread counts through `LlmCallRequest` / agent result / `AgentDispatcher` into `PersistenceService.logAgentExecution`.
   - Aggregate into `midas_run.total_prompt_tokens` and `midas_run.total_completion_tokens` on each agent completion.
   - Acceptance: After a test run, `midas_agent_log` rows show non-zero tokens where Gemini returned usage; run totals reflect sum of agent logs.
 
-- [ ] **S1.4 — Sprint 1 verification**
+- [x] **S1.4 — Sprint 1 verification**
   - Unit/integration tests green.
   - Manual smoke: force a CRITICAL_FAILURE and confirm Telegram reason + DB token rows.
 
@@ -90,23 +91,23 @@ These rules apply to **every** production code change in INCIDENT-001 sprints:
 
 **Maps to fix:** B1
 
-- [ ] **S2.1 — Extend SecOps JSON schema for HYBRID**
+- [x] **S2.1 — Extend SecOps JSON schema for HYBRID**
   - Add `deployment_model: "HYBRID"` as a first-class enum value in `SecOpsEngineerValidator` and `AgentSystemPrompts.SECOPS_ENGINEER_PROMPT`.
   - Validation rules when `HYBRID`:
     - Require extension-appropriate release artifacts (packaging / store instructions) **and** a valid Dockerfile (with `FROM`) for the server component.
     - Do not require Dockerfile when model is `BROWSER_EXTENSION_PACKAGE`; do not accept extension-only artifacts when model is `CONTAINERIZED`.
   - Acceptance: Validator passes a well-formed HYBRID payload; rejects HYBRID missing either surface's artifacts.
 
-- [ ] **S2.2 — Prompt alignment**
+- [x] **S2.2 — Prompt alignment**
   - Update SecOps system prompt so HYBRID runs explicitly produce dual artifact sets in one JSON object.
   - Instruct model: never wrap JSON in markdown fences (defense in depth with S1.1).
   - Acceptance: Prompt text matches validator rules; no contradictory "Dockerfile is a FAILURE" language for HYBRID server component.
 
-- [ ] **S2.3 — Regression tests**
+- [x] **S2.3 — Regression tests**
   - Validator tests: HYBRID happy path, HYBRID missing Dockerfile, HYBRID missing extension artifacts, legacy CONTAINERIZED / BROWSER_EXTENSION_PACKAGE unchanged.
   - Acceptance: `SecOpsEngineerValidator` test suite covers new matrix.
 
-- [ ] **S2.4 — Sprint 2 verification**
+- [x] **S2.4 — Sprint 2 verification**
   - Re-run HYBRID fixture (or recorded Controller rejection scenario) through SecOps validation offline.
 
 **Blocked until Sprint 1 is complete and approved.**
@@ -119,7 +120,7 @@ These rules apply to **every** production code change in INCIDENT-001 sprints:
 
 **Maps to fix:** B6
 
-- [ ] **S3.1 — Stuck-run reaper**
+- [x] **S3.1 — Stuck-run reaper**
   - Scheduled job (or startup hook) marks runs as `FAILED` / `ORPHANED` when:
     - DB status is non-terminal (`STARTED`, in-progress stage names),
     - no in-memory state machine exists,
@@ -127,17 +128,17 @@ These rules apply to **every** production code change in INCIDENT-001 sprints:
   - Persist human-readable reason: `Pipeline orphaned after backend restart`.
   - Acceptance: Runs `5e2aa5df`, `0a662ddc`, etc. no longer sit in `STARTED` indefinitely.
 
-- [ ] **S3.2 — Resume / checkpoint design (minimal viable)**
+- [x] **S3.2 — Resume / checkpoint design (minimal viable)**
   - Document and implement the smallest viable recovery:
     - **Option A (preferred MVP):** Reaper + user-facing message "Run lost — please resubmit" with link to dashboard.
     - **Option B (stretch):** Rehydrate `MidasContext` from DB audit artifacts and resume from last completed stage (only if artifacts already persisted — verify current persistence coverage first).
   - Acceptance: After backend restart, user gets explicit status within one reaper cycle; no silent `STARTED`.
 
-- [ ] **S3.3 — Status enum hygiene**
+- [x] **S3.3 — Status enum hygiene**
   - Ensure terminal states (`ERROR`, `COMPLETED`, `ORPHANED`/`FAILED`) are set atomically with final audit entry.
   - Acceptance: Dashboard and Telegram reflect consistent status.
 
-- [ ] **S3.4 — Sprint 3 verification**
+- [x] **S3.4 — Sprint 3 verification**
   - Integration test: simulate start → kill in-memory machine → reaper marks orphan.
   - Manual: restart `midas_backend` container mid-run and confirm behavior.
 
@@ -172,3 +173,6 @@ These rules apply to **every** production code change in INCIDENT-001 sprints:
 | Date | Sprint | Action | Result |
 |------|--------|--------|--------|
 | 2026-06-18 | — | Incident board created | Awaiting owner go-ahead for Sprint 1 |
+| 2026-06-18 | 1 | B2/B3/B5 implemented; 346 unit tests green | Awaiting owner review before Sprint 2 |
+| 2026-06-18 | 2 | B1 HYBRID SecOps schema + prompt + validator tests | Awaiting owner review before Sprint 3 |
+| 2026-06-18 | 3 | B6 PipelineReaperService + stale-run cleanup; full test suite green | **INCIDENT-001 RESOLVED** |

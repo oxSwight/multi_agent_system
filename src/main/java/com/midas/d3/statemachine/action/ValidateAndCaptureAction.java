@@ -1,6 +1,7 @@
 package com.midas.d3.statemachine.action;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineContextKeys;
@@ -60,6 +61,8 @@ public class ValidateAndCaptureAction implements Action<MidasState, MidasEvent> 
             vars.put(PipelineContextKeys.LAST_VALIDATION_ERROR, "llmOutput header is null or blank.");
             return;
         }
+
+        llmOutput = JsonSanitizer.sanitize(llmOutput);
 
         // Look up the validator for this stage
         Optional<GoalKeeperValidator> validatorOpt = validatorRegistry.getValidator(sourceStage);

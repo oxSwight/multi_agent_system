@@ -2,6 +2,7 @@ package com.midas.d3.llm.nous;
 
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.llm.nous.dto.NousRequest;
 import com.midas.d3.llm.nous.dto.NousResponse;
@@ -55,7 +56,7 @@ public class NousRestClient implements LlmClient {
     }
 
     @Override
-    public String call(LlmCallRequest request) throws LlmCallException {
+    public LlmCallResult call(LlmCallRequest request) throws LlmCallException {
         NousRequest body = NousRequest.of(model, request.getSystemPrompt(), request.getUserMessage());
 
         log.info("[NousRestClient] Calling agent=[{}] run=[{}] model={}",
@@ -78,8 +79,8 @@ public class NousRestClient implements LlmClient {
                     throw LlmCallException.emptyResponse(request.getAgentName());
                 }
 
-                return response.extractText()
-                        .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
+                return LlmCallResult.ofText(response.extractText()
+                        .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName())));
 
             } catch (LlmCallException e) {
                 throw e;

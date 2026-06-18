@@ -9,6 +9,7 @@ import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
@@ -76,9 +77,9 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-001", "IMPLEMENTATION_ENGINEER_SERVER"));
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"src/main/java/com/example/App.java":"public class App {}"}
-                """);
+                """));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -101,9 +102,9 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
                 .thenReturn(view("run-client", "IMPLEMENTATION_ENGINEER_CLIENT"));
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"manifest.json":"{}", "src/popup.ts":"export const ok = true;"}
-                """);
+                """));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -125,9 +126,9 @@ class CodeGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
         stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"cmd/main.go":"package main"}
-                """);
+                """));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -159,9 +160,9 @@ class CodeGenerationCoordinatorTest {
                 .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
 
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn("{\"manifest.json\":\"{}\", \"src/popup.ts\":\"export const ok = true;\"}");
+                .thenReturn(LlmCallResult.ofText("{\"manifest.json\":\"{}\", \"src/popup.ts\":\"export const ok = true;\"}"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn("{\"src/main/java/com/example/App.java\":\"public class App {}\"}");
+                .thenReturn(LlmCallResult.ofText("{\"src/main/java/com/example/App.java\":\"public class App {}\"}"));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -185,9 +186,9 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn("{\"manifest.json\":\"{}\"}");
+                .thenReturn(LlmCallResult.ofText("{\"manifest.json\":\"{}\"}"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn("{\"App.java\":\"public class App {}\"}");
+                .thenReturn(LlmCallResult.ofText("{\"App.java\":\"public class App {}\"}"));
 
         coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -213,7 +214,7 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_SERVER"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn("{\"manifest.json\":\"{}\"}");
+                .thenReturn(LlmCallResult.ofText("{\"manifest.json\":\"{}\"}"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
                 .thenThrow(LlmCallException.emptyResponse("ImplementationEngineerAgentServer"));
 
@@ -235,9 +236,9 @@ class CodeGenerationCoordinatorTest {
                 .withRemediationDirective(directive);
         stubImplementationView("run-remediate", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"cmd/main.go":"package main"}
-                """);
+                """));
 
         coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -259,9 +260,9 @@ class CodeGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
         stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"cmd/main.go":"package main"}
-                """);
+                """));
 
         coordinator.execute(ctx, "ImplementationEngineerAgent");
 

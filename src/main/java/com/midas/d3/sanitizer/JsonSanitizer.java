@@ -36,7 +36,7 @@ public final class JsonSanitizer {
      * Handles both LF-only and CRLF line endings.
      */
     private static final Pattern MARKDOWN_FENCE = Pattern.compile(
-            "```(?:json|JSON)?\\s*\\r?\\n?(.*?)\\r?\\n?```",
+            "```([a-zA-Z0-9_-]+)?\\s*\\r?\\n?(.*?)\\r?\\n?```",
             Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -53,21 +53,18 @@ public final class JsonSanitizer {
             return rawLlmOutput;
         }
 
-        String trimmed = rawLlmOutput.strip();
+        String trimmed = stripPreamble(rawLlmOutput.strip());
 
-        // Strategy 1: Extract from markdown code fence
-        Matcher fenceMatcher = MARKDOWN_FENCE.matcher(trimmed);
-        if (fenceMatcher.find()) {
-            String extracted = fenceMatcher.group(1).strip();
+        String fromFence = extractBestJsonFromFences(trimmed);
+        if (fromFence != null) {
             log.debug("[JsonSanitizer] Extracted from markdown fence ({} → {} chars).",
-                    trimmed.length(), extracted.length());
-            return extracted;
+                    trimmed.length(), fromFence.length());
+            return fromFence;
         }
 
-        // Strategy 2: Input already looks like a raw JSON object
         if (trimmed.startsWith("{")) {
-            log.debug("[JsonSanitizer] Input starts with '{' — returning trimmed.");
-            return trimmed;
+            log.debug("[JsonSanitizer] Input starts with '{' — extracting JSON object.");
+            return extractJsonObject(trimmed, 0);
         }
 
         // Strategy 3: Find the first '{' and extract the enclosing JSON object
@@ -83,7 +80,43 @@ public final class JsonSanitizer {
         return trimmed;
     }
 
-    // ── Internal helpers ─────────────────────────────────────────────────────
+    static String stripPreamble(String trimmed) {
+        if (trimmed.startsWith("{") || trimmed.startsWith("```")) {
+            return trimmed;
+        }
+        int fenceIdx = trimmed.indexOf("```");
+        int braceIdx = trimmed.indexOf('{');
+        int start = -1;
+        if (fenceIdx >= 0 && braceIdx >= 0) {
+            start = Math.min(fenceIdx, braceIdx);
+        } else if (fenceIdx >= 0) {
+            start = fenceIdx;
+        } else if (braceIdx >= 0) {
+            start = braceIdx;
+        }
+        if (start > 0) {
+            return trimmed.substring(start).stripLeading();
+        }
+        return trimmed;
+    }
+
+    static String extractBestJsonFromFences(String text) {
+        Matcher fenceMatcher = MARKDOWN_FENCE.matcher(text);
+        String fallback = null;
+        while (fenceMatcher.find()) {
+            String extracted = fenceMatcher.group(2).strip();
+            if (extracted.isBlank()) {
+                continue;
+            }
+            if (extracted.startsWith("{")) {
+                return extracted;
+            }
+            if (fallback == null) {
+                fallback = extracted;
+            }
+        }
+        return fallback;
+    }
 
     /**
      * Extracts the outermost JSON object starting at {@code start} using a

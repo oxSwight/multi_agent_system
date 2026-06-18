@@ -9,6 +9,7 @@ import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
@@ -76,9 +77,9 @@ class TestGenerationCoordinatorTest {
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-001", "QA_ENGINEER_SERVER"));
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"src/test/java/com/example/AppTest.java":"class AppTest { @Test void ok() {} }"}
-                """);
+                """));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -101,9 +102,9 @@ class TestGenerationCoordinatorTest {
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
                 .thenReturn(view("run-client", "QA_ENGINEER_CLIENT"));
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"src/popup.test.ts":"describe('popup', () => { it('works', () => expect(true).toBe(true)); });"}
-                """);
+                """));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -125,9 +126,9 @@ class TestGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
         stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
-                """);
+                """));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -159,9 +160,9 @@ class TestGenerationCoordinatorTest {
                 .thenReturn(view("run-hybrid", "QA_ENGINEER_SERVER"));
 
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn("{\"src/popup.test.ts\":\"describe('popup', () => { it('works', () => expect(true).toBe(true)); });\"}");
+                .thenReturn(LlmCallResult.ofText("{\"src/popup.test.ts\":\"describe('popup', () => { it('works', () => expect(true).toBe(true)); });\"}"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn("{\"src/test/java/com/example/AppTest.java\":\"class AppTest { @Test void ok() {} }\"}");
+                .thenReturn(LlmCallResult.ofText("{\"src/test/java/com/example/AppTest.java\":\"class AppTest { @Test void ok() {} }\"}"));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -185,9 +186,9 @@ class TestGenerationCoordinatorTest {
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid", "QA_ENGINEER_SERVER"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn("{\"src/popup.test.ts\":\"describe('x', () => { it('y', () => expect(1).toBe(1)); });\"}");
+                .thenReturn(LlmCallResult.ofText("{\"src/popup.test.ts\":\"describe('x', () => { it('y', () => expect(1).toBe(1)); });\"}"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn("{\"src/test/java/com/example/AppTest.java\":\"class AppTest { @Test void ok() {} }\"}");
+                .thenReturn(LlmCallResult.ofText("{\"src/test/java/com/example/AppTest.java\":\"class AppTest { @Test void ok() {} }\"}"));
 
         coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -213,7 +214,7 @@ class TestGenerationCoordinatorTest {
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid-fail", "QA_ENGINEER_SERVER"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn("{\"src/popup.test.ts\":\"describe('x', () => { it('y', () => expect(1).toBe(1)); });\"}");
+                .thenReturn(LlmCallResult.ofText("{\"src/popup.test.ts\":\"describe('x', () => { it('y', () => expect(1).toBe(1)); });\"}"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
                 .thenThrow(LlmCallException.emptyResponse("QaAutomationAgentServer"));
 
@@ -235,9 +236,9 @@ class TestGenerationCoordinatorTest {
                 .withRemediationDirective(directive);
         stubQaView("run-remediate", ContextReducer.AgentRole.QA_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
-                """);
+                """));
 
         coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -259,9 +260,9 @@ class TestGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
         stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn("""
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
                 {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
-                """);
+                """));
 
         coordinator.execute(ctx, "QaAutomationAgent");
 

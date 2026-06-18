@@ -488,6 +488,13 @@ public class AgentSystemPrompts {
               (NEVER <all_urls> unless a feature provably needs it — flag it if present), check CSP,
               externally_connectable, innerHTML/eval/XSS risks in content scripts, and least-privilege of
               chrome.* APIs. Release artifact = packaging steps / web-store zip instructions. NO Dockerfile.
+            - HYBRID (browser extension + backend server) → audit BOTH surfaces in a single JSON object:
+              (1) Client/extension: manifest permissions, host_permissions scope, CSP, content-script XSS
+              risks, and packaging / web-store zip instructions or manifest summary.
+              (2) Server/backend: OWASP Top 10, injection, authz, secrets handling, and produce a non-root
+              Dockerfile (with FROM) plus docker-compose.yml with env-injected secrets.
+              deployment_model MUST be "HYBRID". release_artifacts MUST contain BOTH client/extension
+              artifacts (e.g. package.sh, manifest_summary) AND server artifacts (Dockerfile, docker-compose.yml).
             - STATIC_WEB / SPA → audit CSP, dependency CVEs, secrets in the client bundle, XSS.
               Release artifact = static build/deploy notes. Docker only if explicitly hosted.
             - CLI_TOOL → audit arg/file handling, path traversal, secret handling.
@@ -497,25 +504,27 @@ public class AgentSystemPrompts {
             Step 1: Read runtime_environment/architecture, source, and tests.
             Step 2: Produce findings as 'SEVERITY: issue + fix', tied to the real attack surface.
             Step 3: Produce ONLY the release artifacts appropriate to deployment_target.
-            Step 4: Output ONLY a valid JSON object. No markdown.
+            Step 4: Output ONLY a valid JSON object. No markdown, no code fences, no preamble.
 
             REQUIRED JSON SCHEMA:
             {
               "security_audit_report": ["String — 'CRITICAL|HIGH|MEDIUM|LOW: finding and remediation'"],
-              "deployment_model": "BROWSER_EXTENSION_PACKAGE | STATIC_DEPLOY | CLI_DISTRIBUTION | CONTAINERIZED",
+              "deployment_model": "BROWSER_EXTENSION_PACKAGE | STATIC_DEPLOY | CLI_DISTRIBUTION | CONTAINERIZED | HYBRID",
               "release_artifacts": {
                 "<artifact filename or step name>": "String — contents or instructions"
               }
             }
 
             GUARDRAILS:
-            - Provide a Dockerfile/docker-compose.yml ONLY when deployment_model is CONTAINERIZED.
-              For an extension, providing a Dockerfile is a FAILURE.
-            - For BROWSER_EXTENSION_PACKAGE, security_audit_report MUST include an explicit verdict on
-              manifest permissions and host_permissions scope.
+            - For BROWSER_EXTENSION_PACKAGE: NO Dockerfile. security_audit_report MUST include an explicit
+              verdict on manifest permissions and host_permissions scope.
+            - For CONTAINERIZED: Dockerfile (with FROM) is REQUIRED. Extension-only artifacts are NOT sufficient.
+            - For HYBRID: release_artifacts MUST include BOTH (a) client/extension packaging or manifest
+              summary AND (b) a valid Dockerfile (with FROM) for the server component. Omitting either surface
+              is a FAILURE. A Dockerfile for HYBRID is REQUIRED for the server portion — it is NOT a failure.
             - security_audit_report is an array (empty [] only if genuinely no findings);
               release_artifacts must contain at least 1 entry.
-            - Output ONLY the JSON object.
+            - Output ONLY the JSON object — never wrap it in markdown code fences.
             """;
 
     // ─────────────────────────────────────────────────────────────────────────
