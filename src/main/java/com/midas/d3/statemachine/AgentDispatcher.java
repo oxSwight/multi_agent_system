@@ -5,6 +5,7 @@ import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.base.BaseMidasAgent;
 import com.midas.d3.config.AsyncConfig;
 import com.midas.d3.context.MidasContext;
+import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.persistence.PersistenceService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -153,6 +154,17 @@ public class AgentDispatcher {
         } catch (AgentExecutionException e) {
             long elapsedMs = System.currentTimeMillis() - startMs;
             log.error("[AgentDispatcher] Agent [{}] exhausted retries for run [{}] ({}ms): {}",
+                    agent.getAgentName(), runId, elapsedMs, e.getMessage());
+
+            persistenceService.logAgentExecution(
+                    runId, agent.getAgentName(), e.getMessage(),
+                    0, 0, elapsedMs, true);
+
+            sendCriticalFailure(machine, e.getMessage());
+
+        } catch (LlmCallException e) {
+            long elapsedMs = System.currentTimeMillis() - startMs;
+            log.error("[AgentDispatcher] LLM call failed for agent [{}] run [{}] ({}ms): {}",
                     agent.getAgentName(), runId, elapsedMs, e.getMessage());
 
             persistenceService.logAgentExecution(

@@ -116,4 +116,55 @@ class TelegramStateListenerTest {
         assertThat(message).contains("попытка 1 из 1");
         assertThat(message).contains("Контроль качества: <b>PASS</b>");
     }
+
+    @Test
+    @DisplayName("renderError surfaces lastErrorMessage as human-readable reason")
+    void renderError_withLastErrorMessage_includesReason() {
+        MidasContext ctx = MidasContext.start("Build a CRM", "run-error-001")
+                .withLastErrorMessage("Gemini API Rate Limit Exceeded for agent [SystemAnalystAgent]");
+
+        String message = TelegramStateListener.renderError(ctx);
+
+        assertThat(message).contains("❌ ОШИБКА");
+        assertThat(message).contains("Gemini API Rate Limit Exceeded");
+        assertThat(message).contains("/context");
+        assertThat(message).doesNotContain("&lt;b&gt;");
+    }
+
+    @Test
+    @DisplayName("renderError falls back to latest ERROR audit detail when lastErrorMessage absent")
+    void renderError_withAuditDetail_includesReason() {
+        MidasContext ctx = MidasContext.start("Build a CRM", "run-error-002")
+                .appendAudit(com.midas.d3.context.AuditEntry.error(
+                        "SYSTEM_ANALYSIS",
+                        "Pipeline aborted",
+                        "Validation retries exhausted"));
+
+        String message = TelegramStateListener.renderError(ctx);
+
+        assertThat(message).contains("Validation retries exhausted");
+    }
+
+    @Test
+    @DisplayName("extractPipelineErrorReason prefers lastErrorMessage over audit log")
+    void extractPipelineErrorReason_prefersLastErrorMessage() {
+        MidasContext ctx = MidasContext.start("idea", "run-error-003")
+                .withLastErrorMessage("Gemini API Rate Limit Exceeded")
+                .appendAudit(com.midas.d3.context.AuditEntry.error(
+                        "SYSTEM_ANALYSIS", "Pipeline aborted", "older detail"));
+
+        assertThat(TelegramStateListener.extractPipelineErrorReason(ctx))
+                .isEqualTo("Gemini API Rate Limit Exceeded");
+    }
+
+    @Test
+    @DisplayName("renderProgress ERROR state delegates to renderError")
+    void renderProgress_errorState_includesReason() {
+        MidasContext ctx = MidasContext.start("Build a CRM", "run-error-004")
+                .withLastErrorMessage("Gemini API Rate Limit Exceeded for agent [SecOpsAgent]");
+
+        String message = TelegramStateListener.renderProgress(MidasState.ERROR, ctx);
+
+        assertThat(message).contains("Gemini API Rate Limit Exceeded");
+    }
 }

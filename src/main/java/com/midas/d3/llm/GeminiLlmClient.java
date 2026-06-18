@@ -41,6 +41,9 @@ public class GeminiLlmClient implements LlmClient {
     private static final String GEMINI_BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/";
 
+    private static final int MAX_RATE_LIMIT_RETRIES = 3;
+    private static final long RATE_LIMIT_RETRY_DELAY_MS = 1_000L;
+
     /** Default pause when Gemini does not specify a retry interval (free-tier quota reset). */
     private static final long DEFAULT_RATE_LIMIT_WAIT_MS = 45_000L;
 
@@ -86,6 +89,7 @@ public class GeminiLlmClient implements LlmClient {
                 request.getAgentName(), request.getPipelineRunId(), model);
 
         int serverErrorAttempts = 0;
+        int rateLimitAttempts = 0;
 
         while (true) {
             try {
@@ -113,10 +117,17 @@ public class GeminiLlmClient implements LlmClient {
                 int status = e.getStatusCode().value();
 
                 if (status == 429) {
-                    long waitMs = parseRateLimitWaitMs(e);
-                    log.warn("[GeminiLlmClient][{}] HTTP 429 rate limit — waiting {} ms then retrying. Body: {}",
-                            request.getAgentName(), waitMs, truncate(e.getResponseBodyAsString(), 300));
-                    sleepQuietly(waitMs);
+                    if (rateLimitAttempts >= MAX_RATE_LIMIT_RETRIES) {
+                        log.error("[GeminiLlmClient][{}] HTTP 429 rate limit exhausted after {} retries. Body: {}",
+                                request.getAgentName(), MAX_RATE_LIMIT_RETRIES,
+                                truncate(e.getResponseBodyAsString(), 300));
+                        throw LlmCallException.rateLimitExhausted("Gemini", request.getAgentName());
+                    }
+                    rateLimitAttempts++;
+                    log.warn("[GeminiLlmClient][{}] HTTP 429 rate limit — rapid retry {}/{}. Body: {}",
+                            request.getAgentName(), rateLimitAttempts, MAX_RATE_LIMIT_RETRIES,
+                            truncate(e.getResponseBodyAsString(), 300));
+                    sleepQuietly(RATE_LIMIT_RETRY_DELAY_MS);
                     continue;
                 }
 
@@ -138,10 +149,15 @@ public class GeminiLlmClient implements LlmClient {
                     int status = httpCause.getStatusCode().value();
 
                     if (status == 429) {
-                        long waitMs = parseRateLimitWaitMs(httpCause);
-                        log.warn("[GeminiLlmClient][{}] HTTP 429 (wrapped) — waiting {} ms then retrying.",
-                                request.getAgentName(), waitMs);
-                        sleepQuietly(waitMs);
+                        if (rateLimitAttempts >= MAX_RATE_LIMIT_RETRIES) {
+                            log.error("[GeminiLlmClient][{}] HTTP 429 (wrapped) rate limit exhausted after {} retries.",
+                                    request.getAgentName(), MAX_RATE_LIMIT_RETRIES);
+                            throw LlmCallException.rateLimitExhausted("Gemini", request.getAgentName());
+                        }
+                        rateLimitAttempts++;
+                        log.warn("[GeminiLlmClient][{}] HTTP 429 (wrapped) — rapid retry {}/{}.",
+                                request.getAgentName(), rateLimitAttempts, MAX_RATE_LIMIT_RETRIES);
+                        sleepQuietly(RATE_LIMIT_RETRY_DELAY_MS);
                         continue;
                     }
 
@@ -275,7 +291,7 @@ public class GeminiLlmClient implements LlmClient {
 
     private LlmCallException mapHttpError(String agentName, WebClientResponseException e) {
         int status = e.getStatusCode().value();
-        if (status == 429) return LlmCallException.rateLimited(agentName);
+        if (status == 429) return LlmCallException.rateLimitExhausted("Gemini", agentName);
         if (status >= 500) return LlmCallException.serverError(agentName, status);
         return new LlmCallException(
                 "HTTP %d from Gemini for agent [%s]: %s".formatted(status, agentName, e.getMessage()),

@@ -183,11 +183,7 @@ public class CodeGenerationCoordinator {
                 lastError = "LLM transport error: " + e.getMessage();
                 log.warn("[CodeGenerationCoordinator] {} pass attempt {}/{} transport error: {}",
                         surface, attempt, MAX_PASS_RETRIES, e.getMessage());
-                if (e.getHttpStatus() == 429) {
-                    sleepQuietly(45_000L);
-                } else {
-                    backoffBeforeRetry(attempt);
-                }
+                backoffBeforeRetry(attempt);
             }
         }
 
@@ -238,11 +234,7 @@ public class CodeGenerationCoordinator {
                     throw e;
                 }
                 lastError = "LLM transport error: " + e.getMessage();
-                if (e.getHttpStatus() == 429) {
-                    sleepQuietly(45_000L);
-                } else {
-                    backoffBeforeRetry(attempt);
-                }
+                backoffBeforeRetry(attempt);
             }
         }
 

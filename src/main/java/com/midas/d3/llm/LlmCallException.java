@@ -39,6 +39,12 @@ public final class LlmCallException extends RuntimeException {
                 "LLM rate limit hit for agent [" + agentName + "]", 429, true);
     }
 
+    public static LlmCallException rateLimitExhausted(String provider, String agentName) {
+        return new LlmCallException(
+                "%s API Rate Limit Exceeded for agent [%s]".formatted(provider, agentName),
+                429, false);
+    }
+
     public static LlmCallException serverError(String agentName, int status) {
         return new LlmCallException(
                 "LLM server error %d for agent [%s]".formatted(status, agentName), status, status >= 500);

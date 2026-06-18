@@ -331,6 +331,19 @@ class BaseMidasAgentTest {
         }
 
         @Test
+        @DisplayName("Non-retryable rate-limit exhaustion propagates immediately without retrying")
+        void execute_rateLimitExhausted_propagatesImmediatelyNoRetry() {
+            LlmCallException exhausted = LlmCallException.rateLimitExhausted("Gemini", "SystemAnalyst");
+            when(llmClient.call(any())).thenThrow(exhausted);
+
+            assertThatThrownBy(() -> agent.execute(context))
+                    .isInstanceOf(LlmCallException.class)
+                    .hasMessageContaining("Gemini API Rate Limit Exceeded");
+
+            verify(llmClient, times(1)).call(any());
+        }
+
+        @Test
         @DisplayName("Non-retryable LlmCallException is propagated immediately without retrying")
         void execute_nonRetryableLlmError_propagatesImmediatelyNoRetry() {
             // HTTP 400 bad request — non-retryable

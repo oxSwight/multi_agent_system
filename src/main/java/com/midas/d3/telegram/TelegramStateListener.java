@@ -1,6 +1,7 @@
 package com.midas.d3.telegram;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.context.AuditEntry;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
@@ -91,12 +92,53 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
                 "📦 Формирование и отправка архива артефактов...";
 
             case ERROR ->
-                HEADER + "[❌ ОШИБКА]\n\n" +
-                "Пайплайн завершился с ошибкой.\n" +
-                "Используйте <code>GET /api/v1/pipelines/{runId}/context</code> для деталей.";
+                renderError(ctx);
 
             default -> null;
         };
+    }
+
+    static String renderError(MidasContext ctx) {
+        String reason = extractPipelineErrorReason(ctx);
+        StringBuilder sb = new StringBuilder();
+        sb.append(HEADER).append("[❌ ОШИБКА]\n\n");
+        sb.append("Пайплайн завершился с ошибкой.\n");
+        if (reason != null) {
+            sb.append("\nПричина: <b>").append(escapeHtml(reason)).append("</b>\n");
+        }
+        if (ctx != null && ctx.getPipelineRunId() != null) {
+            sb.append("\nREST: <code>GET /api/v1/pipelines/")
+                    .append(ctx.getPipelineRunId())
+                    .append("/context</code>");
+        }
+        return sb.toString();
+    }
+
+    static String extractPipelineErrorReason(MidasContext ctx) {
+        if (ctx == null) {
+            return null;
+        }
+        String lastError = ctx.getLastErrorMessage();
+        if (lastError != null && !lastError.isBlank()) {
+            return lastError.strip();
+        }
+        return ctx.safeAuditLog().stream()
+                .filter(entry -> entry.getSeverity() == AuditEntry.Severity.ERROR)
+                .reduce((first, second) -> second)
+                .map(AuditEntry::getDetail)
+                .filter(detail -> detail != null && !detail.isBlank())
+                .map(String::strip)
+                .orElse(null);
+    }
+
+    private static String escapeHtml(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
     }
 
     static boolean isRemediationPass(MidasContext ctx) {

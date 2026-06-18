@@ -12,36 +12,16 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
-import reactor.util.retry.Retry;
 
 import java.time.Duration;
 
-/**
- * OpenAI-compatible LLM client for NousResearch models.
- *
- * <p>Supports any OpenAI-compatible endpoint:
- * <ul>
- *   <li><b>OpenRouter (cloud):</b> set {@code midas.nous.base-url=https://openrouter.ai/api}
- *       and {@code midas.nous.api-key=sk-or-...}</li>
- *   <li><b>LM Studio (local):</b> set {@code midas.nous.base-url=http://localhost:1234}
- *       (no API key required)</li>
- * </ul>
- *
- * <p><b>Retry policy:</b>
- * <ul>
- *   <li>Up to {@code midas.nous.http-max-retries} attempts (default: 2)</li>
- *   <li>Exponential backoff starting at 2 s, max 30 s, jitter 50 %</li>
- *   <li>Retries only on: HTTP 429, HTTP 5xx, {@link java.util.concurrent.TimeoutException},
- *       and {@link java.io.IOException}</li>
- * </ul>
- *
- * <p><b>Thread safety:</b> {@link WebClient} is inherently thread-safe.
- */
 @Slf4j
 @Component
 public class NousRestClient implements LlmClient {
 
     private static final String CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
+    private static final int MAX_RATE_LIMIT_RETRIES = 3;
+    private static final long RATE_LIMIT_RETRY_DELAY_MS = 1_000L;
 
     private final WebClient webClient;
     private final String    model;
@@ -74,8 +54,6 @@ public class NousRestClient implements LlmClient {
                 baseUrl, model, timeoutSeconds, this.httpMaxRetries);
     }
 
-    // ── LlmClient ─────────────────────────────────────────────────────────────
-
     @Override
     public String call(LlmCallRequest request) throws LlmCallException {
         NousRequest body = NousRequest.of(model, request.getSystemPrompt(), request.getUserMessage());
@@ -83,49 +61,100 @@ public class NousRestClient implements LlmClient {
         log.info("[NousRestClient] Calling agent=[{}] run=[{}] model={}",
                 request.getAgentName(), request.getPipelineRunId(), model);
 
-        try {
-            NousResponse response = webClient.post()
-                    .uri(CHAT_COMPLETIONS_PATH)
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(NousResponse.class)
-                    .timeout(Duration.ofSeconds(timeoutSeconds))
-                    .retryWhen(Retry.backoff(httpMaxRetries, Duration.ofSeconds(2))
-                            .maxBackoff(Duration.ofSeconds(30))
-                            .jitter(0.5)
-                            .filter(this::isRetryable)
-                            .doBeforeRetry(signal ->
-                                    log.warn("[NousRestClient][{}] Retry attempt {} due to: {}",
-                                            request.getAgentName(),
-                                            signal.totalRetries() + 1,
-                                            signal.failure().getClass().getSimpleName())))
-                    .block();
+        int serverErrorAttempts = 0;
+        int rateLimitAttempts = 0;
 
-            if (response == null) {
-                throw LlmCallException.emptyResponse(request.getAgentName());
+        while (true) {
+            try {
+                NousResponse response = webClient.post()
+                        .uri(CHAT_COMPLETIONS_PATH)
+                        .bodyValue(body)
+                        .retrieve()
+                        .bodyToMono(NousResponse.class)
+                        .timeout(Duration.ofSeconds(timeoutSeconds))
+                        .block();
+
+                if (response == null) {
+                    throw LlmCallException.emptyResponse(request.getAgentName());
+                }
+
+                return response.extractText()
+                        .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
+
+            } catch (LlmCallException e) {
+                throw e;
+            } catch (WebClientResponseException e) {
+                int status = e.getStatusCode().value();
+
+                if (status == 429) {
+                    if (rateLimitAttempts >= MAX_RATE_LIMIT_RETRIES) {
+                        log.error("[NousRestClient][{}] HTTP 429 rate limit exhausted after {} retries.",
+                                request.getAgentName(), MAX_RATE_LIMIT_RETRIES);
+                        throw LlmCallException.rateLimitExhausted("Nous", request.getAgentName());
+                    }
+                    rateLimitAttempts++;
+                    log.warn("[NousRestClient][{}] HTTP 429 rate limit — rapid retry {}/{}.",
+                            request.getAgentName(), rateLimitAttempts, MAX_RATE_LIMIT_RETRIES);
+                    sleepQuietly(RATE_LIMIT_RETRY_DELAY_MS);
+                    continue;
+                }
+
+                if (status >= 500 && serverErrorAttempts < httpMaxRetries) {
+                    serverErrorAttempts++;
+                    log.warn("[NousRestClient][{}] HTTP {} — server-error retry {}/{}",
+                            request.getAgentName(), status, serverErrorAttempts, httpMaxRetries);
+                    sleepQuietly(5_000L);
+                    continue;
+                }
+
+                log.error("[NousRestClient][{}] HTTP {} — {}",
+                        request.getAgentName(), e.getStatusCode(), e.getResponseBodyAsString());
+                throw mapHttpError(request.getAgentName(), e);
+
+            } catch (Exception e) {
+                WebClientResponseException httpCause = findWebClientCause(e);
+                if (httpCause != null) {
+                    int status = httpCause.getStatusCode().value();
+
+                    if (status == 429) {
+                        if (rateLimitAttempts >= MAX_RATE_LIMIT_RETRIES) {
+                            log.error("[NousRestClient][{}] HTTP 429 (wrapped) rate limit exhausted after {} retries.",
+                                    request.getAgentName(), MAX_RATE_LIMIT_RETRIES);
+                            throw LlmCallException.rateLimitExhausted("Nous", request.getAgentName());
+                        }
+                        rateLimitAttempts++;
+                        log.warn("[NousRestClient][{}] HTTP 429 (wrapped) — rapid retry {}/{}.",
+                                request.getAgentName(), rateLimitAttempts, MAX_RATE_LIMIT_RETRIES);
+                        sleepQuietly(RATE_LIMIT_RETRY_DELAY_MS);
+                        continue;
+                    }
+
+                    if (status >= 500 && serverErrorAttempts < httpMaxRetries) {
+                        serverErrorAttempts++;
+                        log.warn("[NousRestClient][{}] HTTP {} (wrapped) — server-error retry {}/{}",
+                                request.getAgentName(), status, serverErrorAttempts, httpMaxRetries);
+                        sleepQuietly(5_000L);
+                        continue;
+                    }
+
+                    log.error("[NousRestClient][{}] HTTP {} after retries — {}",
+                            request.getAgentName(), httpCause.getStatusCode(),
+                            httpCause.getResponseBodyAsString());
+                    throw mapHttpError(request.getAgentName(), httpCause);
+                }
+
+                if (isTimeoutCause(e)) {
+                    log.error("[NousRestClient][{}] Request timed out after {} s.",
+                            request.getAgentName(), timeoutSeconds);
+                    throw LlmCallException.timeout(request.getAgentName());
+                }
+
+                log.error("[NousRestClient][{}] Unexpected error.", request.getAgentName(), e);
+                throw new LlmCallException(
+                        "Unexpected error from NousRestClient for agent [%s]: %s"
+                                .formatted(request.getAgentName(), e.getMessage()),
+                        e, true);
             }
-
-            return response.extractText()
-                    .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
-
-        } catch (LlmCallException e) {
-            throw e;
-        } catch (WebClientResponseException e) {
-            log.error("[NousRestClient][{}] HTTP {} — {}",
-                    request.getAgentName(), e.getStatusCode(), e.getResponseBodyAsString());
-            throw mapHttpError(request.getAgentName(), e);
-        } catch (Exception e) {
-            // Unwrap ReactorException wrapping a TimeoutException
-            if (isTimeoutCause(e)) {
-                log.error("[NousRestClient][{}] Request timed out after {} s.",
-                        request.getAgentName(), timeoutSeconds);
-                throw LlmCallException.timeout(request.getAgentName());
-            }
-            log.error("[NousRestClient][{}] Unexpected error.", request.getAgentName(), e);
-            throw new LlmCallException(
-                    "Unexpected error from NousRestClient for agent [%s]: %s"
-                            .formatted(request.getAgentName(), e.getMessage()),
-                    e, true);
         }
     }
 
@@ -134,15 +163,13 @@ public class NousRestClient implements LlmClient {
         return model;
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    private boolean isRetryable(Throwable t) {
-        if (t instanceof WebClientResponseException e) {
-            int status = e.getStatusCode().value();
-            return status == 429 || status >= 500;
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new LlmCallException("Interrupted while waiting for Nous rate-limit reset", ie, true);
         }
-        return t instanceof java.util.concurrent.TimeoutException
-                || t instanceof java.io.IOException;
     }
 
     private boolean isTimeoutCause(Throwable t) {
@@ -154,9 +181,18 @@ public class NousRestClient implements LlmClient {
         return false;
     }
 
+    private WebClientResponseException findWebClientCause(Throwable t) {
+        Throwable cause = t;
+        while (cause != null) {
+            if (cause instanceof WebClientResponseException e) return e;
+            cause = cause.getCause();
+        }
+        return null;
+    }
+
     private LlmCallException mapHttpError(String agentName, WebClientResponseException e) {
         int status = e.getStatusCode().value();
-        if (status == 429) return LlmCallException.rateLimited(agentName);
+        if (status == 429) return LlmCallException.rateLimitExhausted("Nous", agentName);
         if (status >= 500) return LlmCallException.serverError(agentName, status);
         return new LlmCallException(
                 "HTTP %d from NousRestClient for agent [%s]: %s".formatted(status, agentName, e.getMessage()),
