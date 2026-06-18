@@ -267,6 +267,10 @@ public class PipelineOrchestrator {
         return activeMachines.size();
     }
 
+    public boolean hasActiveMachine(String runId) {
+        return runId != null && !runId.isBlank() && activeMachines.containsKey(runId);
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     private StateMachine<MidasState, MidasEvent> requireMachine(String runId) {

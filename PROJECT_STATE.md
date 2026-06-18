@@ -469,18 +469,46 @@ Key components:
 **Test status (2026-06-18):** `351` tests run, **0 failures** — suite green
 after INCIDENT-001 Sprint 2. Run: `.\mvnw.cmd test`
 
-**INCIDENT-001 Sprint 3 — blocked** until Sprint 2 is reviewed and owner
-approves (stuck-run reaper — see incident board).
+**INCIDENT-001 Sprint 3 — Pipeline Reliability / Stuck-Run Reaper (2026-06-18).**
+Post-mortem root cause B6: backend restarts left orphaned runs in non-terminal DB
+status (`STARTED`, in-progress stage names) with no in-memory state machine —
+Telegram and dashboard showed indefinite loading. Sprint 3 ships fail-fast cleanup
+(Option A MVP: reaper + user-facing message; no checkpoint resume).
+
+| Fix | Problem | Solution |
+| --- | --- | --- |
+| **B6 — Stuck-run reaper** | Runs remain `STARTED` or in-progress after JVM restart; DB never reconciled with lost in-memory SSM instances | `PipelineReaperService` — `@Scheduled` job (default every 15 min) queries non-terminal runs older than configurable TTL (default 60 min), skips runs with active in-memory machines, marks orphans `ERROR` |
+| **B6 — Audit trail** | Orphaned runs had no terminal failure reason in DB | `PersistenceService.failOrphanedRun` — atomic status → `ERROR` plus `PipelineReaper` agent log entry with human-readable message |
+| **B6 — Active-run guard** | Reaper must not kill legitimately running pipelines | `PipelineOrchestrator.hasActiveMachine(runId)` — skip when SSM instance still registered |
+
+Key components:
+
+| Layer | Files |
+| --- | --- |
+| Reaper | `PipelineReaperService` — `runReaperCycle()`, `reapStaleRuns()` |
+| Repository | `MidasRunRepository.findByStatusNotInAndUpdatedAtBefore` |
+| Persistence | `PersistenceService.failOrphanedRun` |
+| Orchestrator | `PipelineOrchestrator.hasActiveMachine` |
+| Config | `midas.reaper.cron`, `midas.reaper.stale-timeout-minutes` (`application.yml`) |
+| Tests | `PipelineReaperServiceTest`, `PipelineReaperServiceIT`, `MidasRunRepositoryTest` |
+
+Orphan message (audit log): *"Pipeline timed out or unexpectedly terminated. Run lost — please resubmit."*
+
+**INCIDENT-001 — RESOLVED (2026-06-18).** Sprints 1–3 complete (B2/B3/B5 observability,
+B1 HYBRID SecOps, B6 stuck-run reaper). See `INCIDENT_001_HYBRID_CRASH_SPRINTS.md`.
+
+**Test status (2026-06-18):** `359` tests run, **0 failures** — suite green
+after INCIDENT-001 Sprint 3. Run: `.\mvnw.cmd test`
 
 ### Planned — Post-MVP (TBD)
 
 > **Branch:** `main`
-> **Next:** INCIDENT-001 Sprint 3 (stuck-run reaper) after Sprint 2 review; human-in-the-loop review of Controller REJECT reports.
+> **Next:** human-in-the-loop review of Controller REJECT reports; FinOps Phase 10A (separate board).
 
-- **INCIDENT-001 Sprint 3** — stuck-run reaper after backend restarts (blocked on Sprint 2 approval).
 - Human-in-the-loop review of Controller REJECT reports before pipeline reset.
 - Extend dynamic routing to additional skip-eligible stages if product rules emerge.
 - FinOps Phase 10A — tiered LLM routing (separate board: `PHASE_10_FINOPS_SPRINTS.md`).
+- Checkpoint resume for orphaned runs (stretch — deferred; Sprint 3 MVP is reaper-only).
 
 ---
 
@@ -527,8 +555,17 @@ Several files still describe a 6-stage / 6-agent pipeline. Update to 7:
 
 ## 4. Agent Handoff Snapshot (2026-06-18)
 
-**Working tree:** INCIDENT-001 Sprint 2 complete (B1 HYBRID SecOps) — awaiting owner
-review before Sprint 3. See `INCIDENT_001_HYBRID_CRASH_SPRINTS.md`.
+**Working tree:** INCIDENT-001 **RESOLVED** — all three sprints complete (B2/B3/B5, B1, B6).
+See `INCIDENT_001_HYBRID_CRASH_SPRINTS.md`.
+
+**INCIDENT-001 Sprint 3 verification (complete):**
+
+1. `PipelineReaperService` queries non-terminal runs (`NOT IN COMPLETED, ERROR`) with
+   `updated_at` older than `midas.reaper.stale-timeout-minutes` (default 60).
+2. Runs with an active in-memory state machine are skipped (`hasActiveMachine`).
+3. Orphaned runs transition to `ERROR` with a `PipelineReaper` audit log entry.
+4. Fresh runs and terminal runs are untouched.
+5. Full suite: `359` tests, zero failures (`.\mvnw.cmd test`).
 
 **INCIDENT-001 Sprint 2 verification (complete):**
 

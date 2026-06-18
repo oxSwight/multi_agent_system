@@ -79,6 +79,10 @@ midas:
   evolution:
     cron: ${MIDAS_EVOLUTION_CRON:0 0 * * * *}
 
+  reaper:
+    cron: ${MIDAS_REAPER_CRON:0 */15 * * * *}
+    stale-timeout-minutes: ${MIDAS_REAPER_STALE_TIMEOUT_MINUTES:60}
+
   # ── Telegram Bot ──────────────────────────────────────────────────────────
   telegram:
     enabled: ${MIDAS_TELEGRAM_ENABLED:false}

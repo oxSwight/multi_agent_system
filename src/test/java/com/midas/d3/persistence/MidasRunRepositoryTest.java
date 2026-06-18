@@ -178,6 +178,48 @@ class MidasRunRepositoryTest {
         assertThat(result).isEmpty();
     }
 
+    @Test
+    @DisplayName("findByStatusNotInAndUpdatedAtBefore() returns only stale non-terminal runs")
+    void findByStatusNotInAndUpdatedAtBefore_returnsStaleNonTerminalRuns() {
+        Instant staleTime = Instant.now().minusSeconds(7200);
+
+        runRepository.save(MidasRunEntity.builder()
+                .id("repo-stale-started")
+                .rawUserIdea("Stale started")
+                .status("STARTED")
+                .build());
+        runRepository.save(MidasRunEntity.builder()
+                .id("repo-fresh-started")
+                .rawUserIdea("Fresh started")
+                .status("STARTED")
+                .build());
+        runRepository.save(MidasRunEntity.builder()
+                .id("repo-stale-code")
+                .rawUserIdea("Stale code gen")
+                .status("CODE_GENERATION")
+                .build());
+        runRepository.save(MidasRunEntity.builder()
+                .id("repo-completed")
+                .rawUserIdea("Completed")
+                .status("COMPLETED")
+                .build());
+        em.flush();
+
+        runRepository.updateStatus("repo-stale-started", "STARTED", staleTime);
+        runRepository.updateStatus("repo-stale-code", "CODE_GENERATION", staleTime);
+        runRepository.updateStatus("repo-completed", "COMPLETED", staleTime);
+
+        em.flush();
+        em.clear();
+
+        Instant cutoff = Instant.now().minusSeconds(3600);
+        List<MidasRunEntity> stale = runRepository.findByStatusNotInAndUpdatedAtBefore(
+                List.of("COMPLETED", "ERROR"), cutoff);
+
+        assertThat(stale).extracting(MidasRunEntity::getId)
+                .containsExactlyInAnyOrder("repo-stale-started", "repo-stale-code");
+    }
+
     // ── Default field values ───────────────────────────────────────────────────
 
     @Test

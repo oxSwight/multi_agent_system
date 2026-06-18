@@ -54,6 +54,9 @@ midas:
   # Disable scheduled evolution cycles in tests — service is called directly.
   evolution:
     cron: '-'
+  reaper:
+    cron: '-'
+    stale-timeout-minutes: 60
 
 logging:
   level:
