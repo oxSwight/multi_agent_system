@@ -89,6 +89,63 @@ class StoreArtifactActionTest {
     }
 
     @Test
+    @DisplayName("CODE_GENERATION merged surgical patch envelope stores source and retained manifest")
+    void execute_mergedSurgicalPatchEnvelope_splitsStorage() throws Exception {
+        MidasContext ctx = MidasContext.start("Build app", "run-patch-store")
+                .withGeneratedSourceCode(objectMapper.readTree("""
+                        {"src/main/java/com/example/TaskController.java":"public class TaskController { }"}
+                        """))
+                .withFeatureManifest(objectMapper.readTree("""
+                        [{
+                          "feature_id":"create-task",
+                          "feature_name":"Create task",
+                          "files":["src/main/java/com/example/TaskController.java"],
+                          "entry_points":["TaskController"]
+                        }]
+                        """));
+        var mergedEnvelope = objectMapper.readTree("""
+                {
+                  "source_files": {
+                    "src/main/java/com/example/TaskController.java": "public class TaskController { void assign() {} }"
+                  },
+                  "feature_manifest": [
+                    {
+                      "feature_id": "create-task",
+                      "feature_name": "Create task",
+                      "files": ["src/main/java/com/example/TaskController.java"],
+                      "entry_points": ["TaskController"]
+                    },
+                    {
+                      "feature_id": "assign-task",
+                      "feature_name": "Assign task",
+                      "files": ["src/main/java/com/example/TaskController.java"],
+                      "entry_points": ["TaskController.assign"]
+                    }
+                  ]
+                }
+                """);
+
+        vars.put(PipelineContextKeys.MIDAS_CONTEXT, ctx);
+        vars.put(PipelineContextKeys.LAST_VALIDATED_NODE, mergedEnvelope);
+        vars.put(PipelineContextKeys.PENDING_STAGE, MidasState.CODE_GENERATION);
+        when(topology.isProcessingStage(MidasState.CODE_GENERATION)).thenReturn(true);
+        when(topology.nextStage(eq(MidasState.CODE_GENERATION), any(MidasContext.class)))
+                .thenReturn(MidasState.TEST_GENERATION);
+
+        action.execute(stateContext);
+
+        MidasContext updated = (MidasContext) vars.get(PipelineContextKeys.MIDAS_CONTEXT);
+        assertThat(updated.getGeneratedSourceCode()).isNotNull();
+        assertThat(updated.getGeneratedSourceCode()
+                .get("src/main/java/com/example/TaskController.java").asText()).contains("assign");
+        assertThat(updated.getFeatureManifest()).isNotNull();
+        assertThat(updated.getFeatureManifest()).hasSize(2);
+        assertThat(updated.getFeatureManifest().get(1).get("feature_id").asText()).isEqualTo("assign-task");
+        assertThat(vars).doesNotContainKey(PipelineContextKeys.LAST_VALIDATED_NODE);
+        verifyNoInteractions(pipelineCompletionAction);
+    }
+
+    @Test
     @DisplayName("Missing MidasContext is a no-op")
     void execute_missingContext_noOp() throws Exception {
         var envelope = objectMapper.readTree("""

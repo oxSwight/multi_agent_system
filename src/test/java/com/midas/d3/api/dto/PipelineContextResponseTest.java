@@ -20,7 +20,12 @@ class PipelineContextResponseTest {
     @Test
     void from_mapsRemediationFieldsWhenPresent() throws Exception {
         var directive = objectMapper.readTree("""
-                {"source_verdict":"REJECT","required_changes":["Add auth"],"remediation_attempt":1}
+                {
+                  "source_verdict":"REJECT",
+                  "required_changes":["Add auth"],
+                  "remediation_attempt":1,
+                  "remediation_mode":"SURGICAL_PATCH"
+                }
                 """);
         var ctx = MidasContext.start("Build an app", "run-001")
                 .withProductReviewRemediationAttempts(1)
@@ -30,6 +35,7 @@ class PipelineContextResponseTest {
 
         assertThat(response.productReviewRemediationAttempts()).isEqualTo(1);
         assertThat(response.remediationDirective()).isEqualTo(directive);
+        assertThat(response.remediationMode()).isEqualTo("SURGICAL_PATCH");
         assertThat(response.runId()).isEqualTo("run-001");
         assertThat(response.state()).isEqualTo("CODE_GENERATION");
     }
@@ -55,5 +61,6 @@ class PipelineContextResponseTest {
 
         assertThat(response.productReviewRemediationAttempts()).isZero();
         assertThat(response.remediationDirective()).isNull();
+        assertThat(response.remediationMode()).isNull();
     }
 }

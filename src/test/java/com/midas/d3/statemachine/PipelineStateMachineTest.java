@@ -135,6 +135,34 @@ class PipelineStateMachineTest {
             }
             """;
 
+    private static final String INVALID_PATCH_WITH_PLACEHOLDER = """
+            {
+              "source_files": {
+                "src/main/java/com/example/TaskController.java": "public class TaskController { // TODO implement assign }"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "create-task",
+                  "feature_name": "Create task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "assign-task",
+                  "feature_name": "Assign task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "track-progress",
+                  "feature_name": "Track progress",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                }
+              ]
+            }
+            """;
+
     private static final String MISSING_REQUIRED_FIELD = """
             {
               "core_features": ["Feature A"],
@@ -539,6 +567,84 @@ class PipelineStateMachineTest {
         assertThat(ctx.getProductReviewReport()).isNotNull();
         assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("REJECT");
         assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getLastErrorMessage())
+                .contains("REJECTED")
+                .contains("Implement task assignment end-to-end (API + persistence + UI)");
+        assertThat(ctx.safeAuditLog())
+                .anyMatch(e -> e.getSeverity() == com.midas.d3.context.AuditEntry.Severity.ERROR);
+    }
+
+    @Test
+    @DisplayName("E2E: REJECT → SURGICAL_PATCH remediation → PASS (golden path)")
+    void e2e_reject_surgicalPatch_pass() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+
+        MidasContext afterReject = extractContext();
+        assertThat(afterReject.getRemediationDirective().get("remediation_mode").asText())
+                .isEqualTo("SURGICAL_PATCH");
+        assertThat(afterReject.getSecOpsArtifacts()).isNull();
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_PASS);
+
+        assertState(MidasState.COMPLETED);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirective().get("remediation_mode").asText()).isEqualTo("SURGICAL_PATCH");
+        assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("PASS");
+        assertThat(ctx.getGeneratedSourceCode().get("src/main/java/com/example/TaskController.java").asText())
+                .contains("assign");
+        assertThat(ctx.getFeatureManifest()).hasSize(3);
+        assertThat(ctx.getGeneratedTests()).isNotNull();
+        assertThat(ctx.getSecOpsArtifacts()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("E2E: REJECT → SURGICAL_PATCH patch validation fails → full regen envelope → PASS")
+    void e2e_reject_surgicalPatchFails_fullRegenFallback_pass() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+        assertThat(extractContext().getRemediationDirective().get("remediation_mode").asText())
+                .isEqualTo("SURGICAL_PATCH");
+
+        sendSubmit(INVALID_PATCH_WITH_PLACEHOLDER);
+        assertState(MidasState.CODE_GENERATION);
+        assertThat(extractContext().getValidationRetries()).isEqualTo(1);
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_PASS);
+
+        assertState(MidasState.COMPLETED);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("PASS");
+        assertThat(ctx.getGeneratedSourceCode().get("src/main/java/com/example/TaskController.java").asText())
+                .contains("assign");
+        assertThat(ctx.getFeatureManifest()).hasSize(3);
+        assertThat(ctx.getValidationRetries()).isZero();
+    }
+
+    @Test
+    @DisplayName("E2E: REJECT → SURGICAL_PATCH → second REJECT → ERROR (remediation exhausted)")
+    void e2e_reject_surgicalPatch_secondReject_error() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+        assertThat(extractContext().getRemediationDirective().get("remediation_mode").asText())
+                .isEqualTo("SURGICAL_PATCH");
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_REJECT);
+
+        assertState(MidasState.ERROR);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewReport()).isNotNull();
+        assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("REJECT");
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirective().get("remediation_mode").asText()).isEqualTo("SURGICAL_PATCH");
         assertThat(ctx.getLastErrorMessage())
                 .contains("REJECTED")
                 .contains("Implement task assignment end-to-end (API + persistence + UI)");
