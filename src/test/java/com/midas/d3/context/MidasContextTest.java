@@ -69,6 +69,7 @@ class MidasContextTest {
         var ctx = MidasContext.start("idea", "run-001");
         assertThat(ctx.getTechnicalSpecOpt()).isEmpty();
         assertThat(ctx.getArchitectureDesignOpt()).isEmpty();
+        assertThat(ctx.getFeatureManifestOpt()).isEmpty();
         assertThat(ctx.getProductReviewReportOpt()).isEmpty();
     }
 
@@ -83,6 +84,19 @@ class MidasContextTest {
 
         assertThat(ctx.getProductReviewReportOpt()).isPresent();
         assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("PASS");
+    }
+
+    @Test
+    void withFeatureManifest_roundTripsViaAccessor() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var manifest = mapper.readTree("""
+                [{"feature_id":"create-task","feature_name":"Create task","files":["src/a.js"],"entry_points":["a"]}]
+                """);
+        var ctx = MidasContext.start("idea", "run-001")
+                .withFeatureManifest(manifest);
+
+        assertThat(ctx.getFeatureManifestOpt()).isPresent();
+        assertThat(ctx.getFeatureManifest().get(0).get("feature_id").asText()).isEqualTo("create-task");
     }
 
     @Test

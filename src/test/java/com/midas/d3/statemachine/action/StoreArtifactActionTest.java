@@ -1,0 +1,107 @@
+package com.midas.d3.statemachine.action;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.config.JacksonConfig;
+import com.midas.d3.context.MidasContext;
+import com.midas.d3.statemachine.AgentDispatcher;
+import com.midas.d3.statemachine.MidasEvent;
+import com.midas.d3.statemachine.MidasState;
+import com.midas.d3.statemachine.PipelineContextKeys;
+import com.midas.d3.statemachine.PipelineTopology;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.statemachine.ExtendedState;
+import org.springframework.statemachine.StateContext;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("StoreArtifactAction")
+class StoreArtifactActionTest {
+
+    @Mock private AgentDispatcher agentDispatcher;
+    @Mock private PipelineCompletionAction pipelineCompletionAction;
+    @Mock private PipelineTopology topology;
+    @Mock private StateContext<MidasState, MidasEvent> stateContext;
+    @Mock private ExtendedState extendedState;
+
+    private ObjectMapper objectMapper;
+    private StoreArtifactAction action;
+    private Map<Object, Object> vars;
+
+    @BeforeEach
+    void setUp() {
+        objectMapper = new JacksonConfig().objectMapper();
+        action = new StoreArtifactAction(agentDispatcher, pipelineCompletionAction, topology);
+        vars = new HashMap<>();
+        when(stateContext.getExtendedState()).thenReturn(extendedState);
+        when(extendedState.getVariables()).thenReturn(vars);
+    }
+
+    @Test
+    @DisplayName("CODE_GENERATION envelope stores source_files and feature_manifest separately")
+    void execute_codeGenerationEnvelope_splitsStorage() throws Exception {
+        MidasContext ctx = MidasContext.start("Build app", "run-store-001");
+        var envelope = objectMapper.readTree("""
+                {
+                  "source_files": {
+                    "src/App.java": "public class App {}"
+                  },
+                  "feature_manifest": [
+                    {
+                      "feature_id": "run-app",
+                      "feature_name": "Run app",
+                      "files": ["src/App.java"],
+                      "entry_points": ["App"]
+                    }
+                  ]
+                }
+                """);
+
+        vars.put(PipelineContextKeys.MIDAS_CONTEXT, ctx);
+        vars.put(PipelineContextKeys.LAST_VALIDATED_NODE, envelope);
+        vars.put(PipelineContextKeys.PENDING_STAGE, MidasState.CODE_GENERATION);
+        when(topology.isProcessingStage(MidasState.CODE_GENERATION)).thenReturn(true);
+        when(topology.nextStage(eq(MidasState.CODE_GENERATION), any(MidasContext.class)))
+                .thenReturn(MidasState.TEST_GENERATION);
+
+        action.execute(stateContext);
+
+        MidasContext updated = (MidasContext) vars.get(PipelineContextKeys.MIDAS_CONTEXT);
+        assertThat(updated.getGeneratedSourceCode()).isNotNull();
+        assertThat(updated.getGeneratedSourceCode().has("src/App.java")).isTrue();
+        assertThat(updated.getFeatureManifest()).isNotNull();
+        assertThat(updated.getFeatureManifest()).hasSize(1);
+        assertThat(updated.getFeatureManifest().get(0).get("feature_id").asText()).isEqualTo("run-app");
+        assertThat(vars).doesNotContainKey(PipelineContextKeys.LAST_VALIDATED_NODE);
+        verifyNoInteractions(pipelineCompletionAction);
+    }
+
+    @Test
+    @DisplayName("Missing MidasContext is a no-op")
+    void execute_missingContext_noOp() throws Exception {
+        var envelope = objectMapper.readTree("""
+                {
+                  "source_files": {"src/App.java": "public class App {}"},
+                  "feature_manifest": []
+                }
+                """);
+        vars.put(PipelineContextKeys.LAST_VALIDATED_NODE, envelope);
+        vars.put(PipelineContextKeys.PENDING_STAGE, MidasState.CODE_GENERATION);
+
+        action.execute(stateContext);
+
+        assertThat(vars).doesNotContainKey(PipelineContextKeys.MIDAS_CONTEXT);
+    }
+}

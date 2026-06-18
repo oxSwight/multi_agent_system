@@ -35,6 +35,19 @@ class PipelineContextResponseTest {
     }
 
     @Test
+    void from_mapsFeatureManifestWhenPresent() throws Exception {
+        var manifest = objectMapper.readTree("""
+                [{"feature_id":"create-task","feature_name":"Create task","files":["Task.java"],"entry_points":["Task"]}]
+                """);
+        var ctx = MidasContext.start("Build an app", "run-003")
+                .withFeatureManifest(manifest);
+
+        PipelineContextResponse response = PipelineContextResponse.from(ctx, "PRODUCT_REVIEW");
+
+        assertThat(response.featureManifest()).isEqualTo(manifest);
+    }
+
+    @Test
     void from_mapsZeroAttemptsAndNullDirectiveByDefault() {
         var ctx = MidasContext.start("Build an app", "run-002");
 

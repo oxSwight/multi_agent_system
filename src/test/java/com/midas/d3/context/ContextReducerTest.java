@@ -98,18 +98,35 @@ class ContextReducerTest {
     }
 
     @Test
-    void reduce_controller_withRequiredArtifacts_includesTechnicalSpecAndSecOps() throws Exception {
+    void reduce_controller_withRequiredArtifacts_includesTechnicalSpecSecOpsAndManifest() throws Exception {
         var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
         var secOps = objectMapper.readTree("{\"release_artifacts\":{\"app.jar\":\"binary\"}}");
+        var manifest = objectMapper.readTree("""
+                [{"feature_id":"run-app","feature_name":"Run","files":["App.java"],"entry_points":["App"]}]
+                """);
         var ctx = MidasContext.start("Build an app", "run-001")
                 .withTechnicalSpec(spec)
-                .withSecOpsArtifacts(secOps);
+                .withSecOpsArtifacts(secOps)
+                .withFeatureManifest(manifest);
 
         var view = reducer.reduce(ctx, ContextReducer.AgentRole.CONTROLLER);
 
         assertThat(view.getAgentName()).isEqualTo("CONTROLLER");
         assertThat(view.safeArtifacts())
-                .containsKeys("technicalSpec", "secOpsArtifacts");
+                .containsKeys("technicalSpec", "secOpsArtifacts", "featureManifest");
+    }
+
+    @Test
+    void reduce_controller_missingFeatureManifest_throwsIllegalArgument() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var secOps = objectMapper.readTree("{\"release_artifacts\":{}}");
+        var ctx = MidasContext.start("Build an app", "run-001")
+                .withTechnicalSpec(spec)
+                .withSecOpsArtifacts(secOps);
+
+        assertThatThrownBy(() -> reducer.reduce(ctx, ContextReducer.AgentRole.CONTROLLER))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("featureManifest");
     }
 
     @Test
@@ -132,6 +149,50 @@ class ContextReducerTest {
         assertThatThrownBy(() -> reducer.reduce(ctx, ContextReducer.AgentRole.CONTROLLER))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("secOpsArtifacts");
+    }
+
+    @Test
+    void reduce_qaEngineer_doesNotIncludeFeatureManifest() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var source = objectMapper.readTree("{\"App.java\":\"public class App {}\"}");
+        var manifest = objectMapper.readTree("""
+                [{"feature_id":"run-app","feature_name":"Run","files":["App.java"],"entry_points":["App"]}]
+                """);
+        var ctx = MidasContext.start("Build an app", "run-001")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withGeneratedSourceCode(source)
+                .withFeatureManifest(manifest);
+
+        var view = reducer.reduce(ctx, ContextReducer.AgentRole.QA_ENGINEER);
+
+        assertThat(view.safeArtifacts())
+                .containsKeys("technicalSpec", "architectureDesign", "generatedSourceCode")
+                .doesNotContainKey("featureManifest");
+    }
+
+    @Test
+    void reduce_secOpsEngineer_doesNotIncludeFeatureManifest() throws Exception {
+        var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
+        var arch = objectMapper.readTree("{\"architecture_style\":\"SERVER_SIDE\"}");
+        var source = objectMapper.readTree("{\"App.java\":\"public class App {}\"}");
+        var tests = objectMapper.readTree("{\"AppTest.java\":\"class AppTest {}\"}");
+        var manifest = objectMapper.readTree("""
+                [{"feature_id":"run-app","feature_name":"Run","files":["App.java"],"entry_points":["App"]}]
+                """);
+        var ctx = MidasContext.start("Build an app", "run-001")
+                .withTechnicalSpec(spec)
+                .withArchitectureDesign(arch)
+                .withGeneratedSourceCode(source)
+                .withGeneratedTests(tests)
+                .withFeatureManifest(manifest);
+
+        var view = reducer.reduce(ctx, ContextReducer.AgentRole.SECOPS_ENGINEER);
+
+        assertThat(view.safeArtifacts())
+                .containsKeys("technicalSpec", "architectureDesign", "generatedSourceCode", "generatedTests")
+                .doesNotContainKey("featureManifest");
     }
 
     @Test

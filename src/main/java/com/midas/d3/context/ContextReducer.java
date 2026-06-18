@@ -109,7 +109,8 @@ public class ContextReducer {
         // that always run on the path to this gate, so both are required (fail-fast if absent).
         ARTIFACT_DEPENDENCIES.put(AgentRole.CONTROLLER, List.of(
                 ArtifactDependency.required("technicalSpec"),
-                ArtifactDependency.required("secOpsArtifacts")));
+                ArtifactDependency.required("secOpsArtifacts"),
+                ArtifactDependency.required("featureManifest")));
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -269,6 +270,7 @@ public class ContextReducer {
             case "generatedSourceCode"-> ctx.getGeneratedSourceCode();
             case "generatedTests"     -> ctx.getGeneratedTests();
             case "secOpsArtifacts"    -> ctx.getSecOpsArtifacts();
+            case "featureManifest"    -> ctx.getFeatureManifest();
             case "remediationDirective" -> ctx.getRemediationDirective();
             default -> throw new IllegalArgumentException("Unknown artifact key: " + key);
         };

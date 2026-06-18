@@ -268,20 +268,32 @@ public class AgentSystemPrompts {
               files required to actually run it (e.g. manifest.json, package.json) when applicable.
 
             Step 1: Read architecture (tech_stack, components, file_layout) and the spec's core_features
-                    and edge_cases. Map each feature to concrete code.
+                    and edge_cases. Map each feature to concrete code and record which files implement it.
             Step 2: Write each complete file with all imports/exports and real logic.
-            Step 3: Output ONLY a valid JSON object: KEY = full relative file path, VALUE = complete raw
-                    source for that file (escape newlines as \\n inside the string).
+            Step 3: Output ONLY a valid JSON envelope with source_files and feature_manifest.
 
             REQUIRED JSON SCHEMA:
             {
-              "<relative/file/path.ext>": "<complete file contents>"
+              "source_files": {
+                "<relative/file/path.ext>": "<complete file contents>"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "<stable-kebab-case-id matching the core feature>",
+                  "feature_name": "<exact core_features label from the technical spec>",
+                  "files": ["<relative/file/path.ext>"],
+                  "entry_points": ["<function, class, or handler name>"]
+                }
+              ]
             }
 
             GUARDRAILS:
-            - File extensions/paths MUST match architecture.file_layout and tech_stack
+            - source_files keys MUST match architecture.file_layout and tech_stack
               (.js/.ts/manifest.json for an extension; .java only for a Java backend).
-            - The map must have at least 1 entry; every value must be complete, non-blank source with no placeholders.
+            - source_files must have at least 1 entry; every value must be complete, non-blank source with no placeholders.
+            - feature_manifest must contain one entry per core_features item from the technical spec.
+            - Every path listed in feature_manifest[].files MUST exist as a key in source_files.
+            - entry_points must name real symbols present in the listed files.
             - Implement all core_features and the documented edge_case solutions.
             - The JSON MUST be complete and properly closed — never truncate mid-string.
             - Output ONLY the JSON object.
@@ -311,16 +323,28 @@ public class AgentSystemPrompts {
             Step 1: Read the sliced architecture (client components + file_layout) and core_features \
                     that apply to the client surface.
             Step 2: Write each complete client file with real logic and correct imports/exports.
-            Step 3: Output ONLY a valid JSON object: KEY = relative file path, VALUE = complete source \
-                    (escape newlines as \\n inside the string).
+            Step 3: Output ONLY a valid JSON envelope with source_files and a partial feature_manifest \
+                    covering ONLY the client-relevant core_features for this pass.
 
             REQUIRED JSON SCHEMA:
             {
-              "<client/relative/file/path.ext>": "<complete file contents>"
+              "source_files": {
+                "<client/relative/file/path.ext>": "<complete file contents>"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "<stable-kebab-case-id>",
+                  "feature_name": "<exact client-relevant core_features label>",
+                  "files": ["<client/relative/file/path.ext>"],
+                  "entry_points": ["<function, class, or handler name>"]
+                }
+              ]
             }
 
             GUARDRAILS:
-            - The map must have at least 1 entry; every value must be non-blank with no placeholders.
+            - source_files must have at least 1 entry; every value must be non-blank with no placeholders.
+            - feature_manifest must list ONLY client-surface features implemented in this pass.
+            - Every path in feature_manifest[].files MUST exist as a key in source_files.
             - Paths MUST come from architecture.file_layout — do not invent server-side paths.
             - Output ONLY the JSON object.
             """;
@@ -349,16 +373,28 @@ public class AgentSystemPrompts {
             Step 1: Read the sliced architecture (server components, file_layout, api_contracts, schema) \
                     and core_features that require server-side execution.
             Step 2: Write each complete server file with real logic.
-            Step 3: Output ONLY a valid JSON object: KEY = relative file path, VALUE = complete source \
-                    (escape newlines as \\n inside the string).
+            Step 3: Output ONLY a valid JSON envelope with source_files and a partial feature_manifest \
+                    covering ONLY the server-relevant core_features for this pass.
 
             REQUIRED JSON SCHEMA:
             {
-              "<server/relative/file/path.ext>": "<complete file contents>"
+              "source_files": {
+                "<server/relative/file/path.ext>": "<complete file contents>"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "<stable-kebab-case-id>",
+                  "feature_name": "<exact server-relevant core_features label>",
+                  "files": ["<server/relative/file/path.ext>"],
+                  "entry_points": ["<function, class, or handler name>"]
+                }
+              ]
             }
 
             GUARDRAILS:
-            - The map must have at least 1 entry; every value must be non-blank with no placeholders.
+            - source_files must have at least 1 entry; every value must be non-blank with no placeholders.
+            - feature_manifest must list ONLY server-surface features implemented in this pass.
+            - Every path in feature_manifest[].files MUST exist as a key in source_files.
             - Paths MUST come from architecture.file_layout — do not invent client-side paths.
             - Output ONLY the JSON object.
             """;
@@ -541,16 +577,21 @@ public class AgentSystemPrompts {
             WHAT YOU RECEIVE:
             - The original, raw user idea (the source of truth for intent).
             - The Technical Specification (business_goal + core_features = the promised scope).
-            - The SecOps artifacts, whose release_artifacts map describes what was actually produced \
-              and how it deploys. You are deliberately NOT given the full source code — judge from \
-              the spec and the release artifacts, not from re-reading every line.
+            - The feature_manifest array: for each implemented feature, the feature_id, feature_name, \
+              files[] (paths that implement it), and entry_points[] (symbols/classes/endpoints). \
+              Use this as file-level evidence of what was built — do NOT guess from the spec alone.
+            - The SecOps artifacts, whose release_artifacts map describes deployment packaging. \
+              You are deliberately NOT given the full source code — judge coverage from the spec, \
+              feature_manifest, and release_artifacts.
 
             HOW TO JUDGE:
             Step 1: Extract the user's true intent and every promised core_feature from the raw idea \
                     and the spec's business_goal / core_features.
-            Step 2: For EACH requested feature, decide whether the delivered solution (as evidenced \
-                    by the spec scope and the release_artifacts) actually covers it. Be skeptical: \
-                    missing features, scope drift, or runtime mismatches are conformance failures.
+            Step 2: For EACH requested feature, map it to a feature_manifest entry (by feature_id or \
+                    feature_name) and inspect its files[] and entry_points[]. Decide whether those \
+                    artifacts actually cover the requested capability. Cross-check release_artifacts \
+                    where relevant. Be skeptical: missing manifest entries, empty files[], scope drift, \
+                    or runtime mismatches are conformance failures.
             Step 3: Choose a verdict:
                     - PASS            → every requested feature is covered; no material gaps.
                     - PASS_WITH_NOTES → intent is met, but there are minor, non-blocking gaps or \
@@ -568,7 +609,7 @@ public class AgentSystemPrompts {
                 {
                   "requested_feature": "String — a feature/intent from the user idea or core_features",
                   "status": "COVERED | PARTIAL | MISSING",
-                  "evidence": "String — what in the spec/release_artifacts satisfies it (or why it does not)"
+                  "evidence": "String — MUST cite a feature_id or file path from feature_manifest (and/or release_artifacts) that supports or refutes coverage"
                 }
               ],
               "remediation_block": {
@@ -581,6 +622,8 @@ public class AgentSystemPrompts {
             - verdict MUST be exactly one of PASS, PASS_WITH_NOTES, REJECT.
             - coverage_matrix MUST contain at least one entry and cover every core_feature; each entry \
               needs a non-blank requested_feature and a status of COVERED, PARTIAL, or MISSING.
+            - Each coverage_matrix[].evidence MUST reference at least one feature_id or files[] path \
+              from feature_manifest (never vague guesses).
             - If ANY entry is MISSING (or a PARTIAL constitutes a material gap), the verdict MUST be REJECT.
             - When the verdict is REJECT, remediation_block.required_changes MUST be non-empty and \
               actionable. When the verdict is PASS, required_changes MUST be [].

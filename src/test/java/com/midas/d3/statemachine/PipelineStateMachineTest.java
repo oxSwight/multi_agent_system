@@ -52,6 +52,62 @@ class PipelineStateMachineTest {
             }
             """;
 
+    private static final String VALID_CODE_GEN = """
+            {
+              "source_files": {
+                "src/main/java/com/example/TaskController.java": "public class TaskController { }"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "create-task",
+                  "feature_name": "Create task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "assign-task",
+                  "feature_name": "Assign task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "track-progress",
+                  "feature_name": "Track progress",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                }
+              ]
+            }
+            """;
+
+    private static final String VALID_CODE_GEN_REMEDIATED = """
+            {
+              "source_files": {
+                "src/main/java/com/example/TaskController.java": "public class TaskController { void assign() {} }"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "create-task",
+                  "feature_name": "Create task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "assign-task",
+                  "feature_name": "Assign task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController.assign"]
+                },
+                {
+                  "feature_id": "track-progress",
+                  "feature_name": "Track progress",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                }
+              ]
+            }
+            """;
+
     private static final String INVALID_JSON = "{ broken json";
 
     private static final String CONTROLLER_PASS = """
@@ -59,7 +115,7 @@ class PipelineStateMachineTest {
               "verdict": "PASS",
               "summary": "All requested features are covered by the delivered solution.",
               "coverage_matrix": [
-                {"requested_feature": "Create task", "status": "COVERED", "evidence": "TaskController exposes create"}
+                {"requested_feature": "Create task", "status": "COVERED", "evidence": "create-task in src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {"required_changes": [], "recommendations": []}
             }
@@ -70,7 +126,7 @@ class PipelineStateMachineTest {
               "verdict": "REJECT",
               "summary": "The assignment feature requested by the user was never implemented.",
               "coverage_matrix": [
-                {"requested_feature": "Assign task", "status": "MISSING", "evidence": "No assignment endpoint or UI exists"}
+                {"requested_feature": "Assign task", "status": "MISSING", "evidence": "assign-task absent from src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {
                 "required_changes": ["Implement task assignment end-to-end (API + persistence + UI)"],
@@ -293,15 +349,15 @@ class PipelineStateMachineTest {
             """);
         assertState(MidasState.CODE_GENERATION);
 
-        // Stage 4
-        sendSubmit("""
-            {
-              "src/main/java/com/example/TaskController.java": "public class TaskController { }"
-            }
-            """);
+        sendSubmit(VALID_CODE_GEN);
         assertState(MidasState.TEST_GENERATION);
 
-        // Stage 5
+        MidasContext afterCodeGen = extractContext();
+        assertThat(afterCodeGen.getGeneratedSourceCode()).isNotNull();
+        assertThat(afterCodeGen.getFeatureManifest()).isNotNull();
+        assertThat(afterCodeGen.getGeneratedSourceCode().has("src/main/java/com/example/TaskController.java")).isTrue();
+        assertThat(afterCodeGen.getFeatureManifest()).hasSize(3);
+
         sendSubmit("""
             {
               "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void test() {} }"
@@ -328,6 +384,7 @@ class PipelineStateMachineTest {
         assertThat(ctx.getArchitectureDesign()).isNotNull();
         assertThat(ctx.getIntegrationStrategy()).isNotNull();
         assertThat(ctx.getGeneratedSourceCode()).isNotNull();
+        assertThat(ctx.getFeatureManifest()).isNotNull();
         assertThat(ctx.getGeneratedTests()).isNotNull();
         assertThat(ctx.getSecOpsArtifacts()).isNotNull();
         assertThat(ctx.getProductReviewReport()).isNotNull();
@@ -425,7 +482,7 @@ class PipelineStateMachineTest {
               "verdict": "PASS_WITH_NOTES",
               "summary": "Intent met; minor polish suggested.",
               "coverage_matrix": [
-                {"requested_feature": "Create task", "status": "COVERED", "evidence": "implemented"}
+                {"requested_feature": "Create task", "status": "COVERED", "evidence": "create-task in src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {"required_changes": [], "recommendations": ["Add input debounce"]}
             }
@@ -654,11 +711,7 @@ class PipelineStateMachineTest {
             }
             """);
         assertState(MidasState.CODE_GENERATION);
-        sendSubmit("""
-            {
-              "src/main/java/com/example/TaskController.java": "public class TaskController { }"
-            }
-            """);
+        sendSubmit(VALID_CODE_GEN);
         assertState(MidasState.TEST_GENERATION);
         sendSubmit("""
             {
@@ -676,11 +729,7 @@ class PipelineStateMachineTest {
     }
 
     private void drivePipelineFromCodeGeneration() {
-        sendSubmit("""
-            {
-              "src/main/java/com/example/TaskController.java": "public class TaskController { void assign() {} }"
-            }
-            """);
+        sendSubmit(VALID_CODE_GEN_REMEDIATED);
         assertState(MidasState.TEST_GENERATION);
         sendSubmit("""
             {

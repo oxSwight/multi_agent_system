@@ -13,6 +13,7 @@ import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
+import com.midas.d3.validation.ControllerValidator;
 import com.midas.d3.validation.GoalKeeperValidator;
 import com.midas.d3.validation.ValidationHookException;
 import lombok.extern.slf4j.Slf4j;
@@ -172,7 +173,7 @@ public abstract class BaseMidasAgent {
                         getAgentName(), attempt, MAX_AGENT_RETRIES,
                         sanitized == null ? 0 : sanitized.length());
 
-                JsonNode validated = validator.validate(sanitized);
+                JsonNode validated = validateAgentOutput(stage, sanitized, validator, context);
 
                 log.info("[{}] Attempt {}/{} — validation passed.", getAgentName(), attempt, MAX_AGENT_RETRIES);
                 return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens, modelUsed);
@@ -212,6 +213,16 @@ public abstract class BaseMidasAgent {
                     "No MidasState mapping found for AgentRole [%s].".formatted(getRole()));
         }
         return stage;
+    }
+
+    private JsonNode validateAgentOutput(MidasState stage,
+                                         String sanitized,
+                                         GoalKeeperValidator validator,
+                                         MidasContext context) throws ValidationHookException {
+        if (stage == MidasState.PRODUCT_REVIEW && validator instanceof ControllerValidator controllerValidator) {
+            return controllerValidator.validateWithFeatureManifest(sanitized, context.getFeatureManifest());
+        }
+        return validator.validate(sanitized);
     }
 
     private String effectiveSystemPrompt(MidasContext context) {

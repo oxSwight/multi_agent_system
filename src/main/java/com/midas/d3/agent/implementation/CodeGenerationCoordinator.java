@@ -19,7 +19,10 @@ import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
+import com.midas.d3.validation.ImplementationEngineerValidator;
+import com.midas.d3.validation.ImplementationOutputUnwrapper;
 import com.midas.d3.validation.ValidationHookException;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -90,13 +93,14 @@ public class CodeGenerationCoordinator {
                 ? AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT
                 : AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT;
         PassResult pass = executePass(context, surface, systemPrompt, agentName, validator);
+        JsonNode envelope = buildEnvelope(pass.sourceFiles(), pass.featureManifest());
         String json;
         try {
-            json = objectMapper.writeValueAsString(pass.validated());
+            json = objectMapper.writeValueAsString(envelope);
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize " + surface + " source map.", e);
+            throw new IllegalStateException("Failed to serialize " + surface + " implementation envelope.", e);
         }
-        return new AgentResult(pass.validated(), json, pass.attemptsUsed(),
+        return new AgentResult(envelope, json, pass.attemptsUsed(),
                 pass.promptTokens(), pass.completionTokens(), pass.modelId());
     }
 
@@ -126,25 +130,28 @@ public class CodeGenerationCoordinator {
         PassResult clientPass = clientFuture.join();
         PassResult serverPass = serverFuture.join();
 
-        JsonNode merged = ImplementationSourceMerger.merge(
-                clientPass.validated(), serverPass.validated(), objectMapper);
+        JsonNode mergedSources = ImplementationSourceMerger.merge(
+                clientPass.sourceFiles(), serverPass.sourceFiles(), objectMapper);
+        JsonNode mergedManifest = FeatureManifestMerger.merge(
+                clientPass.featureManifest(), serverPass.featureManifest(), objectMapper);
+        JsonNode envelope = buildEnvelope(mergedSources, mergedManifest);
 
         String mergedJson;
         try {
-            mergedJson = objectMapper.writeValueAsString(merged);
+            mergedJson = objectMapper.writeValueAsString(envelope);
+            requireImplementationValidator(validator).validateWithTechnicalSpec(
+                    mergedJson, context.getTechnicalSpec());
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize merged HYBRID source map.", e);
+            throw new IllegalStateException("Failed to serialize merged HYBRID implementation envelope.", e);
         }
-
-        validator.validate(mergedJson);
 
         int totalAttempts = clientPass.attemptsUsed() + serverPass.attemptsUsed();
         log.info("[CodeGenerationCoordinator] HYBRID fan-out complete for run [{}] — {} client files, {} server files.",
                 context.getPipelineRunId(),
-                clientPass.validated().size(),
-                serverPass.validated().size());
+                clientPass.sourceFiles().size(),
+                serverPass.sourceFiles().size());
 
-        return new AgentResult(merged, mergedJson, totalAttempts,
+        return new AgentResult(envelope, mergedJson, totalAttempts,
                 clientPass.promptTokens() + serverPass.promptTokens(),
                 clientPass.completionTokens() + serverPass.completionTokens(),
                 clientPass.modelId());
@@ -183,8 +190,12 @@ public class CodeGenerationCoordinator {
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode validated = validator.validate(sanitized);
-                return new PassResult(validated, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
+                JsonNode envelope = requireImplementationValidator(validator)
+                        .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
+                ImplementationOutputUnwrapper.UnwrappedEnvelope unwrapped =
+                        ImplementationOutputUnwrapper.unwrap(envelope);
+                return new PassResult(unwrapped.sourceFiles(), unwrapped.featureManifest(), attempt,
+                        totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -243,8 +254,9 @@ public class CodeGenerationCoordinator {
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode validated = validator.validate(sanitized);
-                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
+                JsonNode envelope = requireImplementationValidator(validator)
+                        .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
+                return new AgentResult(envelope, sanitized, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -339,5 +351,20 @@ public class CodeGenerationCoordinator {
         }
     }
 
-    private record PassResult(JsonNode validated, int attemptsUsed, int promptTokens, int completionTokens, String modelId) {}
+    private JsonNode buildEnvelope(JsonNode sourceFiles, JsonNode featureManifest) {
+        ObjectNode envelope = objectMapper.createObjectNode();
+        envelope.set("source_files", sourceFiles);
+        envelope.set("feature_manifest", featureManifest);
+        return envelope;
+    }
+
+    private static ImplementationEngineerValidator requireImplementationValidator(GoalKeeperValidator validator) {
+        if (!(validator instanceof ImplementationEngineerValidator implValidator)) {
+            throw new IllegalStateException("CODE_GENERATION requires ImplementationEngineerValidator.");
+        }
+        return implValidator;
+    }
+
+    private record PassResult(JsonNode sourceFiles, JsonNode featureManifest, int attemptsUsed,
+                              int promptTokens, int completionTokens, String modelId) {}
 }
