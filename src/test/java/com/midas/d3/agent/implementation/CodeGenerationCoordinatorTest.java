@@ -112,7 +112,7 @@ class CodeGenerationCoordinatorTest {
                 contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
         when(validatorRegistry.getValidator(MidasState.CODE_GENERATION))
                 .thenReturn(Optional.of(validator));
-        when(llmModelPolicy.resolve(MidasState.CODE_GENERATION)).thenReturn("gemini-1.5-pro");
+        when(llmModelPolicy.resolve(MidasState.CODE_GENERATION)).thenReturn("gemini-2.5-flash");
     }
 
     @AfterEach
@@ -138,7 +138,7 @@ class CodeGenerationCoordinatorTest {
         verify(llmClient, times(1)).call(captor.capture());
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
-        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-1.5-pro");
+        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-2.5-flash");
         verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER));
         assertThat(result.validatedOutput().get("source_files").has("src/main/java/com/example/App.java")).isTrue();
         assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);

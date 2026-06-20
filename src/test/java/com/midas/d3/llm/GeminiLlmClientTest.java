@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("GeminiLlmClient Rate Limit Tests")
 class GeminiLlmClientTest {
 
-    private static final String DEFAULT_MODEL = "gemini-1.5-flash";
+    private static final String DEFAULT_MODEL = "gemini-2.5-flash";
     private static final String SUCCESS_BODY = """
             {"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":512,"candidatesTokenCount":128,"totalTokenCount":640}}
             """;
@@ -78,12 +78,12 @@ class GeminiLlmClientTest {
                 "system",
                 "user",
                 "run-model-override-001",
-                "gemini-1.5-pro");
+                "gemini-2.5-flash");
 
         LlmCallResult result = newClient(exchange).call(request);
 
-        assertThat(capturedPath.get()).contains("gemini-1.5-pro:generateContent");
-        assertThat(result.modelUsed()).isEqualTo("gemini-1.5-pro");
+        assertThat(capturedPath.get()).contains("gemini-2.5-flash:generateContent");
+        assertThat(result.modelUsed()).isEqualTo("gemini-2.5-flash");
     }
 
     @Test

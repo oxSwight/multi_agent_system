@@ -62,7 +62,7 @@ class TestGenerationCoordinatorTest {
                 contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
         when(validatorRegistry.getValidator(MidasState.TEST_GENERATION))
                 .thenReturn(Optional.of(validator));
-        when(llmModelPolicy.resolve(MidasState.TEST_GENERATION)).thenReturn("gemini-1.5-pro");
+        when(llmModelPolicy.resolve(MidasState.TEST_GENERATION)).thenReturn("gemini-2.5-flash");
     }
 
     @AfterEach
@@ -90,7 +90,7 @@ class TestGenerationCoordinatorTest {
         verify(llmClient, times(1)).call(captor.capture());
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_QA_PROMPT);
-        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-1.5-pro");
+        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-2.5-flash");
         verify(contextReducer).reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER));
         assertThat(result.validatedOutput().has("src/test/java/com/example/AppTest.java")).isTrue();
         assertThat(result.attemptsUsed()).isEqualTo(1);
