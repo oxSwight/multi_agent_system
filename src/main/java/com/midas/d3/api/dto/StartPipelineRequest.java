@@ -10,9 +10,19 @@ public record StartPipelineRequest(
         String rawUserIdea,
 
         /** When true, agents are dispatched automatically (same as Telegram bot mode). */
-        Boolean autoMode
+        Boolean autoMode,
+
+        /** Optional Telegram chat ID — with {@code telegramMessageId}, enables progress updates in chat. */
+        Long telegramChatId,
+
+        /** Optional Telegram message ID to edit with pipeline progress. */
+        Integer telegramMessageId
 ) {
     public boolean isAutoMode() {
         return Boolean.TRUE.equals(autoMode);
+    }
+
+    public boolean hasTelegramBinding() {
+        return telegramChatId != null && telegramMessageId != null;
     }
 }

@@ -33,9 +33,11 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
         this.messageId  = messageId;
     }
 
+    private static final int MAX_ERROR_REASON_CHARS = 500;
+
     @Override
     public void stateContext(StateContext<MidasState, MidasEvent> stateContext) {
-        if (stateContext.getStage() != StateContext.Stage.STATE_CHANGED) {
+        if (!shouldRenderForStage(stateContext)) {
             return;
         }
 
@@ -51,7 +53,7 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
         MidasContext ctx = (MidasContext) stateContext.getExtendedState()
                 .getVariables().get(PipelineContextKeys.MIDAS_CONTEXT);
 
-        String text = renderProgress(state, ctx);
+        String text = renderProgress(state, ctx, stateContext);
         if (text == null) {
             return;
         }
@@ -60,6 +62,11 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
     }
 
     static String renderProgress(MidasState state, MidasContext ctx) {
+        return renderProgress(state, ctx, null);
+    }
+
+    static String renderProgress(MidasState state, MidasContext ctx,
+                                 StateContext<MidasState, MidasEvent> stateContext) {
         if (state == MidasState.CODE_GENERATION && isRemediationPass(ctx)) {
             return renderRemediationInProgress(ctx);
         }
@@ -97,18 +104,31 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
                 "📦 Формирование и отправка архива артефактов...";
 
             case ERROR ->
-                renderError(ctx);
+                renderError(ctx, stateContext);
 
             default -> null;
         };
     }
 
-    static boolean shouldRenderForStage(StateContext.Stage stage) {
+    static boolean shouldRenderForStage(StateContext<MidasState, MidasEvent> stateContext) {
+        StateContext.Stage stage = stateContext.getStage();
+        State<MidasState, MidasEvent> target = stateContext.getTarget();
+        MidasState targetState = target != null ? target.getId() : null;
+
+        // ERROR is rendered on STATE_ENTRY so transition actions (CriticalFailureAction,
+        // PipelineErrorAction) have already written lastErrorMessage into MidasContext.
+        if (targetState == MidasState.ERROR) {
+            return stage == StateContext.Stage.STATE_ENTRY;
+        }
         return stage == StateContext.Stage.STATE_CHANGED;
     }
 
     static String renderError(MidasContext ctx) {
-        String reason = extractPipelineErrorReason(ctx);
+        return renderError(ctx, null);
+    }
+
+    static String renderError(MidasContext ctx, StateContext<MidasState, MidasEvent> stateContext) {
+        String reason = resolvePipelineErrorReason(ctx, stateContext);
         StringBuilder sb = new StringBuilder();
         sb.append(HEADER).append("[❌ ОШИБКА]\n\n");
         sb.append("Пайплайн завершился с ошибкой.\n");
@@ -124,20 +144,47 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
     }
 
     static String extractPipelineErrorReason(MidasContext ctx) {
-        if (ctx == null) {
-            return null;
+        return resolvePipelineErrorReason(ctx, null);
+    }
+
+    static String resolvePipelineErrorReason(MidasContext ctx,
+                                             StateContext<MidasState, MidasEvent> stateContext) {
+        if (ctx != null) {
+            String lastError = ctx.getLastErrorMessage();
+            if (lastError != null && !lastError.isBlank()) {
+                return truncateReason(lastError.strip());
+            }
+            String auditDetail = ctx.safeAuditLog().stream()
+                    .filter(entry -> entry.getSeverity() == AuditEntry.Severity.ERROR)
+                    .reduce((first, second) -> second)
+                    .map(AuditEntry::getDetail)
+                    .filter(detail -> detail != null && !detail.isBlank())
+                    .map(String::strip)
+                    .orElse(null);
+            if (auditDetail != null) {
+                return truncateReason(auditDetail);
+            }
         }
-        String lastError = ctx.getLastErrorMessage();
-        if (lastError != null && !lastError.isBlank()) {
-            return lastError.strip();
+
+        if (stateContext != null) {
+            Object headerError = stateContext.getMessageHeader(PipelineContextKeys.AGENT_ERROR_HEADER);
+            if (headerError instanceof String s && !s.isBlank()) {
+                return truncateReason(s.strip());
+            }
+            Object validationError = stateContext.getExtendedState().getVariables()
+                    .get(PipelineContextKeys.LAST_VALIDATION_ERROR);
+            if (validationError instanceof String s && !s.isBlank()) {
+                return truncateReason(s.strip());
+            }
         }
-        return ctx.safeAuditLog().stream()
-                .filter(entry -> entry.getSeverity() == AuditEntry.Severity.ERROR)
-                .reduce((first, second) -> second)
-                .map(AuditEntry::getDetail)
-                .filter(detail -> detail != null && !detail.isBlank())
-                .map(String::strip)
-                .orElse(null);
+        return null;
+    }
+
+    private static String truncateReason(String reason) {
+        if (reason.length() <= MAX_ERROR_REASON_CHARS) {
+            return reason;
+        }
+        return reason.substring(0, MAX_ERROR_REASON_CHARS - 1) + "…";
     }
 
     private static String escapeHtml(String value) {

@@ -7,8 +7,11 @@ import com.midas.d3.statemachine.MidasState;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.statemachine.StateContext;
+import org.springframework.statemachine.state.State;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @DisplayName("TelegramStateListener Tests")
 class TelegramStateListenerTest {
@@ -161,11 +164,32 @@ class TelegramStateListenerTest {
     }
 
     @Test
-    @DisplayName("shouldRenderForStage accepts only STATE_CHANGED to avoid pre-action ERROR render")
-    void shouldRenderForStage_onlyStateChanged() {
-        assertThat(TelegramStateListener.shouldRenderForStage(StateContext.Stage.STATE_CHANGED)).isTrue();
-        assertThat(TelegramStateListener.shouldRenderForStage(StateContext.Stage.TRANSITION)).isFalse();
-        assertThat(TelegramStateListener.shouldRenderForStage(StateContext.Stage.STATE_ENTRY)).isFalse();
+    @DisplayName("shouldRenderForStage renders ERROR on STATE_ENTRY and other states on STATE_CHANGED")
+    void shouldRenderForStage_errorUsesStateEntry() {
+        var errorEntry = mock(StateContext.class);
+        when(errorEntry.getStage()).thenReturn(StateContext.Stage.STATE_ENTRY);
+        var errorTarget = mock(State.class);
+        when(errorTarget.getId()).thenReturn(MidasState.ERROR);
+        when(errorEntry.getTarget()).thenReturn(errorTarget);
+
+        assertThat(TelegramStateListener.shouldRenderForStage(errorEntry)).isTrue();
+
+        var errorChanged = mock(StateContext.class);
+        when(errorChanged.getStage()).thenReturn(StateContext.Stage.STATE_CHANGED);
+        when(errorChanged.getTarget()).thenReturn(errorTarget);
+        assertThat(TelegramStateListener.shouldRenderForStage(errorChanged)).isFalse();
+
+        var progressChanged = mock(StateContext.class);
+        when(progressChanged.getStage()).thenReturn(StateContext.Stage.STATE_CHANGED);
+        var progressTarget = mock(State.class);
+        when(progressTarget.getId()).thenReturn(MidasState.SYSTEM_ANALYSIS);
+        when(progressChanged.getTarget()).thenReturn(progressTarget);
+        assertThat(TelegramStateListener.shouldRenderForStage(progressChanged)).isTrue();
+
+        var progressEntry = mock(StateContext.class);
+        when(progressEntry.getStage()).thenReturn(StateContext.Stage.STATE_ENTRY);
+        when(progressEntry.getTarget()).thenReturn(progressTarget);
+        assertThat(TelegramStateListener.shouldRenderForStage(progressEntry)).isFalse();
     }
 
     @Test
