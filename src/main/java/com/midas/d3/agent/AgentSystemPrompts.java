@@ -213,6 +213,8 @@ public class AgentSystemPrompts {
             - data_persistence.schema is non-empty ONLY when type is RELATIONAL or EMBEDDED_DB; otherwise [].
             - api_contracts is non-empty ONLY when architecture_style is CLIENT_SERVER/SERVERLESS/MONOLITH; otherwise [].
             - components and file_layout must each have at least 1 item and must match the chosen runtime.
+            - file_layout MUST list implementation paths AND matching test paths (*.test.js, *.test.ts,
+              __tests__/..., or *Test.java under src/test/java). Include at least one test path per testable module.
             - You MUST NOT contradict runtime_environment. Output ONLY the JSON object.
             """;
 

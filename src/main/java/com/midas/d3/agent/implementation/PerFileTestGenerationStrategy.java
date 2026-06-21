@@ -121,16 +121,71 @@ public class PerFileTestGenerationStrategy {
         if (layout == null || !layout.isArray()) {
             return List.of();
         }
-        List<String> paths = new ArrayList<>();
+        List<String> explicit = new ArrayList<>();
         for (JsonNode entry : layout) {
             if (entry.isTextual() && !entry.asText().isBlank()) {
                 String path = entry.asText().strip();
                 if (isTestFilePath(path)) {
-                    paths.add(path);
+                    explicit.add(path);
                 }
             }
         }
-        return paths;
+        if (!explicit.isEmpty()) {
+            return explicit;
+        }
+        return deriveTestPathsFromLayout(layout);
+    }
+
+    static List<String> deriveTestPathsFromLayout(JsonNode layout) {
+        List<String> derived = new ArrayList<>();
+        for (JsonNode entry : layout) {
+            if (!entry.isTextual() || entry.asText().isBlank()) {
+                continue;
+            }
+            String path = entry.asText().strip();
+            if (isTestFilePath(path) || shouldSkipForTestDerivation(path)) {
+                continue;
+            }
+            String testPath = deriveTestPathForSource(path);
+            if (testPath != null && !derived.contains(testPath)) {
+                derived.add(testPath);
+            }
+        }
+        return derived;
+    }
+
+    static boolean shouldSkipForTestDerivation(String path) {
+        String lower = path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        return lower.endsWith("manifest.json")
+                || lower.endsWith(".html")
+                || lower.endsWith(".css")
+                || lower.endsWith(".json");
+    }
+
+    static String deriveTestPathForSource(String sourcePath) {
+        String normalized = sourcePath.replace('\\', '/');
+        if (normalized.endsWith(".js")) {
+            return normalized.substring(0, normalized.length() - 3) + ".test.js";
+        }
+        if (normalized.endsWith(".ts")) {
+            return normalized.substring(0, normalized.length() - 3) + ".test.ts";
+        }
+        if (normalized.endsWith(".tsx")) {
+            return normalized.substring(0, normalized.length() - 4) + ".test.tsx";
+        }
+        if (normalized.endsWith(".java") && normalized.contains("/main/")) {
+            String name = normalized.substring(normalized.lastIndexOf('/') + 1);
+            String baseName = name.substring(0, name.length() - 5);
+            return normalized.replace("/main/", "/test/").replace(name, baseName + "Test.java");
+        }
+        if (normalized.endsWith(".java")) {
+            int slash = normalized.lastIndexOf('/');
+            String dir = slash >= 0 ? normalized.substring(0, slash + 1) : "";
+            String name = slash >= 0 ? normalized.substring(slash + 1) : normalized;
+            String baseName = name.substring(0, name.length() - 5);
+            return dir + baseName + "Test.java";
+        }
+        return null;
     }
 
     static boolean isTestFilePath(String path) {

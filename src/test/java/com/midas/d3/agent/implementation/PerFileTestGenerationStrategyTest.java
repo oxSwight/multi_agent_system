@@ -108,10 +108,23 @@ class PerFileTestGenerationStrategyTest {
     }
 
     @Test
-    @DisplayName("empty test file_layout fails fast")
+    @DisplayName("deriveTestPathsFromLayout maps source paths to *.test.* when architect omits tests")
+    void deriveTestPathsFromLayout_mapsSourcePaths() throws Exception {
+        JsonNode architecture = objectMapper.readTree("""
+                {"file_layout":["manifest.json","content_script.js","service_worker.js","sidebar.js"]}
+                """);
+        assertThat(PerFileTestGenerationStrategy.resolveTestFileLayout(viewWithArchitecture(architecture)))
+                .containsExactly(
+                        "content_script.test.js",
+                        "service_worker.test.js",
+                        "sidebar.test.js");
+    }
+
+    @Test
+    @DisplayName("empty derivable test file_layout fails fast")
     void generatePass_noTestPaths_throws() throws Exception {
         JsonNode architecture = objectMapper.readTree("""
-                {"file_layout":["manifest.json","src/popup.ts"]}
+                {"file_layout":["manifest.json","sidebar.html"]}
                 """);
         AgentContextView view = viewWithArchitecture(architecture);
         MidasContext ctx = MidasContext.start("extension", "run-empty-tests");

@@ -63,7 +63,7 @@ class NousRestClientTest {
                 .build());
 
         NousRestClient client = newClient(exchange, routingProperties(true, Map.of(
-                "ControllerAgent", "qwen2.5-coder:7b"
+                "ControllerAgent", "qwen2.5-coder:14b"
         )));
 
         LlmCallRequest request = LlmCallRequest.of(
@@ -76,7 +76,7 @@ class NousRestClientTest {
         LlmCallResult result = client.call(request);
 
         assertThat(result.text()).contains("\"verdict\":\"PASS\"");
-        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:7b");
+        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:14b");
     }
 
     @Test
@@ -94,14 +94,14 @@ class NousRestClientTest {
 
         LlmCallResult result = client.call(request);
 
-        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:7b");
+        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:14b");
     }
 
     @Test
     @DisplayName("Falls back to default-model for unmapped agents when routing is enabled")
     void call_routingEnabled_unmappedAgent_usesDefaultModel() {
         NousRestClient client = newClient(okExchange(), routingProperties(true, Map.of(
-                "ControllerAgent", "qwen2.5-coder:7b"
+                "ControllerAgent", "qwen2.5-coder:14b"
         )));
 
         LlmCallRequest request = LlmCallRequest.of(
@@ -113,7 +113,7 @@ class NousRestClientTest {
 
         LlmCallResult result = client.call(request);
 
-        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:7b");
+        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:14b");
     }
 
     @Test
@@ -143,8 +143,8 @@ class NousRestClientTest {
 
     private NousRestClient newClient(ExchangeFunction exchange) {
         return newClient(exchange, routingProperties(true, Map.of(
-                "ControllerAgent", "qwen2.5-coder:7b",
-                "SystemAnalystAgent", "qwen2.5-coder:7b"
+                "ControllerAgent", "qwen2.5-coder:14b",
+                "SystemAnalystAgent", "qwen2.5-coder:14b"
         )));
     }
 
@@ -161,7 +161,7 @@ class NousRestClientTest {
         properties.setHttpMaxRetries(0);
         NousProperties.Routing routing = new NousProperties.Routing();
         routing.setEnabled(enabled);
-        routing.setDefaultModel("qwen2.5-coder:7b");
+        routing.setDefaultModel("qwen2.5-coder:14b");
         routing.setAgents(agents);
         properties.setRouting(routing);
         return properties;

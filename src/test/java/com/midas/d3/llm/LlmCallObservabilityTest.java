@@ -33,7 +33,7 @@ class LlmCallObservabilityTest {
     @Test
     @DisplayName("logTelemetry emits unified per-call summary with tokens and finish reason")
     void logTelemetry_includesTokensAndFinishReason() {
-        LlmCallResult result = LlmCallResult.of("{}", "qwen2.5-coder:7b", 512, 128, "stop");
+        LlmCallResult result = LlmCallResult.of("{}", "qwen2.5-coder:14b", 512, 128, "stop");
 
         LlmCallObservability.logTelemetry("run-1", "SystemAnalystAgent", 1, 3, result);
 

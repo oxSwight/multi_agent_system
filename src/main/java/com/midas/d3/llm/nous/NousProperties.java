@@ -34,7 +34,7 @@ public class NousProperties {
     public static class Routing {
 
         private boolean enabled = false;
-        private String defaultModel = "qwen2.5-coder:7b";
+        private String defaultModel = "qwen2.5-coder:14b";
         private Map<String, String> agents = new LinkedHashMap<>();
     }
 }
