@@ -31,6 +31,15 @@ public record SingleFileLLMResponse(String path, String content) {
                     "Expected JSON object at root, got: " + root.getNodeType());
         }
 
+        if (root.has("source_files")) {
+            throw new ValidationHookException("ImplementationEngineer", "CODE_GENERATION",
+                    "Single-file output must not contain 'source_files' — use {\"path\":\"...\",\"content\":\"...\"} only.");
+        }
+        if (root.has("feature_manifest")) {
+            throw new ValidationHookException("ImplementationEngineer", "CODE_GENERATION",
+                    "Single-file output must not contain 'feature_manifest' — the pipeline assembles it.");
+        }
+
         JsonNode pathNode = root.get("path");
         if (pathNode == null || !pathNode.isTextual() || pathNode.asText().isBlank()) {
             throw new ValidationHookException("ImplementationEngineer", "CODE_GENERATION",

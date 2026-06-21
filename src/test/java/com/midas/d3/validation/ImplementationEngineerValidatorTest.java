@@ -292,4 +292,13 @@ class ImplementationEngineerValidatorTest {
                 .isInstanceOf(ValidationHookException.class)
                 .hasMessageContaining("placeholder");
     }
+
+    @Test
+    void validateSingleFileOutput_envelopeShape_throws() {
+        assertThatThrownBy(() -> validator.validateSingleFileOutput("""
+                {"source_files":{"src/App.java":"class App {}"},"feature_manifest":[]}
+                """, "src/App.java"))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("source_files");
+    }
 }
