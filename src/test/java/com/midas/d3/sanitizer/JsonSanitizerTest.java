@@ -233,6 +233,21 @@ class JsonSanitizerTest {
     // ── Real-world LLM output simulation ─────────────────────────────────────
 
     @Test
+    @DisplayName("Strips DeepSeek-R1 reasoning blocks before JSON extraction")
+    void sanitize_deepSeekThinkingBlock_extractsJson() {
+        String thinkOpen = "<" + "think" + ">";
+        String thinkClose = "</" + "think" + ">";
+        String llmOutput = thinkOpen + "Let me analyze the requirements step by step..." + thinkClose + "\n"
+                + "{\"business_goal\": \"Task management API\", \"core_features\": [\"CRUD\"]}";
+
+        String result = JsonSanitizer.sanitize(llmOutput);
+
+        assertThat(result).startsWith("{");
+        assertThat(result).contains("Task management API");
+        assertThat(result).doesNotContain("analyze the requirements");
+    }
+
+    @Test
     @DisplayName("Handles real-world LLM output with preamble + json fence + explanation")
     void sanitize_realWorldLlmOutput_extractsCleanJson() {
         String llmOutput = """

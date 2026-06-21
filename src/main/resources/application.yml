@@ -81,8 +81,20 @@ midas:
     base-url: ${MIDAS_NOUS_BASE_URL:http://host.docker.internal:11434}
     api-key: ${MIDAS_NOUS_API_KEY:ollama-local-dev}
     model: ${MIDAS_NOUS_MODEL:qwen2.5-coder:7b}
-    timeout-seconds: ${MIDAS_NOUS_TIMEOUT_SECONDS:120}
+    timeout-seconds: ${MIDAS_NOUS_TIMEOUT_SECONDS:300}
     http-max-retries: ${MIDAS_NOUS_MAX_RETRIES:2}
+    routing:
+      enabled: ${MIDAS_NOUS_ROUTING_ENABLED:true}
+      default-model: ${MIDAS_NOUS_ROUTING_DEFAULT_MODEL:qwen2.5-coder:7b}
+      agents:
+        # Reasoning agents (DeepSeek-R1)
+        SystemAnalystAgent: ${MIDAS_NOUS_MODEL_REASONING:deepseek-r1:8b}
+        SoftwareArchitectAgent: ${MIDAS_NOUS_MODEL_REASONING:deepseek-r1:8b}
+        ControllerAgent: ${MIDAS_NOUS_MODEL_REASONING:deepseek-r1:8b}
+        # Engineering / generation agents (Qwen-Coder)
+        ImplementationEngineerAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
+        QaAutomationAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
+        SecOpsAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
 
   # ── Evolution Agent (ContinuousImprovementService) ────────────────────────
   # cron: every hour on the hour; override for faster test cycles with fixedDelay

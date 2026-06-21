@@ -40,6 +40,7 @@ desktop.ini
 logs/
 tmp/
 temp/
+.tmp-*
 
 Internal project specifications
 /.internal/

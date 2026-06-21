@@ -50,6 +50,10 @@ midas:
     model: test-model
     timeout-seconds: 5
     http-max-retries: 1
+    routing:
+      enabled: false
+      default-model: test-model
+      agents: {}
   telegram:
     enabled: false
     bot-username: test_bot

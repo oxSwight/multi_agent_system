@@ -28,8 +28,19 @@ public class NousRequest {
                 .model(model)
                 .messages(List.of(Message.system(systemPrompt), Message.user(userContent)))
                 .temperature(0.1)
-                .maxTokens(8192)
+                .maxTokens(resolveMaxTokens(model))
                 .build();
+    }
+
+    /** Reasoning models (DeepSeek-R1) need a larger budget: Ollama fills {@code reasoning} first. */
+    private static int resolveMaxTokens(String model) {
+        if (model != null) {
+            String lower = model.toLowerCase();
+            if (lower.contains("deepseek-r1") || lower.contains("r1:")) {
+                return 16_384;
+            }
+        }
+        return 8_192;
     }
 
     // ── Inner DTO ────────────────────────────────────────────────────────────

@@ -63,5 +63,7 @@ public class NousResponse {
     public static class Message {
         private String role;
         private String content;
+        /** Ollama DeepSeek-R1 chain-of-thought; ignored for artifact extraction. */
+        private String reasoning;
     }
 }
