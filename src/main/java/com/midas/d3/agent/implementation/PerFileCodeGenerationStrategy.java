@@ -15,7 +15,6 @@ import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.llm.LlmModelPolicy;
-import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.validation.ImplementationEngineerValidator;
 import com.midas.d3.validation.ValidationHookException;
@@ -184,8 +183,8 @@ public class PerFileCodeGenerationStrategy {
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
                 lastFinishReason = llmResult.finishReason();
-                String sanitized = JsonSanitizer.sanitize(llmResult.text());
-                SingleFileLLMResponse parsed = validator.validateSingleFileOutput(sanitized, targetPath);
+                String content = validator.validateSingleFileOutput(llmResult.text(), targetPath);
+                SingleFileLLMResponse parsed = new SingleFileLLMResponse(targetPath, content);
                 return new FileGenerationResult(parsed.content(), attempt,
                         totalPromptTokens, totalCompletionTokens, llmResult.modelUsed(), lastFinishReason);
 
@@ -261,7 +260,7 @@ public class PerFileCodeGenerationStrategy {
         }
 
         sb.append("TARGET FILE: ").append(targetPath).append("\n\n");
-        sb.append("TASK: Generate ONLY the TARGET FILE. Output the single-file JSON schema from the system prompt.");
+        sb.append("TASK: Generate ONLY the TARGET FILE. Output ONLY the raw source in a single markdown code block.");
         return sb.toString();
     }
 
@@ -273,10 +272,10 @@ public class PerFileCodeGenerationStrategy {
         return baseUserMessage
                 + "\n\n"
                 + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
-                + "Your previous response was rejected by the schema validator.\n"
+                + "Your previous response was rejected by the validator.\n"
                 + "Violations found:\n"
                 + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"
-                + "Fix ALL violations. Output ONLY the corrected single-file JSON object.";
+                + "Fix ALL violations. Output ONLY the corrected raw source in a single markdown code block.";
     }
 
     private LlmCallResult invokeLlm(MidasContext context,

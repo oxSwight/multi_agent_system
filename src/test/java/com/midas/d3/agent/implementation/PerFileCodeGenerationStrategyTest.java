@@ -69,10 +69,14 @@ class PerFileCodeGenerationStrategyTest {
 
         when(llmClient.call(any())).thenReturn(
                 LlmCallResult.ofText("""
-                        {"path":"manifest.json","content":"{}"}
+                        ```json
+                        {}
+                        ```
                         """),
                 LlmCallResult.ofText("""
-                        {"path":"src/popup.ts","content":"export const ok = true;"}
+                        ```typescript
+                        export const ok = true;
+                        ```
                         """));
 
         PerFileCodeGenerationStrategy.PassResult result = strategy.generatePass(
@@ -101,7 +105,9 @@ class PerFileCodeGenerationStrategyTest {
                         """));
 
         when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"path":"manifest.json","content":"{}"}
+                ```json
+                {}
+                ```
                 """));
 
         PerFileCodeGenerationStrategy.PassResult result = strategy.generatePass(

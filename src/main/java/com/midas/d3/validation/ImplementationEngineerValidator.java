@@ -3,7 +3,6 @@ package com.midas.d3.validation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.midas.d3.agent.implementation.SingleFileLLMResponse;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
@@ -12,9 +11,15 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator {
+
+    private static final Pattern MARKDOWN_FENCE = Pattern.compile(
+            "```([a-zA-Z0-9_-]+)?\\s*\\r?\\n(.*?)\\r?\\n?```",
+            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     private final FeatureManifestValidator featureManifestValidator;
 
@@ -57,15 +62,70 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         return root;
     }
 
-    public SingleFileLLMResponse validateSingleFileOutput(String rawJson, String expectedPath)
+    /**
+     * Extracts and validates raw source from a per-file LLM response.
+     * The pipeline supplies {@code expectedPath}; the LLM must return only a markdown code block.
+     */
+    public String validateSingleFileOutput(String rawOutput, String expectedPath)
             throws ValidationHookException {
-        SingleFileLLMResponse parsed = SingleFileLLMResponse.parse(rawJson, expectedPath, objectMapper);
+        if (rawOutput == null || rawOutput.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output is null or blank — expected a markdown code block.");
+        }
+
+        String trimmed = rawOutput.strip();
+        rejectJsonEnvelope(trimmed);
+
+        String content = extractMarkdownCodeBlock(trimmed);
+        if (content == null || content.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output must be a single markdown code block (```language ... ```) "
+                            + "containing the complete source for [" + expectedPath + "].");
+        }
+
         List<String> violations = new java.util.ArrayList<>();
-        rejectPlaceholders(parsed.path(), parsed.content(), violations);
+        rejectPlaceholders(expectedPath, content, violations);
         if (!violations.isEmpty()) {
             throw new ValidationHookException(agentName(), stage(), violations);
         }
-        return parsed;
+        return content;
+    }
+
+    static String extractMarkdownCodeBlock(String text) {
+        Matcher matcher = MARKDOWN_FENCE.matcher(text);
+        String fallback = null;
+        while (matcher.find()) {
+            String extracted = matcher.group(2);
+            if (extracted == null) {
+                continue;
+            }
+            String stripped = extracted.strip();
+            if (stripped.isBlank()) {
+                continue;
+            }
+            if (!stripped.startsWith("{")) {
+                return stripped;
+            }
+            if (fallback == null) {
+                fallback = stripped;
+            }
+        }
+        return fallback;
+    }
+
+    private void rejectJsonEnvelope(String trimmed) {
+        if (!trimmed.startsWith("{")) {
+            return;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(trimmed);
+            if (root.isObject() && (root.has("path") || root.has("content") || root.has("source_files"))) {
+                throw new ValidationHookException(agentName(), stage(),
+                        "JSON envelope forbidden — output raw source in a single markdown code block only.");
+            }
+        } catch (JsonProcessingException ignored) {
+            // Not JSON — no envelope to reject.
+        }
     }
 
     public JsonNode validatePatchOutput(String rawJson, List<String> allowedPaths)

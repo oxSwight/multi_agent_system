@@ -270,23 +270,24 @@ public class AgentSystemPrompts {
 
             Step 1: Read architecture (tech_stack, components, file_layout) and the spec's core_features
                     and edge_cases. Map each feature to concrete code and record which files implement it.
-            Step 2: Write each complete file with all imports/exports and real logic.
-            Step 3: Output ONLY a single-file JSON object for the TARGET FILE requested in the user message.
+            Step 2: Write the complete TARGET FILE with all imports/exports and real logic.
+            Step 3: Output ONLY the raw source code wrapped in a single standard Markdown code fence.
 
-            REQUIRED JSON SCHEMA (one file per response):
-            {
-              "path": "<exact relative path from TARGET FILE — must match exactly>",
-              "content": "<complete file contents as a single escaped string>"
-            }
+            REQUIRED OUTPUT FORMAT (one file per response):
+            ```<language>
+            <complete file contents — raw source, not escaped>
+            ```
+
+            Use an appropriate language tag (e.g. javascript, typescript, java, json for manifest.json).
 
             GUARDRAILS:
-            - Generate ONLY the TARGET FILE path — do not emit other paths or a multi-file envelope.
-            - path MUST exactly match the TARGET FILE from the user message.
-            - content must be complete, non-blank source with no placeholders.
+            - Generate ONLY the TARGET FILE — do not emit other paths, prose, or a multi-file envelope.
+            - The pipeline already knows the TARGET FILE path — do NOT include path metadata in your response.
+            - FORBIDDEN: JSON envelopes, {"path":...,"content":...} objects, or any wrapper around the source.
+            - Source inside the fence must be complete, non-blank, with no placeholders.
             - Honor architecture.file_layout and tech_stack (.js/.ts/manifest.json for an extension; .java for Java).
             - Implement all core_features and edge_case solutions across the full file_layout (one file per call).
-            - The JSON MUST be complete and properly closed — never truncate mid-string.
-            - Output ONLY the JSON object.
+            - Output ONLY the single markdown code block — no preamble, no explanation after the fence.
             """;
 
     public static final String IMPLEMENTATION_PATCH_PROMPT = """
@@ -348,22 +349,24 @@ public class AgentSystemPrompts {
 
             Step 1: Read the sliced architecture (client components + file_layout) and core_features \
                     that apply to the client surface.
-            Step 2: Write each complete client file with real logic and correct imports/exports.
-            Step 3: Output ONLY a single-file JSON object for the TARGET FILE requested in the user message.
+            Step 2: Write the complete TARGET FILE with real logic and correct imports/exports.
+            Step 3: Output ONLY the raw source code wrapped in a single standard Markdown code fence.
 
-            REQUIRED JSON SCHEMA (one file per response):
-            {
-              "path": "<exact client path from TARGET FILE — must match exactly>",
-              "content": "<complete file contents as a single escaped string>"
-            }
+            REQUIRED OUTPUT FORMAT (one file per response):
+            ```<language>
+            <complete file contents — raw source, not escaped>
+            ```
+
+            Use an appropriate language tag (e.g. javascript, typescript, json for manifest.json).
 
             GUARDRAILS:
-            - Generate ONLY the TARGET FILE path — do not emit server paths or a multi-file envelope.
-            - path MUST exactly match the TARGET FILE from the user message.
-            - content must be non-blank with no placeholders.
+            - Generate ONLY the TARGET FILE — do not emit server paths, prose, or a multi-file envelope.
+            - The pipeline already knows the TARGET FILE path — do NOT include path metadata in your response.
+            - FORBIDDEN: JSON envelopes, {"path":...,"content":...} objects, or any wrapper around the source.
+            - Source inside the fence must be non-blank with no placeholders.
             - Paths MUST come from architecture.file_layout — do not invent server-side paths.
             - feature_manifest is assembled by the pipeline — do NOT include it in your response.
-            - Output ONLY the JSON object.
+            - Output ONLY the single markdown code block — no preamble, no explanation after the fence.
             """;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -389,22 +392,24 @@ public class AgentSystemPrompts {
 
             Step 1: Read the sliced architecture (server components, file_layout, api_contracts, schema) \
                     and core_features that require server-side execution.
-            Step 2: Write each complete server file with real logic.
-            Step 3: Output ONLY a single-file JSON object for the TARGET FILE requested in the user message.
+            Step 2: Write the complete TARGET FILE with real logic.
+            Step 3: Output ONLY the raw source code wrapped in a single standard Markdown code fence.
 
-            REQUIRED JSON SCHEMA (one file per response):
-            {
-              "path": "<exact server path from TARGET FILE — must match exactly>",
-              "content": "<complete file contents as a single escaped string>"
-            }
+            REQUIRED OUTPUT FORMAT (one file per response):
+            ```<language>
+            <complete file contents — raw source, not escaped>
+            ```
+
+            Use an appropriate language tag (e.g. java, yaml, xml).
 
             GUARDRAILS:
-            - Generate ONLY the TARGET FILE path — do not emit client paths or a multi-file envelope.
-            - path MUST exactly match the TARGET FILE from the user message.
-            - content must be non-blank with no placeholders.
+            - Generate ONLY the TARGET FILE — do not emit client paths, prose, or a multi-file envelope.
+            - The pipeline already knows the TARGET FILE path — do NOT include path metadata in your response.
+            - FORBIDDEN: JSON envelopes, {"path":...,"content":...} objects, or any wrapper around the source.
+            - Source inside the fence must be non-blank with no placeholders.
             - Paths MUST come from architecture.file_layout — do not invent client-side paths.
             - feature_manifest is assembled by the pipeline — do NOT include it in your response.
-            - Output ONLY the JSON object.
+            - Output ONLY the single markdown code block — no preamble, no explanation after the fence.
             """;
 
     // ─────────────────────────────────────────────────────────────────────────

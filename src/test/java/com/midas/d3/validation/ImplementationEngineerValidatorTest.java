@@ -266,39 +266,41 @@ class ImplementationEngineerValidatorTest {
     }
 
     @Test
-    void validateSingleFileOutput_validResponse_returnsParsed() throws Exception {
-        var parsed = validator.validateSingleFileOutput("""
-                {"path":"src/App.java","content":"public class App {}"}
+    void validateSingleFileOutput_validMarkdownBlock_returnsContent() throws Exception {
+        String content = validator.validateSingleFileOutput("""
+                ```javascript
+                public class App {}
+                ```
                 """, "src/App.java");
 
-        assertThat(parsed.path()).isEqualTo("src/App.java");
-        assertThat(parsed.content()).contains("class App");
+        assertThat(content).contains("class App");
     }
 
     @Test
-    void validateSingleFileOutput_wrongPath_throws() {
-        assertThatThrownBy(() -> validator.validateSingleFileOutput("""
-                {"path":"other.java","content":"class X {}"}
-                """, "src/App.java"))
+    void validateSingleFileOutput_missingCodeBlock_throws() {
+        assertThatThrownBy(() -> validator.validateSingleFileOutput(
+                "public class App {}", "src/App.java"))
                 .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("does not match");
+                .hasMessageContaining("markdown code block");
     }
 
     @Test
     void validateSingleFileOutput_placeholderContent_throws() {
         assertThatThrownBy(() -> validator.validateSingleFileOutput("""
-                {"path":"src/App.java","content":"// TODO implement"}
+                ```javascript
+                // TODO implement
+                ```
                 """, "src/App.java"))
                 .isInstanceOf(ValidationHookException.class)
                 .hasMessageContaining("placeholder");
     }
 
     @Test
-    void validateSingleFileOutput_envelopeShape_throws() {
+    void validateSingleFileOutput_jsonEnvelope_throws() {
         assertThatThrownBy(() -> validator.validateSingleFileOutput("""
-                {"source_files":{"src/App.java":"class App {}"},"feature_manifest":[]}
+                {"path":"src/App.java","content":"class App {}"}
                 """, "src/App.java"))
                 .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("source_files");
+                .hasMessageContaining("JSON envelope forbidden");
     }
 }
