@@ -11,15 +11,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Component
 public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator {
-
-    private static final Pattern MARKDOWN_FENCE = Pattern.compile(
-            "```([a-zA-Z0-9_-]+)?\\s*\\r?\\n(.*?)\\r?\\n?```",
-            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     private final FeatureManifestValidator featureManifestValidator;
 
@@ -76,7 +70,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         String trimmed = rawOutput.strip();
         rejectJsonEnvelope(trimmed);
 
-        String content = extractMarkdownCodeBlock(trimmed);
+        String content = MarkdownCodeBlockExtractor.extract(trimmed);
         if (content == null || content.isBlank()) {
             throw new ValidationHookException(agentName(), stage(),
                     "LLM output must be a single markdown code block (```language ... ```) "
@@ -89,28 +83,6 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             throw new ValidationHookException(agentName(), stage(), violations);
         }
         return content;
-    }
-
-    static String extractMarkdownCodeBlock(String text) {
-        Matcher matcher = MARKDOWN_FENCE.matcher(text);
-        String fallback = null;
-        while (matcher.find()) {
-            String extracted = matcher.group(2);
-            if (extracted == null) {
-                continue;
-            }
-            String stripped = extracted.strip();
-            if (stripped.isBlank()) {
-                continue;
-            }
-            if (!stripped.startsWith("{")) {
-                return stripped;
-            }
-            if (fallback == null) {
-                fallback = stripped;
-            }
-        }
-        return fallback;
     }
 
     private void rejectJsonEnvelope(String trimmed) {

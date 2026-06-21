@@ -48,19 +48,22 @@ public class TestGenerationCoordinator {
     private final ValidatorRegistry validatorRegistry;
     private final ObjectMapper objectMapper;
     private final Executor agentTaskExecutor;
+    private final PerFileTestGenerationStrategy perFileTestGenerationStrategy;
 
     public TestGenerationCoordinator(ContextReducer contextReducer,
                                      LlmClient llmClient,
                                      LlmModelPolicy llmModelPolicy,
                                      ValidatorRegistry validatorRegistry,
                                      ObjectMapper objectMapper,
-                                     @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor) {
+                                     @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor,
+                                     PerFileTestGenerationStrategy perFileTestGenerationStrategy) {
         this.contextReducer = contextReducer;
         this.llmClient = llmClient;
         this.llmModelPolicy = llmModelPolicy;
         this.validatorRegistry = validatorRegistry;
         this.objectMapper = objectMapper;
         this.agentTaskExecutor = agentTaskExecutor;
+        this.perFileTestGenerationStrategy = perFileTestGenerationStrategy;
     }
 
     public AgentResult execute(MidasContext context, String agentName) {
@@ -265,13 +268,10 @@ public class TestGenerationCoordinator {
         String systemPrompt = surface == ImplementationSurface.CLIENT
                 ? AgentSystemPrompts.HYBRID_CLIENT_QA_PROMPT
                 : AgentSystemPrompts.HYBRID_SERVER_QA_PROMPT;
-        PassResult pass = executePass(context, surface, systemPrompt, agentName, validator);
-        String json;
-        try {
-            json = objectMapper.writeValueAsString(pass.validated());
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize " + surface + " test map.", e);
-        }
+        AgentContextView view = contextReducer.reduceTestGenerationPass(context, surface);
+        PerFileTestGenerationStrategy.PassResult pass = perFileTestGenerationStrategy.generatePass(
+                context, view, surface, systemPrompt, agentName, requireQaValidator(validator));
+        String json = serializeTestMap(pass.validated());
         return new AgentResult(pass.validated(), json, pass.attemptsUsed(),
                 pass.promptTokens(), pass.completionTokens(), pass.modelId());
     }
@@ -332,73 +332,10 @@ public class TestGenerationCoordinator {
                                    String llmAgentName,
                                    GoalKeeperValidator validator) {
         AgentContextView view = contextReducer.reduceTestGenerationPass(context, surface);
-        String baseUserMessage = buildUserMessage(view, surface);
-        String modelOverride = llmModelPolicy.resolve(MidasState.TEST_GENERATION);
-        String lastError = null;
-        int totalPromptTokens = 0;
-        int totalCompletionTokens = 0;
-        String lastFinishReason = "";
-        int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
-
-        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
-            String userMessage = attempt == 1
-                    ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
-
-            log.info("[TestGenerationCoordinator] {} pass attempt {}/{} — run=[{}]",
-                    surface, attempt, effectiveMax, context.getPipelineRunId());
-
-            try {
-                LlmCallResult llmResult = invokeLlm(
-                        context, llmAgentName, LlmCallRequest.of(
-                        MidasState.TEST_GENERATION,
-                        llmAgentName,
-                        effectiveSystemPrompt(context, systemPrompt),
-                        userMessage,
-                        context.getPipelineRunId(),
-                        modelOverride),
-                        attempt, effectiveMax);
-                totalPromptTokens += llmResult.promptTokens();
-                totalCompletionTokens += llmResult.completionTokens();
-                lastFinishReason = llmResult.finishReason();
-                String raw = llmResult.text();
-
-                String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode validated = validator.validate(sanitized);
-                LlmCallObservability.logExecutionSummary(
-                        context.getPipelineRunId(), llmAgentName,
-                        totalPromptTokens, totalCompletionTokens, lastFinishReason);
-                return new PassResult(validated, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
-
-            } catch (ValidationHookException e) {
-                effectiveMax = AgentRetryPolicy.maxAttemptsFor(e);
-                lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
-                log.warn("[TestGenerationCoordinator] {} pass attempt {}/{} rejected: {}",
-                        surface, attempt, effectiveMax, lastError);
-                if (!AgentRetryPolicy.canRetry(e, attempt)) {
-                    break;
-                }
-                backoffBeforeRetry(attempt);
-
-            } catch (LlmCallException e) {
-                if (!e.isRetryable()) {
-                    throw e;
-                }
-                lastError = "LLM transport error: " + e.getMessage();
-                log.warn("[TestGenerationCoordinator] {} pass attempt {}/{} transport error: {}",
-                        surface, attempt, effectiveMax, e.getMessage());
-                backoffBeforeRetry(attempt);
-            }
-        }
-
-        LlmCallObservability.logExecutionSummary(
-                context.getPipelineRunId(), llmAgentName,
-                totalPromptTokens, totalCompletionTokens, lastFinishReason);
-        throw new AgentExecutionException(
-                llmAgentName,
-                ContextReducer.AgentRole.QA_ENGINEER,
-                effectiveMax,
-                surface + " pass failed: " + lastError);
+        PerFileTestGenerationStrategy.PassResult pass = perFileTestGenerationStrategy.generatePass(
+                context, view, surface, systemPrompt, llmAgentName, requireQaValidator(validator));
+        return new PassResult(pass.validated(), pass.attemptsUsed(),
+                pass.promptTokens(), pass.completionTokens(), pass.modelId());
     }
 
     private AgentResult executeSinglePass(MidasContext context,
@@ -407,77 +344,11 @@ public class TestGenerationCoordinator {
                                           AgentContextView view,
                                           GoalKeeperValidator validator,
                                           String llmAgentName) {
-        String baseUserMessage = buildUserMessage(view, null);
-        String modelOverride = llmModelPolicy.resolve(MidasState.TEST_GENERATION);
-        String lastError = null;
-        int totalPromptTokens = 0;
-        int totalCompletionTokens = 0;
-        String lastFinishReason = "";
-        int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
-
-        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
-            String userMessage = attempt == 1
-                    ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
-
-            log.info("[TestGenerationCoordinator] Single pass attempt {}/{} — run=[{}]",
-                    attempt, effectiveMax, context.getPipelineRunId());
-
-            try {
-                LlmCallResult llmResult = invokeLlm(
-                        context, llmAgentName, LlmCallRequest.of(
-                        MidasState.TEST_GENERATION,
-                        llmAgentName,
-                        effectiveSystemPrompt(context, systemPrompt),
-                        userMessage,
-                        context.getPipelineRunId(),
-                        modelOverride),
-                        attempt, effectiveMax);
-                totalPromptTokens += llmResult.promptTokens();
-                totalCompletionTokens += llmResult.completionTokens();
-                lastFinishReason = llmResult.finishReason();
-                String raw = llmResult.text();
-
-                String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode validated = validator.validate(sanitized);
-                LlmCallObservability.logExecutionSummary(
-                        context.getPipelineRunId(), llmAgentName,
-                        totalPromptTokens, totalCompletionTokens, lastFinishReason);
-                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens,
-                        llmResult.modelUsed(), llmResult.finishReason());
-
-            } catch (ValidationHookException e) {
-                effectiveMax = AgentRetryPolicy.maxAttemptsFor(e);
-                lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
-                log.warn("[TestGenerationCoordinator] Single pass attempt {}/{} rejected: {}",
-                        attempt, effectiveMax, lastError);
-                if (!AgentRetryPolicy.canRetry(e, attempt)) {
-                    break;
-                }
-                backoffBeforeRetry(attempt);
-
-            } catch (LlmCallException e) {
-                if (!e.isRetryable()) {
-                    throw e;
-                }
-                lastError = "LLM transport error: " + e.getMessage();
-                backoffBeforeRetry(attempt);
-            }
-        }
-
-        LlmCallObservability.logExecutionSummary(
-                context.getPipelineRunId(), agentName,
-                totalPromptTokens, totalCompletionTokens, lastFinishReason);
-        throw new AgentExecutionException(
-                agentName,
-                ContextReducer.AgentRole.QA_ENGINEER,
-                effectiveMax,
-                lastError);
-    }
-
-    private String effectiveSystemPrompt(MidasContext context, String baseSystemPrompt) {
-        return AgentSystemPrompts.appendProductReviewRemediation(
-                baseSystemPrompt, context.getRemediationDirective());
+        PerFileTestGenerationStrategy.PassResult pass = perFileTestGenerationStrategy.generatePass(
+                context, view, null, systemPrompt, llmAgentName, requireQaValidator(validator));
+        String json = serializeTestMap(pass.validated());
+        return new AgentResult(pass.validated(), json, pass.attemptsUsed(),
+                pass.promptTokens(), pass.completionTokens(), pass.modelId());
     }
 
     private String effectivePatchSystemPrompt(MidasContext context) {
@@ -532,32 +403,6 @@ public class TestGenerationCoordinator {
     }
 
     private record PatchAttemptResult(JsonNode patchTests, int attemptsUsed, int promptTokens, int completionTokens, String modelId) {}
-
-    String buildUserMessage(AgentContextView view, ImplementationSurface surface) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("USER IDEA:\n").append(view.getRawUserIdea()).append("\n\n");
-
-        if (surface != null) {
-            sb.append("TEST GENERATION PASS: ")
-              .append(surface.name())
-              .append(" — write tests ONLY for the ")
-              .append(surface == ImplementationSurface.CLIENT ? "client" : "server")
-              .append(" surface in the sliced source code below.\n\n");
-        }
-
-        Map<String, JsonNode> artifacts = view.safeArtifacts();
-        if (!artifacts.isEmpty()) {
-            sb.append("UPSTREAM ARTIFACTS:\n");
-            artifacts.forEach((key, node) ->
-                    sb.append("## ").append(key).append("\n")
-                      .append(node.toPrettyString()).append("\n\n"));
-        }
-
-        sb.append("TASK: Produce the output for the [QaAutomationAgent")
-          .append(surface != null ? "/" + surface.name() : "")
-          .append("] stage. Follow the system prompt JSON schema exactly.");
-        return sb.toString();
-    }
 
     private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt, int maxAttempts) {
         return baseUserMessage

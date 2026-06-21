@@ -1,20 +1,20 @@
 package com.midas.d3.validation;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
  * Validates Agent 5 (QA Engineer) output.
  *
- * <p>Same shape as the Implementation Engineer: {@code { "path/to/Test.ext": "test source code" }}.
- * File-name conventions are <b>stack-agnostic and case-insensitive</b> so both Java
- * ({@code *Test.java}, {@code *Spec.java}) and JS/TS ({@code *.test.ts}, {@code *.spec.js},
- * {@code __tests__/...}) conventions are accepted. Zero-Placeholder is enforced.
+ * <p>Per-file generation: LLM returns a markdown code block; the pipeline supplies the test path.
+ * Assembled map shape: {@code { "path/to/Test.ext": "test source code" }}.
  */
 @Component
 public class QaEngineerValidator extends AbstractGoalKeeperValidator {
@@ -28,6 +28,59 @@ public class QaEngineerValidator extends AbstractGoalKeeperValidator {
 
     public JsonNode validatePatchDelta(String rawJson) throws ValidationHookException {
         return validate(rawJson);
+    }
+
+    /**
+     * Extracts and validates raw test source from a per-file LLM response.
+     * The pipeline supplies {@code expectedPath}; the LLM must return only a markdown code block.
+     */
+    public String validateSingleFileOutput(String rawOutput, String expectedPath)
+            throws ValidationHookException {
+        if (rawOutput == null || rawOutput.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output is null or blank — expected a markdown code block.");
+        }
+
+        String trimmed = rawOutput.strip();
+        rejectJsonEnvelope(trimmed);
+
+        String content = MarkdownCodeBlockExtractor.extract(trimmed);
+        if (content == null || content.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output must be a single markdown code block (```language ... ```) "
+                            + "containing the complete test source for [" + expectedPath + "].");
+        }
+
+        List<String> violations = new java.util.ArrayList<>();
+        validateTestFileName(expectedPath, violations);
+        rejectPlaceholders(expectedPath, content, violations);
+        if (!violations.isEmpty()) {
+            throw new ValidationHookException(agentName(), stage(), violations);
+        }
+        return content;
+    }
+
+    private void rejectJsonEnvelope(String trimmed) {
+        if (!trimmed.startsWith("{")) {
+            return;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(trimmed);
+            if (root.isObject()) {
+                throw new ValidationHookException(agentName(), stage(),
+                        "JSON envelope forbidden — output raw test source in a single markdown code block only.");
+            }
+        } catch (JsonProcessingException ignored) {
+            // Not JSON — no envelope to reject.
+        }
+    }
+
+    private static void validateTestFileName(String fileName, List<String> violations) {
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        if (!lower.contains("test") && !lower.contains("spec")) {
+            violations.add("Test file [" + fileName + "] name should identify it as a test "
+                    + "(e.g. 'Test'/'Spec' for Java, '.test.'/'.spec.' for JS/TS).");
+        }
     }
 
     @Override
@@ -49,12 +102,7 @@ public class QaEngineerValidator extends AbstractGoalKeeperValidator {
                 violations.add("Test file [" + fileName + "] has blank or non-string content.");
                 continue;
             }
-            // Case-insensitive: matches Test.java, Spec.java, *.test.ts, *.spec.js, __tests__/...
-            String lower = fileName.toLowerCase();
-            if (!lower.contains("test") && !lower.contains("spec")) {
-                violations.add("Test file [" + fileName + "] name should identify it as a test "
-                        + "(e.g. 'Test'/'Spec' for Java, '.test.'/'.spec.' for JS/TS).");
-            }
+            validateTestFileName(fileName, violations);
             rejectPlaceholders(fileName, value.asText(), violations);
         }
     }

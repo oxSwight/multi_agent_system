@@ -429,21 +429,27 @@ public class AgentSystemPrompts {
             edge_case gets a regression test.
 
             Step 1: Read architecture (tech_stack), the generated source, and edge_cases.
-            Step 2: Choose the matching test framework and write complete, runnable tests.
-            Step 3: Output ONLY a valid JSON object: KEY = test file path, VALUE = complete test source.
+            Step 2: Write the complete TARGET TEST FILE with the matching test framework.
+            Step 3: Output ONLY the raw test source wrapped in a single standard Markdown code fence.
 
-            REQUIRED JSON SCHEMA:
-            {
-              "<relative/test/file/path.ext>": "<complete test source>"
-            }
+            REQUIRED OUTPUT FORMAT (one test file per response):
+            ```<language>
+            <complete test source — raw, not escaped>
+            ```
+
+            Use an appropriate language tag (e.g. javascript, typescript, java).
 
             GUARDRAILS:
+            - Generate ONLY the TARGET TEST FILE — do not emit other paths, prose, or a multi-file envelope.
+            - The pipeline already knows the TARGET TEST FILE path — do NOT include path metadata in your response.
+            - FORBIDDEN: JSON envelopes, path→content maps, or any wrapper around the test source.
+            - Use the full generatedSourceCode artifact in the user message to know what you are testing.
             - Test framework and file extension MUST match tech_stack (*.test.js/.test.ts/.spec.ts for Jest;
               *Test.java/*Spec.java for JUnit). Do NOT emit Java tests for a JS project.
-            - The map must have at least 1 entry; each file holds at least one real test case with assertions;
+            - Source inside the fence must be complete with at least one real test case and assertions;
               no placeholders, no empty test bodies.
-            - Cover every core_feature and every edge_cases_and_handling entry.
-            - The JSON MUST be complete and properly closed. Output ONLY the JSON object.
+            - Cover core_features and edge_cases across the full test file_layout (one file per call).
+            - Output ONLY the single markdown code block — no preamble, no explanation after the fence.
             """;
 
     public static final String QA_PATCH_PROMPT = """
@@ -499,19 +505,25 @@ public class AgentSystemPrompts {
               without assertions.
 
             Step 1: Read the sliced architecture, client source code, and edge_cases.
-            Step 2: Write complete Jest/jsdom tests covering every client core_feature and edge_case.
-            Step 3: Output ONLY a valid JSON object: KEY = test file path, VALUE = complete test source.
+            Step 2: Write the complete TARGET TEST FILE with Jest/jsdom tests and real assertions.
+            Step 3: Output ONLY the raw test source wrapped in a single standard Markdown code fence.
 
-            REQUIRED JSON SCHEMA:
-            {
-              "<client/test/file/path.test.ts>": "<complete test source>"
-            }
+            REQUIRED OUTPUT FORMAT (one test file per response):
+            ```<language>
+            <complete test source — raw, not escaped>
+            ```
+
+            Use typescript, javascript, or an appropriate tag for the test file.
 
             GUARDRAILS:
+            - Generate ONLY the TARGET TEST FILE — do not emit server test paths, prose, or a multi-file envelope.
+            - The pipeline already knows the TARGET TEST FILE path — do NOT include path metadata in your response.
+            - FORBIDDEN: JSON envelopes, path→content maps, or any wrapper around the test source.
+            - Use the full generatedSourceCode artifact in the user message to know what you are testing.
             - File extensions MUST be .test.js, .test.ts, .spec.js, or .spec.ts.
-            - The map must have at least 1 entry; each file holds at least one real test with assertions.
-            - Cover every client-relevant core_feature and edge_cases_and_handling entry.
-            - Output ONLY the JSON object.
+            - Source inside the fence must have at least one real test with assertions; no placeholders.
+            - Cover client-relevant core_features and edge_cases across the test file_layout (one file per call).
+            - Output ONLY the single markdown code block — no preamble, no explanation after the fence.
             """;
 
     public static final String HYBRID_SERVER_QA_PROMPT = """
@@ -540,19 +552,23 @@ public class AgentSystemPrompts {
 
             Step 1: Read the sliced architecture (api_contracts, data_persistence), server source, \
                     and edge_cases.
-            Step 2: Write complete JUnit 5 tests with Mockito and RestAssured where appropriate.
-            Step 3: Output ONLY a valid JSON object: KEY = test file path, VALUE = complete test source.
+            Step 2: Write the complete TARGET TEST FILE with JUnit 5, Mockito, and RestAssured where appropriate.
+            Step 3: Output ONLY the raw test source wrapped in a single standard Markdown code fence.
 
-            REQUIRED JSON SCHEMA:
-            {
-              "<src/test/java/.../ExampleTest.java>": "<complete test source>"
-            }
+            REQUIRED OUTPUT FORMAT (one test file per response):
+            ```java
+            <complete test source — raw, not escaped>
+            ```
 
             GUARDRAILS:
-            - File names MUST end with Test.java or IT.java and live under src/test/java/.
-            - The map must have at least 1 entry; each class holds at least one @Test with assertions.
-            - Cover every server-relevant core_feature, api_contract, and edge_cases_and_handling entry.
-            - Output ONLY the JSON object.
+            - Generate ONLY the TARGET TEST FILE — do not emit client test paths, prose, or a multi-file envelope.
+            - The pipeline already knows the TARGET TEST FILE path — do NOT include path metadata in your response.
+            - FORBIDDEN: JSON envelopes, path→content maps, or any wrapper around the test source.
+            - Use the full generatedSourceCode artifact in the user message to know what you are testing.
+            - File names MUST end with Test.java or IT.java and live under src/test/java/ when applicable.
+            - Source inside the fence must have at least one @Test with assertions; no placeholders.
+            - Cover server-relevant core_features, api_contracts, and edge_cases across the test file_layout.
+            - Output ONLY the single markdown code block — no preamble, no explanation after the fence.
             """;
 
     // ─────────────────────────────────────────────────────────────────────────
