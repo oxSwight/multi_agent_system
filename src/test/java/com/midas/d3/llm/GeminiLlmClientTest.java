@@ -23,8 +23,38 @@ class GeminiLlmClientTest {
 
     private static final String DEFAULT_MODEL = "gemini-2.5-flash";
     private static final String SUCCESS_BODY = """
-            {"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":512,"candidatesTokenCount":128,"totalTokenCount":640}}
+            {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":512,"candidatesTokenCount":128,"totalTokenCount":640}}
             """;
+
+    @Test
+    @DisplayName("Extracts finishReason from first candidate")
+    void call_successBody_returnsFinishReason() {
+        ExchangeFunction exchange = request -> Mono.just(ClientResponse.create(HttpStatus.OK)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .body(SUCCESS_BODY)
+                .build());
+
+        LlmCallResult result = newClient(exchange).call(requestForRun("run-finish-001"));
+
+        assertThat(result.finishReason()).isEqualTo("STOP");
+    }
+
+    @Test
+    @DisplayName("Propagates MAX_TOKENS finishReason without retrying")
+    void call_maxTokensFinishReason_returnsTruncatedResult() {
+        String maxTokensBody = """
+                {"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":50,"totalTokenCount":150}}
+                """;
+        ExchangeFunction exchange = request -> Mono.just(ClientResponse.create(HttpStatus.OK)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .body(maxTokensBody)
+                .build());
+
+        LlmCallResult result = newClient(exchange).call(requestForRun("run-max-tokens"));
+
+        assertThat(result.text()).isEqualTo("partial");
+        assertThat(result.isTruncated()).isTrue();
+    }
 
     @Test
     @DisplayName("Extracts prompt and completion token counts from usageMetadata")

@@ -118,7 +118,8 @@ public class AgentDispatcher {
 
                 persistenceService.logAgentExecution(
                         runId, agent.getAgentName(), result.rawLlmOutput(),
-                        result.modelId(), result.promptTokens(), result.completionTokens(), elapsedMs, false);
+                        result.modelId(), result.promptTokens(), result.completionTokens(),
+                        elapsedMs, false, result.finishReason());
 
                 machine.getExtendedState().getVariables()
                        .put(PipelineContextKeys.ANALYST_QUESTIONS_KEY, result.rawLlmOutput());
@@ -134,7 +135,8 @@ public class AgentDispatcher {
 
             persistenceService.logAgentExecution(
                     runId, agent.getAgentName(), result.rawLlmOutput(),
-                    result.modelId(), result.promptTokens(), result.completionTokens(), elapsedMs, false);
+                    result.modelId(), result.promptTokens(), result.completionTokens(),
+                    elapsedMs, false, result.finishReason());
 
             sendEvent(machine, MessageBuilder
                     .withPayload(MidasEvent.SUBMIT_RESULT)

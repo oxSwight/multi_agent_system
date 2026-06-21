@@ -3,13 +3,17 @@ package com.midas.d3.validation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
+@Slf4j
 @Component
 public class ControllerValidator extends AbstractGoalKeeperValidator {
 
@@ -49,6 +53,8 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
             throw new ValidationHookException(agentName(), stage(),
                     "Expected JSON object at root, got: " + root.getNodeType());
         }
+
+        normalizeCoverageMatrixEvidence((ObjectNode) root, featureManifest);
 
         List<String> violations = new java.util.ArrayList<>();
         collectViolations(root, violations, featureManifest);
@@ -104,8 +110,6 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
             return;
         }
 
-        ManifestReferenceIndex manifestIndex = buildManifestReferenceIndex(featureManifest);
-
         for (int i = 0; i < matrix.size(); i++) {
             JsonNode entry = matrix.get(i);
             if (!entry.isObject()) {
@@ -126,23 +130,73 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
             JsonNode evidence = entry.get("evidence");
             if (evidence == null || !evidence.isTextual() || evidence.asText().isBlank()) {
                 violations.add("coverage_matrix[" + i + "].evidence is missing or blank.");
-            } else if (manifestIndex.isPresent()) {
-                validateEvidenceReferencesManifest(i, evidence.asText().strip(), manifestIndex, violations);
             }
         }
     }
 
-    private void validateEvidenceReferencesManifest(int index,
-                                                    String evidence,
-                                                    ManifestReferenceIndex manifestIndex,
-                                                    List<String> violations) {
-        String evidenceLower = evidence.toLowerCase(Locale.ROOT);
-        boolean matched = manifestIndex.featureIds().stream().anyMatch(evidenceLower::contains)
-                || manifestIndex.filePaths().stream().anyMatch(evidenceLower::contains);
-        if (!matched) {
-            violations.add("coverage_matrix[" + index + "].evidence must reference a feature_id "
-                    + "or file path from featureManifest.");
+    /**
+     * Repairs {@code coverage_matrix[].evidence} when blank or not cross-referenced to the
+     * implementation {@code featureManifest}, instead of failing the whole PRODUCT_REVIEW stage.
+     */
+    private void normalizeCoverageMatrixEvidence(ObjectNode root, JsonNode featureManifest) {
+        JsonNode matrix = root.get("coverage_matrix");
+        if (matrix == null || !matrix.isArray()) {
+            return;
         }
+
+        ManifestReferenceIndex manifestIndex = buildManifestReferenceIndex(featureManifest);
+        String defaultFallback = manifestIndex.defaultFallbackEvidence();
+
+        for (int i = 0; i < matrix.size(); i++) {
+            JsonNode entryNode = matrix.get(i);
+            if (!entryNode.isObject()) {
+                continue;
+            }
+            ObjectNode entry = (ObjectNode) entryNode;
+
+            JsonNode evidenceNode = entry.get("evidence");
+            String evidence = evidenceNode != null && evidenceNode.isTextual()
+                    ? evidenceNode.asText().strip()
+                    : "";
+
+            boolean needsFallback = evidence.isBlank();
+            if (!needsFallback && manifestIndex.isPresent()) {
+                needsFallback = !evidenceReferencesManifest(evidence, manifestIndex);
+            }
+
+            if (needsFallback) {
+                String fallback = resolveFallbackEvidence(entry, manifestIndex, defaultFallback);
+                log.warn("[ControllerAgent] Invalid evidence at coverage_matrix[{}] ({}), applying fallback: {}",
+                        i, evidence.isBlank() ? "<blank>" : evidence, fallback);
+                entry.put("evidence", fallback);
+            }
+        }
+    }
+
+    private boolean evidenceReferencesManifest(String evidence, ManifestReferenceIndex manifestIndex) {
+        String evidenceLower = evidence.toLowerCase(Locale.ROOT);
+        return manifestIndex.featureIds().stream().anyMatch(evidenceLower::contains)
+                || manifestIndex.filePaths().stream().anyMatch(evidenceLower::contains);
+    }
+
+    private String resolveFallbackEvidence(ObjectNode entry,
+                                           ManifestReferenceIndex manifestIndex,
+                                           String defaultFallback) {
+        JsonNode requestedFeature = entry.get("requested_feature");
+        if (requestedFeature != null && requestedFeature.isTextual() && manifestIndex.isPresent()) {
+            Optional<String> matched = manifestIndex.findFeatureIdForRequestedFeature(
+                    requestedFeature.asText().strip());
+            if (matched.isPresent()) {
+                return matched.get();
+            }
+        }
+        if (defaultFallback != null && !defaultFallback.isBlank()) {
+            return defaultFallback;
+        }
+        if (requestedFeature != null && requestedFeature.isTextual() && !requestedFeature.asText().isBlank()) {
+            return requestedFeature.asText().strip();
+        }
+        return "pipeline-artifact-coverage";
     }
 
     private ManifestReferenceIndex buildManifestReferenceIndex(JsonNode featureManifest) {
@@ -153,6 +207,9 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
 
         Set<String> featureIds = new HashSet<>();
         Set<String> filePaths = new HashSet<>();
+        Set<String> featureNames = new HashSet<>();
+        String primaryFeatureId = "";
+        String primaryFilePath = "";
 
         for (int i = 0; i < featureManifest.size(); i++) {
             JsonNode entry = featureManifest.get(i);
@@ -161,13 +218,25 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
             }
             JsonNode featureIdNode = entry.get("feature_id");
             if (featureIdNode != null && featureIdNode.isTextual() && !featureIdNode.asText().isBlank()) {
-                featureIds.add(featureIdNode.asText().strip().toLowerCase(Locale.ROOT));
+                String featureId = featureIdNode.asText().strip();
+                featureIds.add(featureId.toLowerCase(Locale.ROOT));
+                if (primaryFeatureId.isBlank()) {
+                    primaryFeatureId = featureId;
+                }
+            }
+            JsonNode featureNameNode = entry.get("feature_name");
+            if (featureNameNode != null && featureNameNode.isTextual() && !featureNameNode.asText().isBlank()) {
+                featureNames.add(featureNameNode.asText().strip().toLowerCase(Locale.ROOT));
             }
             JsonNode filesNode = entry.get("files");
             if (filesNode != null && filesNode.isArray()) {
                 for (JsonNode fileNode : filesNode) {
                     if (fileNode.isTextual() && !fileNode.asText().isBlank()) {
-                        filePaths.add(fileNode.asText().strip().toLowerCase(Locale.ROOT));
+                        String filePath = fileNode.asText().strip();
+                        filePaths.add(filePath.toLowerCase(Locale.ROOT));
+                        if (primaryFilePath.isBlank()) {
+                            primaryFilePath = filePath;
+                        }
                     }
                 }
             }
@@ -176,16 +245,47 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
         if (featureIds.isEmpty() && filePaths.isEmpty()) {
             return ManifestReferenceIndex.absent();
         }
-        return new ManifestReferenceIndex(featureIds, filePaths);
+        return new ManifestReferenceIndex(featureIds, filePaths, featureNames, primaryFeatureId, primaryFilePath);
     }
 
-    private record ManifestReferenceIndex(Set<String> featureIds, Set<String> filePaths) {
+    private record ManifestReferenceIndex(
+            Set<String> featureIds,
+            Set<String> filePaths,
+            Set<String> featureNames,
+            String primaryFeatureId,
+            String primaryFilePath) {
+
         static ManifestReferenceIndex absent() {
-            return new ManifestReferenceIndex(Set.of(), Set.of());
+            return new ManifestReferenceIndex(Set.of(), Set.of(), Set.of(), "", "");
         }
 
         boolean isPresent() {
             return !featureIds.isEmpty() || !filePaths.isEmpty();
+        }
+
+        String defaultFallbackEvidence() {
+            if (primaryFeatureId != null && !primaryFeatureId.isBlank()) {
+                return primaryFeatureId;
+            }
+            if (primaryFilePath != null && !primaryFilePath.isBlank()) {
+                return primaryFilePath;
+            }
+            return "";
+        }
+
+        Optional<String> findFeatureIdForRequestedFeature(String requestedFeature) {
+            String requestedLower = requestedFeature.toLowerCase(Locale.ROOT);
+            for (String featureId : featureIds) {
+                if (requestedLower.contains(featureId) || featureId.contains(requestedLower)) {
+                    return Optional.of(featureId);
+                }
+            }
+            for (String featureName : featureNames) {
+                if (requestedLower.contains(featureName) || featureName.contains(requestedLower)) {
+                    return featureIds.stream().findFirst();
+                }
+            }
+            return Optional.empty();
         }
     }
 

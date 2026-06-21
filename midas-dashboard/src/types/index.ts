@@ -16,27 +16,31 @@ export type PipelineStatus =
 
 export interface MidasRun {
   id: string
-  chatId: number | null
+  chatId?: number | null
   rawUserIdea: string
   status: PipelineStatus
-  artifactPath: string | null
+  artifactPath?: string | null
   totalPromptTokens: number
   totalCompletionTokens: number
-  needsRefactoring: boolean
+  estimatedCostUsd?: number | null
+  needsRefactoring?: boolean
   createdAt: string   // ISO-8601
-  updatedAt: string   // ISO-8601
+  updatedAt?: string   // ISO-8601
 }
 
 export interface MidasAgentLog {
-  id: string
-  runId: string
+  id?: string
+  runId?: string
   agentType: string   // e.g. "SystemAnalystAgent"
   rawOutput: string | null
   promptTokens: number
   completionTokens: number
+  modelId?: string | null
+  finishReason?: string | null
+  estimatedCostUsd?: number | null
   executionTimeMs: number
   isError: boolean
-  createdAt: string   // ISO-8601
+  createdAt?: string   // ISO-8601
 }
 
 // ── Dashboard aggregate types ─────────────────────────────────────────────────

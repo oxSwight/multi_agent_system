@@ -80,12 +80,17 @@ public class NousRestClient implements LlmClient {
                     throw LlmCallException.emptyResponse(request.getAgentName());
                 }
 
-                return LlmCallResult.of(
-                        response.extractText()
-                                .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName())),
-                        effectiveModel,
-                        0,
-                        0);
+                String finishReason = response.extractFinishReason().orElse("");
+                String text = response.extractText()
+                        .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
+
+                if (LlmCallResult.FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
+                    log.warn("[NousRestClient][{}] run=[{}] — ответ обрезан (MAX_TOKENS), "
+                                    + "retry бесполезен без уменьшения scope",
+                            request.getAgentName(), request.getPipelineRunId());
+                }
+
+                return LlmCallResult.of(text, effectiveModel, 0, 0, finishReason);
 
             } catch (LlmCallException e) {
                 throw e;

@@ -31,6 +31,15 @@ public final class GeminiResponse {
         return usageMetadata != null ? usageMetadata.candidatesTokenCount : 0;
     }
 
+    /** Returns the finish reason of the first candidate, or empty if absent. */
+    public Optional<String> extractFinishReason() {
+        if (candidates == null || candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        String reason = candidates.get(0).getFinishReason();
+        return (reason == null || reason.isBlank()) ? Optional.empty() : Optional.of(reason);
+    }
+
     /**
      * Extracts the generated text from the first candidate's first part.
      *

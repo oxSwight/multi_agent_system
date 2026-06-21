@@ -3,6 +3,7 @@ package com.midas.d3.agent.implementation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.agent.AgentRetryPolicy;
 import com.midas.d3.agent.AgentSystemPrompts;
 import com.midas.d3.agent.base.AgentExecutionException;
 import com.midas.d3.agent.base.AgentResult;
@@ -11,6 +12,7 @@ import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
+import com.midas.d3.llm.LlmCallObservability;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmClient;
@@ -20,7 +22,6 @@ import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
 import com.midas.d3.validation.ImplementationEngineerValidator;
-import com.midas.d3.validation.ImplementationOutputUnwrapper;
 import com.midas.d3.validation.ValidationHookException;
 import com.midas.d3.statemachine.remediation.RemediationDirectiveSupport;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -42,7 +43,7 @@ import java.util.concurrent.Executor;
 @Service
 public class CodeGenerationCoordinator {
 
-    static final int MAX_PASS_RETRIES = 3;
+    static final int MAX_PASS_RETRIES = AgentRetryPolicy.MAX_VALIDATION_ATTEMPTS;
 
     private final ContextReducer contextReducer;
     private final LlmClient llmClient;
@@ -50,19 +51,22 @@ public class CodeGenerationCoordinator {
     private final ValidatorRegistry validatorRegistry;
     private final ObjectMapper objectMapper;
     private final Executor agentTaskExecutor;
+    private final PerFileCodeGenerationStrategy perFileStrategy;
 
     public CodeGenerationCoordinator(ContextReducer contextReducer,
                                      LlmClient llmClient,
                                      LlmModelPolicy llmModelPolicy,
                                      ValidatorRegistry validatorRegistry,
                                      ObjectMapper objectMapper,
-                                     @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor) {
+                                     @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor,
+                                     PerFileCodeGenerationStrategy perFileStrategy) {
         this.contextReducer = contextReducer;
         this.llmClient = llmClient;
         this.llmModelPolicy = llmModelPolicy;
         this.validatorRegistry = validatorRegistry;
         this.objectMapper = objectMapper;
         this.agentTaskExecutor = agentTaskExecutor;
+        this.perFileStrategy = perFileStrategy;
     }
 
     /**
@@ -191,13 +195,15 @@ public class CodeGenerationCoordinator {
                     attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
 
             try {
-                LlmCallResult llmResult = llmClient.call(LlmCallRequest.of(
+                LlmCallResult llmResult = invokeLlm(
+                        context, llmAgentName, LlmCallRequest.of(
                         MidasState.CODE_GENERATION,
                         llmAgentName,
                         effectivePatchSystemPrompt(context),
                         userMessage,
                         context.getPipelineRunId(),
-                        modelOverride));
+                        modelOverride),
+                        attempt, MAX_PASS_RETRIES);
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
                 String sanitized = JsonSanitizer.sanitize(llmResult.text());
@@ -206,9 +212,12 @@ public class CodeGenerationCoordinator {
                         llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
-                lastError = String.join(" | ", e.getViolations());
+                lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
                 log.warn("[CodeGenerationCoordinator] PATCH attempt {}/{} rejected: {}",
                         attempt, MAX_PASS_RETRIES, lastError);
+                if (!AgentRetryPolicy.canRetry(e, attempt)) {
+                    break;
+                }
                 backoffBeforeRetry(attempt);
 
             } catch (LlmCallException e) {
@@ -348,69 +357,14 @@ public class CodeGenerationCoordinator {
                                    String llmAgentName,
                                    GoalKeeperValidator validator) {
         AgentContextView view = contextReducer.reduceImplementationPass(context, surface);
-        String baseUserMessage = buildUserMessage(view, surface);
-        String modelOverride = llmModelPolicy.resolve(MidasState.CODE_GENERATION);
-        String lastError = null;
-        int totalPromptTokens = 0;
-        int totalCompletionTokens = 0;
+        ImplementationEngineerValidator implValidator = requireImplementationValidator(validator);
+        boolean hybridPartialPass = HybridExecutionModel.isHybrid(context) && surface != null;
 
-        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
-            String userMessage = attempt == 1
-                    ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+        PerFileCodeGenerationStrategy.PassResult result = perFileStrategy.generatePass(
+                context, view, surface, systemPrompt, llmAgentName, implValidator, hybridPartialPass);
 
-            log.info("[CodeGenerationCoordinator] {} pass attempt {}/{} — run=[{}]",
-                    surface, attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
-
-            try {
-                LlmCallResult llmResult = llmClient.call(LlmCallRequest.of(
-                        MidasState.CODE_GENERATION,
-                        llmAgentName,
-                        effectiveSystemPrompt(context, systemPrompt),
-                        userMessage,
-                        context.getPipelineRunId(),
-                        modelOverride));
-                totalPromptTokens += llmResult.promptTokens();
-                totalCompletionTokens += llmResult.completionTokens();
-                String raw = llmResult.text();
-
-                String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode envelope;
-                if (HybridExecutionModel.isHybrid(context) && surface != null) {
-                    // In HYBRID fan-out each pass contains only a surface-local partial manifest.
-                    // Full core_features coverage is validated after client/server merge.
-                    envelope = requireImplementationValidator(validator).validate(sanitized);
-                } else {
-                    envelope = requireImplementationValidator(validator)
-                            .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
-                }
-                ImplementationOutputUnwrapper.UnwrappedEnvelope unwrapped =
-                        ImplementationOutputUnwrapper.unwrap(envelope);
-                return new PassResult(unwrapped.sourceFiles(), unwrapped.featureManifest(), attempt,
-                        totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
-
-            } catch (ValidationHookException e) {
-                lastError = String.join(" | ", e.getViolations());
-                log.warn("[CodeGenerationCoordinator] {} pass attempt {}/{} rejected: {}",
-                        surface, attempt, MAX_PASS_RETRIES, lastError);
-                backoffBeforeRetry(attempt);
-
-            } catch (LlmCallException e) {
-                if (!e.isRetryable()) {
-                    throw e;
-                }
-                lastError = "LLM transport error: " + e.getMessage();
-                log.warn("[CodeGenerationCoordinator] {} pass attempt {}/{} transport error: {}",
-                        surface, attempt, MAX_PASS_RETRIES, e.getMessage());
-                backoffBeforeRetry(attempt);
-            }
-        }
-
-        throw new AgentExecutionException(
-                llmAgentName,
-                ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
-                MAX_PASS_RETRIES,
-                surface + " pass failed: " + lastError);
+        return new PassResult(result.sourceFiles(), result.featureManifest(), result.attemptsUsed(),
+                result.promptTokens(), result.completionTokens(), result.modelId());
     }
 
     private AgentResult executeSinglePass(MidasContext context,
@@ -419,62 +373,20 @@ public class CodeGenerationCoordinator {
                                           AgentContextView view,
                                           GoalKeeperValidator validator,
                                           String llmAgentName) {
-        String baseUserMessage = buildUserMessage(view, null);
-        String modelOverride = llmModelPolicy.resolve(MidasState.CODE_GENERATION);
-        String lastError = null;
-        int totalPromptTokens = 0;
-        int totalCompletionTokens = 0;
+        ImplementationEngineerValidator implValidator = requireImplementationValidator(validator);
 
-        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
-            String userMessage = attempt == 1
-                    ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+        PerFileCodeGenerationStrategy.PassResult pass = perFileStrategy.generatePass(
+                context, view, null, systemPrompt, llmAgentName, implValidator, false);
 
-            log.info("[CodeGenerationCoordinator] Single pass attempt {}/{} — run=[{}]",
-                    attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
-
-            try {
-                LlmCallResult llmResult = llmClient.call(LlmCallRequest.of(
-                        MidasState.CODE_GENERATION,
-                        llmAgentName,
-                        effectiveSystemPrompt(context, systemPrompt),
-                        userMessage,
-                        context.getPipelineRunId(),
-                        modelOverride));
-                totalPromptTokens += llmResult.promptTokens();
-                totalCompletionTokens += llmResult.completionTokens();
-                String raw = llmResult.text();
-
-                String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode envelope = requireImplementationValidator(validator)
-                        .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
-                return new AgentResult(envelope, sanitized, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
-
-            } catch (ValidationHookException e) {
-                lastError = String.join(" | ", e.getViolations());
-                log.warn("[CodeGenerationCoordinator] Single pass attempt {}/{} rejected: {}",
-                        attempt, MAX_PASS_RETRIES, lastError);
-                backoffBeforeRetry(attempt);
-
-            } catch (LlmCallException e) {
-                if (!e.isRetryable()) {
-                    throw e;
-                }
-                lastError = "LLM transport error: " + e.getMessage();
-                backoffBeforeRetry(attempt);
-            }
+        JsonNode envelope = buildEnvelope(pass.sourceFiles(), pass.featureManifest());
+        String json;
+        try {
+            json = objectMapper.writeValueAsString(envelope);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize implementation envelope.", e);
         }
-
-        throw new AgentExecutionException(
-                agentName,
-                ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
-                MAX_PASS_RETRIES,
-                lastError);
-    }
-
-    private String effectiveSystemPrompt(MidasContext context, String baseSystemPrompt) {
-        return AgentSystemPrompts.appendProductReviewRemediation(
-                baseSystemPrompt, context.getRemediationDirective());
+        return new AgentResult(envelope, json, pass.attemptsUsed(),
+                pass.promptTokens(), pass.completionTokens(), pass.modelId());
     }
 
     private String effectivePatchSystemPrompt(MidasContext context) {
@@ -562,8 +474,23 @@ public class CodeGenerationCoordinator {
                 + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + MAX_PASS_RETRIES + ") ---\n"
                 + "Your previous response was rejected by the schema validator.\n"
                 + "Violations found:\n"
-                + error + "\n"
+                + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"
                 + "Fix ALL violations. Output ONLY the corrected JSON object.";
+    }
+
+    private LlmCallResult invokeLlm(MidasContext context,
+                                    String llmAgentName,
+                                    LlmCallRequest request,
+                                    int attempt,
+                                    int maxAttempts) throws LlmCallException {
+        LlmCallResult result = llmClient.call(request);
+        LlmCallObservability.logCallMetadata(
+                context.getPipelineRunId(), llmAgentName, attempt, maxAttempts, result);
+        LlmCallObservability.logFinOps(
+                context.getPipelineRunId(), llmAgentName, result.modelUsed(),
+                result.promptTokens(), result.completionTokens());
+        AgentRetryPolicy.failFastIfTruncated(result, llmAgentName, context.getPipelineRunId());
+        return result;
     }
 
     private static void backoffBeforeRetry(int attempt) {

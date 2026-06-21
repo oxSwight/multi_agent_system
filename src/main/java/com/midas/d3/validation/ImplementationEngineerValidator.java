@@ -3,6 +3,7 @@ package com.midas.d3.validation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.agent.implementation.SingleFileLLMResponse;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
@@ -54,6 +55,17 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         }
 
         return root;
+    }
+
+    public SingleFileLLMResponse validateSingleFileOutput(String rawJson, String expectedPath)
+            throws ValidationHookException {
+        SingleFileLLMResponse parsed = SingleFileLLMResponse.parse(rawJson, expectedPath, objectMapper);
+        List<String> violations = new java.util.ArrayList<>();
+        rejectPlaceholders(parsed.path(), parsed.content(), violations);
+        if (!violations.isEmpty()) {
+            throw new ValidationHookException(agentName(), stage(), violations);
+        }
+        return parsed;
     }
 
     public JsonNode validatePatchOutput(String rawJson, List<String> allowedPaths)
@@ -289,7 +301,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         }
     }
 
-    static String toFeatureId(String featureLabel) {
+    public static String toFeatureId(String featureLabel) {
         String normalized = featureLabel.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-");
         normalized = normalized.replaceAll("-+", "-");
         if (normalized.startsWith("-")) {

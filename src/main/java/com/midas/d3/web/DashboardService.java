@@ -28,6 +28,7 @@ public class DashboardService {
     private final MidasRunRepository          runRepository;
     private final MidasAgentLogRepository     agentLogRepository;
     private final MidasEvolutionLogRepository evolutionLogRepository;
+    private final FinOpsCostEstimator         finOpsCostEstimator;
 
     // ── Overview ─────────────────────────────────────────────────────────────
 
@@ -89,10 +90,10 @@ public class DashboardService {
                 .orElseThrow(() -> new RunNotFoundException("Pipeline run not found: " + runId));
 
         List<AgentLogDto> logs = agentLogRepository.findByRunId(runId).stream()
-                .map(AgentLogDto::from)
+                .map(entity -> AgentLogDto.from(entity, finOpsCostEstimator))
                 .toList();
 
-        return RunDetailsDto.from(run, logs);
+        return RunDetailsDto.from(run, logs, finOpsCostEstimator);
     }
 
     // ── Performance chart ────────────────────────────────────────────────────

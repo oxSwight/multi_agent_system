@@ -268,8 +268,8 @@ class ControllerValidatorTest {
         }
 
         @Test
-        @DisplayName("evidence not referencing manifest fails validateWithFeatureManifest")
-        void evidenceWithoutManifestReference_fails() throws Exception {
+        @DisplayName("evidence not referencing manifest is repaired with fallback validateWithFeatureManifest")
+        void evidenceWithoutManifestReference_appliesFallback() throws Exception {
             String json = """
                 {
                   "verdict": "PASS",
@@ -281,9 +281,28 @@ class ControllerValidatorTest {
                 }
                 """;
             JsonNode manifest = new JacksonConfig().objectMapper().readTree(MANIFEST);
-            assertThatThrownBy(() -> validator.validateWithFeatureManifest(json, manifest))
-                    .isInstanceOf(ValidationHookException.class)
-                    .hasMessageContaining("featureManifest");
+            JsonNode result = validator.validateWithFeatureManifest(json, manifest);
+            assertThat(result.get("coverage_matrix").get(0).get("evidence").asText())
+                    .isEqualTo("create-task");
+        }
+
+        @Test
+        @DisplayName("blank evidence is repaired with manifest fallback validateWithFeatureManifest")
+        void blankEvidence_appliesFallback() throws Exception {
+            String json = """
+                {
+                  "verdict": "PASS",
+                  "summary": "Covered.",
+                  "coverage_matrix": [
+                    {"requested_feature": "Create task", "status": "COVERED", "evidence": ""}
+                  ],
+                  "remediation_block": {"required_changes": [], "recommendations": []}
+                }
+                """;
+            JsonNode manifest = new JacksonConfig().objectMapper().readTree(MANIFEST);
+            JsonNode result = validator.validateWithFeatureManifest(json, manifest);
+            assertThat(result.get("coverage_matrix").get(0).get("evidence").asText())
+                    .isEqualTo("create-task");
         }
 
         @Test

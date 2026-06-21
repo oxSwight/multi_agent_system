@@ -59,6 +59,10 @@ public class MidasAgentLogEntity {
     @Column(name = "model_id", length = 100)
     private String modelId;
 
+    /** LLM finish reason from the last call in this invocation (e.g. STOP, MAX_TOKENS). */
+    @Column(name = "finish_reason", length = 50)
+    private String finishReason;
+
     /** Wall-clock execution time of {@code agent.execute()} in milliseconds. */
     @Column(name = "execution_time_ms", nullable = false)
     @Builder.Default

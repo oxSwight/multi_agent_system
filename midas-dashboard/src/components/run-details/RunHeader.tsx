@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { ArrowLeft, Archive, Hash } from 'lucide-react'
 import type { MidasRun } from '@/types'
-import { formatDateTime, formatTokens, formatDuration, pipelineDuration } from '@/lib/utils'
+import { formatDateTime, formatTokens, formatDuration, pipelineDuration, formatCostUsd } from '@/lib/utils'
 import StatusBadge from '@/components/dashboard/StatusBadge'
 
 interface RunHeaderProps {
@@ -61,6 +61,11 @@ export default function RunHeader({ run }: RunHeaderProps) {
             <span className="ml-1 text-slate-600">
               ({formatTokens(run.totalPromptTokens)} prompt + {formatTokens(run.totalCompletionTokens)} completion)
             </span>
+            {run.estimatedCostUsd != null && run.estimatedCostUsd > 0 && (
+              <span className="ml-2 text-slate-600">
+                ≈ <span className="font-mono text-slate-400">{formatCostUsd(run.estimatedCostUsd)}</span>
+              </span>
+            )}
           </span>
         )}
         {run.chatId && (

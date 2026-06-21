@@ -34,6 +34,12 @@ public final class ValidationHookException extends RuntimeException {
     public String getStage()           { return stage; }
     public List<String> getViolations(){ return violations; }
 
+    /** {@code true} when Jackson failed to parse the LLM output as JSON. */
+    public boolean isParseError() {
+        return violations.size() == 1
+                && violations.get(0).startsWith("JSON parse error:");
+    }
+
     private static String buildMessage(String agentName, String stage, List<String> violations) {
         StringBuilder sb = new StringBuilder();
         sb.append("Validation failed for agent [").append(agentName)

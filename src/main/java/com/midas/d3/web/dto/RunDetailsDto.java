@@ -1,6 +1,7 @@
 package com.midas.d3.web.dto;
 
 import com.midas.d3.persistence.entity.MidasRunEntity;
+import com.midas.d3.web.FinOpsCostEstimator;
 
 import java.time.Instant;
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.List;
  * @param completionTokens  aggregated completion token count for this run
  * @param createdAt         UTC timestamp of run creation
  * @param agentLogs         ordered (ASC by creation time) list of agent invocation logs
+ * @param estimatedCostUsd  approximate run cost in USD (null when no tokens recorded)
  */
 public record RunDetailsDto(
         String id,
@@ -27,10 +29,12 @@ public record RunDetailsDto(
         String artifactPath,
         int promptTokens,
         int completionTokens,
+        Double estimatedCostUsd,
         Instant createdAt,
         List<AgentLogDto> agentLogs
 ) {
-    public static RunDetailsDto from(MidasRunEntity entity, List<AgentLogDto> agentLogs) {
+    public static RunDetailsDto from(MidasRunEntity entity, List<AgentLogDto> agentLogs,
+                                     FinOpsCostEstimator costEstimator) {
         return new RunDetailsDto(
                 entity.getId(),
                 entity.getStatus(),
@@ -38,6 +42,7 @@ public record RunDetailsDto(
                 entity.getArtifactPath(),
                 entity.getTotalPromptTokens(),
                 entity.getTotalCompletionTokens(),
+                costEstimator.estimateCostUsd(entity.getTotalPromptTokens(), entity.getTotalCompletionTokens()),
                 entity.getCreatedAt(),
                 agentLogs
         );

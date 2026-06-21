@@ -23,6 +23,14 @@ public class NousResponse {
      *
      * @return non-empty Optional if content is present and non-blank; empty otherwise
      */
+    public Optional<String> extractFinishReason() {
+        if (choices == null || choices.isEmpty()) {
+            return Optional.empty();
+        }
+        String reason = choices.get(0).getFinishReason();
+        return (reason == null || reason.isBlank()) ? Optional.empty() : Optional.of(reason);
+    }
+
     public Optional<String> extractText() {
         if (choices == null || choices.isEmpty()) {
             return Optional.empty();
