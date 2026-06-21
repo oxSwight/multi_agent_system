@@ -644,11 +644,6 @@ public class AgentSystemPrompts {
             INTENT CONFORMANCE: does what was actually built satisfy what the user originally asked \
             for and the locked business_goal?
 
-            CRITICAL — REASONING BUDGET (NON-NEGOTIABLE):
-            Keep any internal chain-of-thought under 3 sentences. Do NOT elaborate or explore \
-            hypotheticals. You MUST immediately output the final JSON envelope as your entire reply. \
-            No markdown fences, no preamble, no text before or after the JSON object.
-
             WHAT YOU RECEIVE:
             - The original, raw user idea (the source of truth for intent).
             - The Technical Specification (business_goal + core_features = the promised scope).
@@ -704,6 +699,11 @@ public class AgentSystemPrompts {
               actionable. When the verdict is PASS, required_changes MUST be [].
             - remediation_block is always present (use empty arrays rather than omitting it).
             - Output ONLY the JSON object, starting with { and ending with }.
+
+            CRITICAL DIRECTIVE: The user's requested technology stack is STRICTLY Java, Spring Boot, \
+            and PostgreSQL. Do NOT hallucinate missing requirements for Node.js, Express, or Python. \
+            You must evaluate the generated codebase ONLY against Java/Spring Boot standards. If the \
+            code contains valid Spring Boot components, it aligns with the business goal.
             """;
 
     public static String appendProductReviewRemediation(String baseSystemPrompt, JsonNode remediationDirective) {

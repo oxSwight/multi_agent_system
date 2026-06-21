@@ -35,7 +35,7 @@ class NousRestClientTest {
                 .build());
 
         NousRestClient client = newClient(exchange, routingProperties(true, Map.of(
-                "ControllerAgent", "deepseek-r1:8b"
+                "ControllerAgent", "qwen2.5-coder:7b"
         )));
 
         LlmCallRequest request = LlmCallRequest.of(
@@ -48,12 +48,12 @@ class NousRestClientTest {
         LlmCallResult result = client.call(request);
 
         assertThat(result.text()).contains("\"verdict\":\"PASS\"");
-        assertThat(result.modelUsed()).isEqualTo("deepseek-r1:8b");
+        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:7b");
     }
 
     @Test
-    @DisplayName("Routes ControllerAgent to DeepSeek when routing is enabled")
-    void call_routingEnabled_controllerAgent_usesDeepSeek() {
+    @DisplayName("Routes ControllerAgent to Qwen when routing is enabled")
+    void call_routingEnabled_controllerAgent_usesQwen() {
         NousRestClient client = newClient(okExchange());
 
         LlmCallRequest request = LlmCallRequest.of(
@@ -62,18 +62,18 @@ class NousRestClientTest {
                 "system",
                 "user",
                 "run-routing-001",
-                "qwen2.5-coder:7b");
+                "deepseek-r1:8b");
 
         LlmCallResult result = client.call(request);
 
-        assertThat(result.modelUsed()).isEqualTo("deepseek-r1:8b");
+        assertThat(result.modelUsed()).isEqualTo("qwen2.5-coder:7b");
     }
 
     @Test
     @DisplayName("Falls back to default-model for unmapped agents when routing is enabled")
     void call_routingEnabled_unmappedAgent_usesDefaultModel() {
         NousRestClient client = newClient(okExchange(), routingProperties(true, Map.of(
-                "ControllerAgent", "deepseek-r1:8b"
+                "ControllerAgent", "qwen2.5-coder:7b"
         )));
 
         LlmCallRequest request = LlmCallRequest.of(
@@ -115,7 +115,7 @@ class NousRestClientTest {
 
     private NousRestClient newClient(ExchangeFunction exchange) {
         return newClient(exchange, routingProperties(true, Map.of(
-                "ControllerAgent", "deepseek-r1:8b",
+                "ControllerAgent", "qwen2.5-coder:7b",
                 "SystemAnalystAgent", "qwen2.5-coder:7b"
         )));
     }
