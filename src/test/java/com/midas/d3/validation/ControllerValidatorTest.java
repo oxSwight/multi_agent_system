@@ -30,6 +30,21 @@ class ControllerValidatorTest {
     class HappyPaths {
 
         @Test
+        @DisplayName("plain PASS verdict is accepted")
+        void plainPassVerdict_isValid() {
+            JsonNode node = validator.validate("PASS");
+            assertThat(node.get("verdict").asText()).isEqualTo("PASS");
+        }
+
+        @Test
+        @DisplayName("plain REJECT verdict is accepted with required_changes")
+        void plainRejectVerdict_isValid() {
+            JsonNode node = validator.validate("REJECT");
+            assertThat(node.get("verdict").asText()).isEqualTo("REJECT");
+            assertThat(node.get("remediation_block").get("required_changes").size()).isGreaterThan(0);
+        }
+
+        @Test
         @DisplayName("PASS verdict with empty remediation is valid")
         void pass_isValid() {
             String json = """

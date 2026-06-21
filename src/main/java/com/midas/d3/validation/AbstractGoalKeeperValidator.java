@@ -30,7 +30,7 @@ public abstract class AbstractGoalKeeperValidator implements GoalKeeperValidator
     // ── GoalKeeperValidator impl ─────────────────────────────────────────────
 
     @Override
-    public final JsonNode validate(String rawJson) throws ValidationHookException {
+    public JsonNode validate(String rawJson) throws ValidationHookException {
         // 1. Null / blank guard
         if (rawJson == null || rawJson.isBlank()) {
             throw new ValidationHookException(agentName(), stage(),

@@ -303,6 +303,28 @@ class GoalKeeperValidatorTest {
         }
 
         @Test
+        void validate_markdownExtensionPackage_noJsonRequired() {
+            String markdown = """
+                DEPLOYMENT_MODEL: BROWSER_EXTENSION_PACKAGE
+
+                ## Security Audit
+                - LOW: host_permissions scoped to required domains — OK
+                - MEDIUM: avoid innerHTML in content scripts
+
+                ## Release Artifacts
+                ```sh package.sh
+                #!/bin/bash
+                zip -r extension.zip manifest.json src/
+                ```
+                """;
+            JsonNode result = secOpsValidator.validate(markdown);
+            assertThat(result.get("deployment_model").asText()).isEqualTo("BROWSER_EXTENSION_PACKAGE");
+            assertThat(result.get("security_audit_report").size()).isGreaterThan(0);
+            assertThat(result.get("release_artifacts").get("package.sh").asText())
+                    .contains("extension.zip");
+        }
+
+        @Test
         void validate_containerizedWithoutDockerfile_throwsValidationHookException() {
             String json = """
                 {
