@@ -89,6 +89,11 @@ public class NousRestClient implements LlmClient {
                 String text = response.extractText()
                         .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
 
+                if (response.usedReasoningFallback()) {
+                    log.warn("[NousRestClient][{}] run=[{}] — content empty, using Ollama reasoning field ({} chars)",
+                            request.getAgentName(), request.getPipelineRunId(), text.length());
+                }
+
                 if (LlmCallResult.FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
                     log.warn("[NousRestClient][{}] run=[{}] — ответ обрезан (MAX_TOKENS), "
                                     + "retry бесполезен без уменьшения scope",

@@ -24,8 +24,36 @@ class NousRestClientTest {
             """;
 
     @Test
-    @DisplayName("Routes mapped reasoning agent to DeepSeek when routing is enabled")
-    void call_routingEnabled_mappedAgent_usesAgentModel() {
+    @DisplayName("Falls back to Ollama reasoning field when content is empty")
+    void call_emptyContent_usesReasoningField() {
+        String body = """
+                {"choices":[{"message":{"role":"assistant","content":"","reasoning":"{\\"verdict\\":\\"PASS\\"}"},"finish_reason":"stop"}]}
+                """;
+        ExchangeFunction exchange = request -> Mono.just(ClientResponse.create(HttpStatus.OK)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .body(body)
+                .build());
+
+        NousRestClient client = newClient(exchange, routingProperties(true, Map.of(
+                "ControllerAgent", "deepseek-r1:8b"
+        )));
+
+        LlmCallRequest request = LlmCallRequest.of(
+                MidasState.PRODUCT_REVIEW,
+                "ControllerAgent",
+                "system",
+                "user",
+                "run-reasoning-fallback");
+
+        LlmCallResult result = client.call(request);
+
+        assertThat(result.text()).contains("\"verdict\":\"PASS\"");
+        assertThat(result.modelUsed()).isEqualTo("deepseek-r1:8b");
+    }
+
+    @Test
+    @DisplayName("Routes ControllerAgent to DeepSeek when routing is enabled")
+    void call_routingEnabled_controllerAgent_usesDeepSeek() {
         NousRestClient client = newClient(okExchange());
 
         LlmCallRequest request = LlmCallRequest.of(
@@ -88,7 +116,7 @@ class NousRestClientTest {
     private NousRestClient newClient(ExchangeFunction exchange) {
         return newClient(exchange, routingProperties(true, Map.of(
                 "ControllerAgent", "deepseek-r1:8b",
-                "ImplementationEngineerAgent", "qwen2.5-coder:7b"
+                "SystemAnalystAgent", "qwen2.5-coder:7b"
         )));
     }
 

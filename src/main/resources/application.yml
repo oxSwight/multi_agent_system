@@ -87,14 +87,14 @@ midas:
       enabled: ${MIDAS_NOUS_ROUTING_ENABLED:true}
       default-model: ${MIDAS_NOUS_ROUTING_DEFAULT_MODEL:qwen2.5-coder:7b}
       agents:
-        # Reasoning agents (DeepSeek-R1)
-        SystemAnalystAgent: ${MIDAS_NOUS_MODEL_REASONING:deepseek-r1:8b}
-        SoftwareArchitectAgent: ${MIDAS_NOUS_MODEL_REASONING:deepseek-r1:8b}
-        ControllerAgent: ${MIDAS_NOUS_MODEL_REASONING:deepseek-r1:8b}
-        # Engineering / generation agents (Qwen-Coder)
+        # Generation agents (Qwen-Coder — fast, reliable JSON)
+        SystemAnalystAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
+        SoftwareArchitectAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
         ImplementationEngineerAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
         QaAutomationAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
         SecOpsAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:7b}
+        # Quality gate only (DeepSeek-R1 — reasoning for PRODUCT_REVIEW)
+        ControllerAgent: ${MIDAS_NOUS_MODEL_CONTROLLER:deepseek-r1:8b}
 
   # ── Evolution Agent (ContinuousImprovementService) ────────────────────────
   # cron: every hour on the hour; override for faster test cycles with fixedDelay

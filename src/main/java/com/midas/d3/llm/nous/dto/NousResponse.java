@@ -40,9 +40,32 @@ public class NousResponse {
             return Optional.empty();
         }
         String content = first.getMessage().getContent();
-        return (content == null || content.isBlank())
-                ? Optional.empty()
-                : Optional.of(content.strip());
+        if (content != null && !content.isBlank()) {
+            return Optional.of(content.strip());
+        }
+        // Ollama DeepSeek-R1 isolates chain-of-thought in reasoning; JSON may appear there when content is empty.
+        String reasoning = first.getMessage().getReasoning();
+        if (reasoning != null && !reasoning.isBlank()) {
+            return Optional.of(reasoning.strip());
+        }
+        return Optional.empty();
+    }
+
+    /** {@code true} when {@link #extractText()} would fall back to the Ollama {@code reasoning} field. */
+    public boolean usedReasoningFallback() {
+        if (choices == null || choices.isEmpty()) {
+            return false;
+        }
+        Choice first = choices.get(0);
+        if (first.getMessage() == null) {
+            return false;
+        }
+        String content = first.getMessage().getContent();
+        if (content != null && !content.isBlank()) {
+            return false;
+        }
+        String reasoning = first.getMessage().getReasoning();
+        return reasoning != null && !reasoning.isBlank();
     }
 
     // ── Inner DTOs ───────────────────────────────────────────────────────────
