@@ -375,8 +375,15 @@ public class CodeGenerationCoordinator {
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode envelope = requireImplementationValidator(validator)
-                        .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
+                JsonNode envelope;
+                if (HybridExecutionModel.isHybrid(context) && surface != null) {
+                    // In HYBRID fan-out each pass contains only a surface-local partial manifest.
+                    // Full core_features coverage is validated after client/server merge.
+                    envelope = requireImplementationValidator(validator).validate(sanitized);
+                } else {
+                    envelope = requireImplementationValidator(validator)
+                            .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
+                }
                 ImplementationOutputUnwrapper.UnwrappedEnvelope unwrapped =
                         ImplementationOutputUnwrapper.unwrap(envelope);
                 return new PassResult(unwrapped.sourceFiles(), unwrapped.featureManifest(), attempt,

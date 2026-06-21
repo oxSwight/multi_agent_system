@@ -203,24 +203,9 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             return;
         }
 
-        Set<String> manifestIds = new HashSet<>();
-        Set<String> manifestNames = new HashSet<>();
-        for (int i = 0; i < featureManifest.size(); i++) {
-            JsonNode entry = featureManifest.get(i);
-            if (!entry.isObject()) {
-                continue;
-            }
-            JsonNode idNode = entry.get("feature_id");
-            if (idNode != null && idNode.isTextual() && !idNode.asText().isBlank()) {
-                manifestIds.add(idNode.asText().strip());
-            }
-            JsonNode nameNode = entry.get("feature_name");
-            if (nameNode != null && nameNode.isTextual() && !nameNode.asText().isBlank()) {
-                manifestNames.add(nameNode.asText().strip());
-            }
-        }
-
         Set<String> requiredIds = new HashSet<>();
+        Set<String> requiredNames = new HashSet<>();
+        Set<String> derivedTextualIds = new HashSet<>();
         for (int i = 0; i < coreFeatures.size(); i++) {
             JsonNode featureNode = coreFeatures.get(i);
             if (featureNode.isTextual()) {
@@ -228,25 +213,63 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
                 if (featureLabel.isBlank()) {
                     continue;
                 }
-                requiredIds.add(toFeatureId(featureLabel));
+                requiredNames.add(featureLabel);
+                derivedTextualIds.add(toFeatureId(featureLabel));
             } else if (featureNode.isObject()) {
                 JsonNode idNode = featureNode.get("id");
                 if (idNode != null && idNode.isTextual() && !idNode.asText().isBlank()) {
                     requiredIds.add(idNode.asText().strip());
                 }
+                JsonNode nameNode = featureNode.get("name");
+                if (nameNode != null && nameNode.isTextual() && !nameNode.asText().isBlank()) {
+                    requiredNames.add(nameNode.asText().strip());
+                }
+            }
+        }
+
+        Set<String> matchedRequiredIds = new HashSet<>();
+        Set<String> matchedRequiredNames = new HashSet<>();
+        Set<String> matchedDerivedTextualIds = new HashSet<>();
+
+        for (int i = 0; i < featureManifest.size(); i++) {
+            JsonNode entry = featureManifest.get(i);
+            if (!entry.isObject()) {
+                continue;
+            }
+            String manifestId = "";
+            JsonNode idNode = entry.get("feature_id");
+            if (idNode != null && idNode.isTextual() && !idNode.asText().isBlank()) {
+                manifestId = idNode.asText().strip();
+            }
+            String manifestName = "";
+            JsonNode nameNode = entry.get("feature_name");
+            if (nameNode != null && nameNode.isTextual() && !nameNode.asText().isBlank()) {
+                manifestName = nameNode.asText().strip();
+            }
+
+            boolean matched = false;
+            if (!manifestId.isBlank() && requiredIds.contains(manifestId)) {
+                matchedRequiredIds.add(manifestId);
+                matched = true;
+            }
+            if (!manifestName.isBlank() && requiredNames.contains(manifestName)) {
+                matchedRequiredNames.add(manifestName);
+                matched = true;
+            }
+            if (!manifestId.isBlank() && derivedTextualIds.contains(manifestId)) {
+                matchedDerivedTextualIds.add(manifestId);
+                matched = true;
+            }
+
+            if (!matched && !manifestId.isBlank()) {
+                violations.add("feature_manifest feature_id [" + manifestId
+                        + "] does not match any core_features id.");
             }
         }
 
         for (String requiredId : requiredIds) {
-            if (!manifestIds.contains(requiredId)) {
+            if (!matchedRequiredIds.contains(requiredId)) {
                 violations.add("core_features id [" + requiredId + "] is missing from feature_manifest.");
-            }
-        }
-
-        for (String manifestId : manifestIds) {
-            if (!requiredIds.contains(manifestId)) {
-                violations.add("feature_manifest feature_id [" + manifestId
-                        + "] does not match any core_features id.");
             }
         }
 
@@ -260,7 +283,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
                 continue;
             }
             String expectedId = toFeatureId(featureLabel);
-            if (!manifestIds.contains(expectedId) && !manifestNames.contains(featureLabel)) {
+            if (!matchedDerivedTextualIds.contains(expectedId) && !matchedRequiredNames.contains(featureLabel)) {
                 violations.add("core_features [" + featureLabel + "] is not represented in feature_manifest.");
             }
         }

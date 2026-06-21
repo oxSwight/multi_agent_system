@@ -177,7 +177,7 @@ class ImplementationEngineerValidatorTest {
 
         assertThatThrownBy(() -> validator.validateWithTechnicalSpec(json, spec))
                 .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("delete-task");
+                .hasMessageContaining("Delete task");
     }
 
     @Test
@@ -237,5 +237,31 @@ class ImplementationEngineerValidatorTest {
         JsonNode result = validator.validateWithTechnicalSpec(json, spec);
 
         assertThat(result.get("feature_manifest").get(0).get("feature_id").asText()).isEqualTo("feat-001");
+    }
+
+    @Test
+    void validateWithTechnicalSpec_textCoreFeature_allowsDifferentIdWhenNameMatches() throws Exception {
+        String json = """
+                {
+                  "source_files": {
+                    "src/task.js": "export function createTask() { return true; }"
+                  },
+                  "feature_manifest": [
+                    {
+                      "feature_id": "custom-short-id",
+                      "feature_name": "Create task",
+                      "files": ["src/task.js"],
+                      "entry_points": ["createTask"]
+                    }
+                  ]
+                }
+                """;
+        JsonNode spec = objectMapper.readTree("""
+                {"core_features":["Create task"]}
+                """);
+
+        JsonNode result = validator.validateWithTechnicalSpec(json, spec);
+
+        assertThat(result.get("feature_manifest")).hasSize(1);
     }
 }
