@@ -54,6 +54,11 @@ midas:
   validation:
     max-retries: 3
 
+  finops:
+    # Approximate Gemini 2.5 Flash list prices (USD per 1M tokens) for dashboard estimates.
+    usd-per-million-prompt-tokens: ${MIDAS_FINOPS_USD_PER_M_PROMPT:0.075}
+    usd-per-million-completion-tokens: ${MIDAS_FINOPS_USD_PER_M_COMPLETION:0.30}
+
   # ── Gemini LLM (GeminiLlmClient — used by pipeline agents & Evolution Agent) ─
   llm:
     timeout-seconds: ${MIDAS_LLM_TIMEOUT_SECONDS:180}

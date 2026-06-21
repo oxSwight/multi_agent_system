@@ -1,12 +1,14 @@
 package com.midas.d3.agent.base;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.agent.AgentRetryPolicy;
 import com.midas.d3.agent.AgentSystemPrompts;
 import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
+import com.midas.d3.llm.LlmCallObservability;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
 import com.midas.d3.llm.LlmModelPolicy;
@@ -53,8 +55,8 @@ import java.util.Map;
 @Slf4j
 public abstract class BaseMidasAgent {
 
-    /** Maximum LLM call attempts per {@link #execute(MidasContext)} invocation. */
-    static final int MAX_AGENT_RETRIES = 3;
+    /** Maximum LLM call attempts per {@link #execute(MidasContext)} invocation (validation errors). */
+    static final int MAX_AGENT_RETRIES = AgentRetryPolicy.MAX_VALIDATION_ATTEMPTS;
 
     private static final Map<ContextReducer.AgentRole, MidasState> ROLE_TO_STATE =
             new EnumMap<>(ContextReducer.AgentRole.class);
@@ -141,6 +143,7 @@ public abstract class BaseMidasAgent {
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
         String modelUsed = "";
+        String lastFinishReason = "";
 
         for (int attempt = 1; attempt <= MAX_AGENT_RETRIES; attempt++) {
             String userMessage = (attempt == 1)
@@ -154,9 +157,17 @@ public abstract class BaseMidasAgent {
                 LlmCallResult llmResult = llmClient.call(
                         LlmCallRequest.of(stage, getAgentName(), effectiveSystemPrompt(context),
                                 userMessage, context.getPipelineRunId(), llmModelPolicy.resolve(stage)));
+                LlmCallObservability.logCallMetadata(
+                        context.getPipelineRunId(), getAgentName(), attempt, MAX_AGENT_RETRIES, llmResult);
+                LlmCallObservability.logFinOps(
+                        context.getPipelineRunId(), getAgentName(), llmResult.modelUsed(),
+                        llmResult.promptTokens(), llmResult.completionTokens());
+                AgentRetryPolicy.failFastIfTruncated(llmResult, getAgentName(), context.getPipelineRunId());
+
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
                 modelUsed = llmResult.modelUsed();
+                lastFinishReason = llmResult.finishReason();
                 String raw = llmResult.text();
 
                 // ── Human-in-the-Loop early-exit ─────────────────────────────
@@ -166,7 +177,8 @@ public abstract class BaseMidasAgent {
                 if (raw != null && raw.stripLeading().startsWith(AgentResult.NEED_INFO_PREFIX)) {
                     log.info("[{}] Analyst returned [NEED_INFO] on attempt {}/{} — pausing for user input.",
                             getAgentName(), attempt, MAX_AGENT_RETRIES);
-                    return new AgentResult(null, raw.strip(), attempt, totalPromptTokens, totalCompletionTokens, modelUsed);
+                    return new AgentResult(null, raw.strip(), attempt, totalPromptTokens, totalCompletionTokens,
+                            modelUsed, lastFinishReason);
                 }
 
                 String sanitized = JsonSanitizer.sanitize(raw);
@@ -178,12 +190,16 @@ public abstract class BaseMidasAgent {
                 JsonNode validated = validateAgentOutput(stage, sanitized, validator, context);
 
                 log.info("[{}] Attempt {}/{} — validation passed.", getAgentName(), attempt, MAX_AGENT_RETRIES);
-                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens, modelUsed);
+                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens,
+                        modelUsed, lastFinishReason);
 
             } catch (ValidationHookException e) {
-                lastError = String.join(" | ", e.getViolations());
+                lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
                 log.warn("[{}] Attempt {}/{} — GoalKeeper rejected output: {}",
                         getAgentName(), attempt, MAX_AGENT_RETRIES, lastError);
+                if (!AgentRetryPolicy.canRetry(e, attempt)) {
+                    break;
+                }
                 backoffBeforeRetry(attempt);
 
             } catch (LlmCallException e) {
@@ -294,7 +310,7 @@ public abstract class BaseMidasAgent {
                 + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + MAX_AGENT_RETRIES + ") ---\n"
                 + "Your previous response was rejected by the schema validator.\n"
                 + "Violations found:\n"
-                + error + "\n"
+                + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"
                 + "Fix ALL violations. Output ONLY the corrected JSON object.";
     }
 }

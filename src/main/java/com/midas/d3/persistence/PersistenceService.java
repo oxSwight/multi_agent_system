@@ -195,6 +195,19 @@ public class PersistenceService {
                                   int completionTokens,
                                   long executionTimeMs,
                                   boolean isError) {
+        logAgentExecution(runId, agentType, rawOutput, modelId, promptTokens, completionTokens,
+                executionTimeMs, isError, null);
+    }
+
+    public void logAgentExecution(String runId,
+                                  String agentType,
+                                  String rawOutput,
+                                  String modelId,
+                                  int promptTokens,
+                                  int completionTokens,
+                                  long executionTimeMs,
+                                  boolean isError,
+                                  String finishReason) {
         try {
             MidasRunEntity runRef = runRepository.getReferenceById(runId);
             MidasAgentLogEntity entry = MidasAgentLogEntity.builder()
@@ -202,6 +215,7 @@ public class PersistenceService {
                     .agentType(agentType)
                     .rawOutput(truncate(rawOutput, 10_000))
                     .modelId(modelId)
+                    .finishReason(finishReason)
                     .promptTokens(promptTokens)
                     .completionTokens(completionTokens)
                     .executionTimeMs(executionTimeMs)
@@ -210,16 +224,19 @@ public class PersistenceService {
             agentLogRepository.save(entry);
             if (promptTokens > 0 || completionTokens > 0) {
                 runRepository.incrementTokenTotals(runId, promptTokens, completionTokens, Instant.now());
+                log.info("[FinOps] run={} agent={} model={} prompt={} completion={} total={}",
+                        runId, agentType, modelId != null ? modelId : "-",
+                        promptTokens, completionTokens, promptTokens + completionTokens);
             }
-            log.debug("[PersistenceService] Logged agent [{}] execution for run [{}]: {}ms, error={}.",
-                    agentType, runId, executionTimeMs, isError);
+            log.debug("[PersistenceService] Logged agent [{}] execution for run [{}]: {}ms, error={}, finishReason={}.",
+                    agentType, runId, executionTimeMs, isError, finishReason);
         } catch (Exception ex) {
             log.warn("[PersistenceService] Failed to log agent [{}] for run [{}]: {}",
                     agentType, runId, ex.getMessage(), ex);
         }
     }
 
-    // ── Internal helpers ─────────────────────────────────────────────────────
+    // ── Internal helpers (legacy overload removed) ───────────────────────────
 
     /**
      * Truncates a string to {@code maxLength} characters to prevent oversized

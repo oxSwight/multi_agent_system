@@ -109,12 +109,22 @@ public class GeminiLlmClient implements LlmClient {
                     throw LlmCallException.emptyResponse(request.getAgentName());
                 }
 
+                String finishReason = response.extractFinishReason().orElse("");
+                String text = response.extractText()
+                        .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
+
+                if (LlmCallResult.FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
+                    log.warn("[GeminiLlmClient][{}] run=[{}] — ответ обрезан (MAX_TOKENS), "
+                                    + "retry бесполезен без уменьшения scope",
+                            request.getAgentName(), request.getPipelineRunId());
+                }
+
                 return LlmCallResult.of(
-                        response.extractText()
-                                .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName())),
+                        text,
                         effectiveModel,
                         response.extractPromptTokens(),
-                        response.extractCompletionTokens());
+                        response.extractCompletionTokens(),
+                        finishReason);
 
             } catch (LlmCallException e) {
                 throw e;

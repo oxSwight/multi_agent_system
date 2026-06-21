@@ -264,4 +264,32 @@ class ImplementationEngineerValidatorTest {
 
         assertThat(result.get("feature_manifest")).hasSize(1);
     }
+
+    @Test
+    void validateSingleFileOutput_validResponse_returnsParsed() throws Exception {
+        var parsed = validator.validateSingleFileOutput("""
+                {"path":"src/App.java","content":"public class App {}"}
+                """, "src/App.java");
+
+        assertThat(parsed.path()).isEqualTo("src/App.java");
+        assertThat(parsed.content()).contains("class App");
+    }
+
+    @Test
+    void validateSingleFileOutput_wrongPath_throws() {
+        assertThatThrownBy(() -> validator.validateSingleFileOutput("""
+                {"path":"other.java","content":"class X {}"}
+                """, "src/App.java"))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("does not match");
+    }
+
+    @Test
+    void validateSingleFileOutput_placeholderContent_throws() {
+        assertThatThrownBy(() -> validator.validateSingleFileOutput("""
+                {"path":"src/App.java","content":"// TODO implement"}
+                """, "src/App.java"))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("placeholder");
+    }
 }

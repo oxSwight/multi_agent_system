@@ -36,7 +36,7 @@ class PersistenceServiceTest {
         when(runRepository.getReferenceById(runId)).thenReturn(runRef);
 
         persistenceService.logAgentExecution(
-                runId, "SecOpsAgent", "{\"ok\":true}", "gemini-1.5-flash", 1200, 340, 5000L, false);
+                runId, "SecOpsAgent", "{\"ok\":true}", "gemini-1.5-flash", 1200, 340, 5000L, false, "STOP");
 
         ArgumentCaptor<MidasAgentLogEntity> logCaptor = ArgumentCaptor.forClass(MidasAgentLogEntity.class);
         verify(agentLogRepository).save(logCaptor.capture());
@@ -44,6 +44,7 @@ class PersistenceServiceTest {
         assertThat(saved.getPromptTokens()).isEqualTo(1200);
         assertThat(saved.getCompletionTokens()).isEqualTo(340);
         assertThat(saved.getModelId()).isEqualTo("gemini-1.5-flash");
+        assertThat(saved.getFinishReason()).isEqualTo("STOP");
 
         verify(runRepository).incrementTokenTotals(eq(runId), eq(1200), eq(340), any());
     }

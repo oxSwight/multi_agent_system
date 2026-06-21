@@ -79,7 +79,8 @@ class AgentDispatcherTest {
                 eq(1500),
                 eq(420),
                 anyLong(),
-                eq(false));
+                eq(false),
+                eq(""));
         assertThat(modelIdCaptor.getValue()).isEqualTo("gemini-1.5-flash");
         verify(machine).sendEvent(any(Mono.class));
     }

@@ -271,31 +271,20 @@ public class AgentSystemPrompts {
             Step 1: Read architecture (tech_stack, components, file_layout) and the spec's core_features
                     and edge_cases. Map each feature to concrete code and record which files implement it.
             Step 2: Write each complete file with all imports/exports and real logic.
-            Step 3: Output ONLY a valid JSON envelope with source_files and feature_manifest.
+            Step 3: Output ONLY a single-file JSON object for the TARGET FILE requested in the user message.
 
-            REQUIRED JSON SCHEMA:
+            REQUIRED JSON SCHEMA (one file per response):
             {
-              "source_files": {
-                "<relative/file/path.ext>": "<complete file contents>"
-              },
-              "feature_manifest": [
-                {
-                  "feature_id": "<stable-kebab-case-id matching the core feature>",
-                  "feature_name": "<exact core_features label from the technical spec>",
-                  "files": ["<relative/file/path.ext>"],
-                  "entry_points": ["<function, class, or handler name>"]
-                }
-              ]
+              "path": "<exact relative path from TARGET FILE — must match exactly>",
+              "content": "<complete file contents as a single escaped string>"
             }
 
             GUARDRAILS:
-            - source_files keys MUST match architecture.file_layout and tech_stack
-              (.js/.ts/manifest.json for an extension; .java only for a Java backend).
-            - source_files must have at least 1 entry; every value must be complete, non-blank source with no placeholders.
-            - feature_manifest must contain one entry per core_features item from the technical spec.
-            - Every path listed in feature_manifest[].files MUST exist as a key in source_files.
-            - entry_points must name real symbols present in the listed files.
-            - Implement all core_features and the documented edge_case solutions.
+            - Generate ONLY the TARGET FILE path — do not emit other paths or a multi-file envelope.
+            - path MUST exactly match the TARGET FILE from the user message.
+            - content must be complete, non-blank source with no placeholders.
+            - Honor architecture.file_layout and tech_stack (.js/.ts/manifest.json for an extension; .java for Java).
+            - Implement all core_features and edge_case solutions across the full file_layout (one file per call).
             - The JSON MUST be complete and properly closed — never truncate mid-string.
             - Output ONLY the JSON object.
             """;
@@ -360,29 +349,20 @@ public class AgentSystemPrompts {
             Step 1: Read the sliced architecture (client components + file_layout) and core_features \
                     that apply to the client surface.
             Step 2: Write each complete client file with real logic and correct imports/exports.
-            Step 3: Output ONLY a valid JSON envelope with source_files and a partial feature_manifest \
-                    covering ONLY the client-relevant core_features for this pass.
+            Step 3: Output ONLY a single-file JSON object for the TARGET FILE requested in the user message.
 
-            REQUIRED JSON SCHEMA:
+            REQUIRED JSON SCHEMA (one file per response):
             {
-              "source_files": {
-                "<client/relative/file/path.ext>": "<complete file contents>"
-              },
-              "feature_manifest": [
-                {
-                  "feature_id": "<stable-kebab-case-id>",
-                  "feature_name": "<exact client-relevant core_features label>",
-                  "files": ["<client/relative/file/path.ext>"],
-                  "entry_points": ["<function, class, or handler name>"]
-                }
-              ]
+              "path": "<exact client path from TARGET FILE — must match exactly>",
+              "content": "<complete file contents as a single escaped string>"
             }
 
             GUARDRAILS:
-            - source_files must have at least 1 entry; every value must be non-blank with no placeholders.
-            - feature_manifest must list ONLY client-surface features implemented in this pass.
-            - Every path in feature_manifest[].files MUST exist as a key in source_files.
+            - Generate ONLY the TARGET FILE path — do not emit server paths or a multi-file envelope.
+            - path MUST exactly match the TARGET FILE from the user message.
+            - content must be non-blank with no placeholders.
             - Paths MUST come from architecture.file_layout — do not invent server-side paths.
+            - feature_manifest is assembled by the pipeline — do NOT include it in your response.
             - Output ONLY the JSON object.
             """;
 
@@ -410,29 +390,20 @@ public class AgentSystemPrompts {
             Step 1: Read the sliced architecture (server components, file_layout, api_contracts, schema) \
                     and core_features that require server-side execution.
             Step 2: Write each complete server file with real logic.
-            Step 3: Output ONLY a valid JSON envelope with source_files and a partial feature_manifest \
-                    covering ONLY the server-relevant core_features for this pass.
+            Step 3: Output ONLY a single-file JSON object for the TARGET FILE requested in the user message.
 
-            REQUIRED JSON SCHEMA:
+            REQUIRED JSON SCHEMA (one file per response):
             {
-              "source_files": {
-                "<server/relative/file/path.ext>": "<complete file contents>"
-              },
-              "feature_manifest": [
-                {
-                  "feature_id": "<stable-kebab-case-id>",
-                  "feature_name": "<exact server-relevant core_features label>",
-                  "files": ["<server/relative/file/path.ext>"],
-                  "entry_points": ["<function, class, or handler name>"]
-                }
-              ]
+              "path": "<exact server path from TARGET FILE — must match exactly>",
+              "content": "<complete file contents as a single escaped string>"
             }
 
             GUARDRAILS:
-            - source_files must have at least 1 entry; every value must be non-blank with no placeholders.
-            - feature_manifest must list ONLY server-surface features implemented in this pass.
-            - Every path in feature_manifest[].files MUST exist as a key in source_files.
+            - Generate ONLY the TARGET FILE path — do not emit client paths or a multi-file envelope.
+            - path MUST exactly match the TARGET FILE from the user message.
+            - content must be non-blank with no placeholders.
             - Paths MUST come from architecture.file_layout — do not invent client-side paths.
+            - feature_manifest is assembled by the pipeline — do NOT include it in your response.
             - Output ONLY the JSON object.
             """;
 

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown, AlertTriangle, Clock, Zap } from 'lucide-react'
 import type { MidasAgentLog } from '@/types'
-import { formatDuration, formatTokens, agentDisplayName } from '@/lib/utils'
+import { formatDuration, formatTokens, agentDisplayName, formatCostUsd } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 interface AgentLogCardProps {
@@ -159,9 +159,18 @@ export default function AgentLogCard({ log, defaultOpen = false }: AgentLogCardP
         <div className="border-t border-[#1e1e3a] px-5 pb-5 pt-4">
           {/* Token breakdown */}
           {totalTokens > 0 && (
-            <div className="mb-3 flex gap-4 text-xs text-slate-500">
+            <div className="mb-3 flex flex-wrap gap-4 text-xs text-slate-500">
               <span>Prompt: <span className="font-mono text-slate-400">{formatTokens(log.promptTokens)}</span></span>
               <span>Completion: <span className="font-mono text-slate-400">{formatTokens(log.completionTokens)}</span></span>
+              {log.modelId && (
+                <span>Model: <span className="font-mono text-slate-400">{log.modelId}</span></span>
+              )}
+              {log.finishReason && (
+                <span>Finish: <span className="font-mono text-slate-400">{log.finishReason}</span></span>
+              )}
+              {log.estimatedCostUsd != null && log.estimatedCostUsd > 0 && (
+                <span>Cost: <span className="font-mono text-slate-400">{formatCostUsd(log.estimatedCostUsd)}</span></span>
+              )}
             </div>
           )}
 

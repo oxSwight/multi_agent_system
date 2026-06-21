@@ -71,13 +71,15 @@ class DashboardControllerTest {
     );
 
     private static final List<AgentLogDto> AGENT_LOGS = List.of(
-            new AgentLogDto("SystemAnalystAgent", "{\"business_goal\":\"test\"}", 1400L, 80, 40, "gemini-1.5-flash", false),
-            new AgentLogDto("ImplementationEngineerAgent", "{\"code\":\"...\"}", 2600L, 120, 60, "gemini-2.5-flash", false)
+            new AgentLogDto("SystemAnalystAgent", "{\"business_goal\":\"test\"}", 1400L, 80, 40,
+                    "gemini-1.5-flash", "STOP", 0.000012, false),
+            new AgentLogDto("ImplementationEngineerAgent", "{\"code\":\"...\"}", 2600L, 120, 60,
+                    "gemini-2.5-flash", "STOP", 0.000027, false)
     );
 
     private static final RunDetailsDto DETAILS =
             new RunDetailsDto(RUN_ID, "COMPLETED", "Build a REST API",
-                    "/artifacts/run.zip", 100, 50, FIXED_NOW, AGENT_LOGS);
+                    "/artifacts/run.zip", 100, 50, 0.000039, FIXED_NOW, AGENT_LOGS);
 
     private static final List<AgentTimeDistributionDto> PERF_STATS = List.of(
             new AgentTimeDistributionDto("ImplementationEngineerAgent", 2600L),
@@ -187,6 +189,9 @@ class DashboardControllerTest {
                     .andExpect(jsonPath("$.agentLogs", hasSize(2)))
                     .andExpect(jsonPath("$.agentLogs[0].agentType").value("SystemAnalystAgent"))
                     .andExpect(jsonPath("$.agentLogs[0].executionTimeMs").value(1400))
+                    .andExpect(jsonPath("$.agentLogs[0].finishReason").value("STOP"))
+                    .andExpect(jsonPath("$.agentLogs[0].estimatedCostUsd").value(0.000012))
+                    .andExpect(jsonPath("$.estimatedCostUsd").value(0.000039))
                     .andExpect(jsonPath("$.agentLogs[0].isError").value(false))
                     .andExpect(jsonPath("$.agentLogs[1].agentType").value("ImplementationEngineerAgent"));
         }

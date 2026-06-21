@@ -21,6 +21,13 @@ export function formatTokens(n: number): string {
   return n.toLocaleString('ru-RU')
 }
 
+/** Format approximate USD cost for FinOps display. */
+export function formatCostUsd(usd: number): string {
+  if (usd < 0.01) return `$${usd.toFixed(6)}`
+  if (usd < 1) return `$${usd.toFixed(4)}`
+  return `$${usd.toFixed(2)}`
+}
+
 /** Shorten a UUID to the first 8 chars for display: "a1b2c3d4-..." → "a1b2c3d4" */
 export function shortId(id: string): string {
   return id.substring(0, 8)

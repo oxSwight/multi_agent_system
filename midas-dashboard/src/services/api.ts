@@ -668,7 +668,63 @@ export async function fetchRunDetail(runId: string): Promise<RunDetail | null> {
       : generateSyntheticLogs(runId, run.status === 'COMPLETED' ? 6 : 3, run.createdAt)
     : []
   const mock: RunDetail | null = run ? { run, agentLogs: mockLogs } : null
-  return apiFetch(`/runs/${runId}`, mock)
+
+  const raw = await apiFetch<RunDetailsApiDto | null>(`/runs/${runId}`, null)
+  if (!raw) return mock
+
+  return mapRunDetailsApiToRunDetail(raw)
+}
+
+/** Flat DTO returned by GET /api/v1/dashboard/runs/{runId}. */
+interface RunDetailsApiDto {
+  id: string
+  status: string
+  rawUserIdea: string
+  artifactPath: string | null
+  promptTokens: number
+  completionTokens: number
+  estimatedCostUsd: number | null
+  createdAt: string
+  agentLogs: Array<{
+    agentType: string
+    rawOutput: string | null
+    executionTimeMs: number
+    promptTokens: number
+    completionTokens: number
+    modelId: string | null
+    finishReason: string | null
+    estimatedCostUsd: number | null
+    isError: boolean
+  }>
+}
+
+function mapRunDetailsApiToRunDetail(dto: RunDetailsApiDto): RunDetail {
+  return {
+    run: {
+      id: dto.id,
+      rawUserIdea: dto.rawUserIdea,
+      status: dto.status as RunDetail['run']['status'],
+      artifactPath: dto.artifactPath,
+      totalPromptTokens: dto.promptTokens,
+      totalCompletionTokens: dto.completionTokens,
+      estimatedCostUsd: dto.estimatedCostUsd,
+      createdAt: dto.createdAt,
+    },
+    agentLogs: dto.agentLogs.map((log, idx) => ({
+      id: `${dto.id}-log-${idx}`,
+      runId: dto.id,
+      agentType: log.agentType,
+      rawOutput: log.rawOutput,
+      promptTokens: log.promptTokens,
+      completionTokens: log.completionTokens,
+      modelId: log.modelId,
+      finishReason: log.finishReason,
+      estimatedCostUsd: log.estimatedCostUsd,
+      executionTimeMs: log.executionTimeMs,
+      isError: log.isError,
+      createdAt: dto.createdAt,
+    })),
+  }
 }
 
 export async function fetchPerformanceStats(): Promise<AgentPerformanceStat[]> {
