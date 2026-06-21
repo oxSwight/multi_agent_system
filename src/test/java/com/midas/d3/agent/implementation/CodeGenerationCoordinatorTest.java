@@ -14,7 +14,7 @@ import com.midas.d3.llm.LlmClient;
 import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
-import com.midas.d3.validation.GoalKeeperValidator;
+import com.midas.d3.validation.FeatureManifestValidator;
 import com.midas.d3.validation.ImplementationEngineerValidator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,10 +38,60 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.atLeast;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("CodeGenerationCoordinator")
 class CodeGenerationCoordinatorTest {
+
+    private static final String SERVER_ENVELOPE = """
+            {
+              "source_files": {
+                "src/main/java/com/example/App.java": "public class App {}"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "app",
+                  "feature_name": "App",
+                  "files": ["src/main/java/com/example/App.java"],
+                  "entry_points": ["App"]
+                }
+              ]
+            }
+            """;
+
+    private static final String CLIENT_ENVELOPE = """
+            {
+              "source_files": {
+                "manifest.json": "{}",
+                "src/popup.ts": "export const ok = true;"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "popup-ui",
+                  "feature_name": "Popup UI",
+                  "files": ["src/popup.ts"],
+                  "entry_points": ["ok"]
+                }
+              ]
+            }
+            """;
+
+    private static final String CLI_ENVELOPE = """
+            {
+              "source_files": {
+                "cmd/main.go": "package main"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "cli-main",
+                  "feature_name": "CLI main",
+                  "files": ["cmd/main.go"],
+                  "entry_points": ["main"]
+                }
+              ]
+            }
+            """;
 
     @Mock private ContextReducer contextReducer;
     @Mock private LlmClient llmClient;
@@ -56,13 +106,13 @@ class CodeGenerationCoordinatorTest {
     @BeforeEach
     void setUp() {
         objectMapper = new JacksonConfig().objectMapper();
-        validator = new ImplementationEngineerValidator(objectMapper);
+        validator = new ImplementationEngineerValidator(objectMapper, new FeatureManifestValidator());
         agentTaskExecutor = Executors.newFixedThreadPool(2);
         coordinator = new CodeGenerationCoordinator(
                 contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
         when(validatorRegistry.getValidator(MidasState.CODE_GENERATION))
                 .thenReturn(Optional.of(validator));
-        when(llmModelPolicy.resolve(MidasState.CODE_GENERATION)).thenReturn("gemini-1.5-pro");
+        when(llmModelPolicy.resolve(MidasState.CODE_GENERATION)).thenReturn("gemini-2.5-flash");
     }
 
     @AfterEach
@@ -80,9 +130,7 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-001", "IMPLEMENTATION_ENGINEER_SERVER"));
 
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"src/main/java/com/example/App.java":"public class App {}"}
-                """));
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -90,9 +138,10 @@ class CodeGenerationCoordinatorTest {
         verify(llmClient, times(1)).call(captor.capture());
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT);
-        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-1.5-pro");
+        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-2.5-flash");
         verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER));
-        assertThat(result.validatedOutput().has("src/main/java/com/example/App.java")).isTrue();
+        assertThat(result.validatedOutput().get("source_files").has("src/main/java/com/example/App.java")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
         assertThat(result.attemptsUsed()).isEqualTo(1);
     }
 
@@ -106,9 +155,7 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
                 .thenReturn(view("run-client", "IMPLEMENTATION_ENGINEER_CLIENT"));
 
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"manifest.json":"{}", "src/popup.ts":"export const ok = true;"}
-                """));
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -117,7 +164,8 @@ class CodeGenerationCoordinatorTest {
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT);
         verify(contextReducer).reduceImplementationPass(eq(ctx), eq(ImplementationSurface.CLIENT));
-        assertThat(result.validatedOutput().has("manifest.json")).isTrue();
+        assertThat(result.validatedOutput().get("source_files").has("manifest.json")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
         assertThat(result.attemptsUsed()).isEqualTo(1);
     }
 
@@ -130,9 +178,7 @@ class CodeGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
         stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"cmd/main.go":"package main"}
-                """));
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -141,12 +187,13 @@ class CodeGenerationCoordinatorTest {
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
         verify(contextReducer).reduce(any(), eq(ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER));
-        assertThat(result.validatedOutput().has("cmd/main.go")).isTrue();
+        assertThat(result.validatedOutput().get("source_files").has("cmd/main.go")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
         assertThat(result.attemptsUsed()).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("HYBRID model executes client and server passes then merges outputs")
+    @DisplayName("HYBRID model executes client and server passes then merges outputs and manifests")
     void execute_hybrid_fanOut_mergesBothPasses() throws Exception {
         var spec = objectMapper.readTree("""
                 {"runtime_environment":{"execution_model":"HYBRID"}}
@@ -164,16 +211,17 @@ class CodeGenerationCoordinatorTest {
                 .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
 
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText("{\"manifest.json\":\"{}\", \"src/popup.ts\":\"export const ok = true;\"}"));
+                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn(LlmCallResult.ofText("{\"src/main/java/com/example/App.java\":\"public class App {}\"}"));
+                .thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
 
         AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
 
         verify(llmClient, times(2)).call(any(LlmCallRequest.class));
-        assertThat(result.validatedOutput().size()).isEqualTo(3);
-        assertThat(result.validatedOutput().has("manifest.json")).isTrue();
-        assertThat(result.validatedOutput().has("src/main/java/com/example/App.java")).isTrue();
+        assertThat(result.validatedOutput().get("source_files").size()).isEqualTo(3);
+        assertThat(result.validatedOutput().get("source_files").has("manifest.json")).isTrue();
+        assertThat(result.validatedOutput().get("source_files").has("src/main/java/com/example/App.java")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(2);
         assertThat(result.attemptsUsed()).isEqualTo(2);
     }
 
@@ -190,9 +238,9 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid", "IMPLEMENTATION_ENGINEER_SERVER"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText("{\"manifest.json\":\"{}\"}"));
+                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn(LlmCallResult.ofText("{\"App.java\":\"public class App {}\"}"));
+                .thenReturn(LlmCallResult.ofText(SERVER_ENVELOPE));
 
         coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -218,7 +266,7 @@ class CodeGenerationCoordinatorTest {
         when(contextReducer.reduceImplementationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
                 .thenReturn(view("run-hybrid-fail", "IMPLEMENTATION_ENGINEER_SERVER"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText("{\"manifest.json\":\"{}\"}"));
+                .thenReturn(LlmCallResult.ofText(CLIENT_ENVELOPE));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
                 .thenThrow(LlmCallException.emptyResponse("ImplementationEngineerAgentServer"));
 
@@ -240,9 +288,7 @@ class CodeGenerationCoordinatorTest {
                 .withRemediationDirective(directive);
         stubImplementationView("run-remediate", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"cmd/main.go":"package main"}
-                """));
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
 
         coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -264,9 +310,7 @@ class CodeGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
         stubImplementationView("run-cli", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
 
-        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"cmd/main.go":"package main"}
-                """));
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
 
         coordinator.execute(ctx, "ImplementationEngineerAgent");
 
@@ -274,6 +318,119 @@ class CodeGenerationCoordinatorTest {
         verify(llmClient, times(1)).call(captor.capture());
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT);
+    }
+
+    @Test
+    @DisplayName("SURGICAL_PATCH merges delta into baseline and uses patch prompt")
+    void execute_surgicalPatch_mergesBaselineAndUsesPatchPrompt() throws Exception {
+        var spec = objectMapper.readTree("""
+                {
+                  "runtime_environment":{"execution_model":"CLI"},
+                  "core_features":["CLI main"]
+                }
+                """);
+        var baselineSource = objectMapper.readTree("""
+                {
+                  "cmd/main.go": "package main\\nfunc main() {}",
+                  "cmd/util.go": "package main\\nfunc helper() {}"
+                }
+                """);
+        var manifest = objectMapper.readTree("""
+                [{
+                  "feature_id":"cli-main",
+                  "feature_name":"CLI main",
+                  "files":["cmd/main.go"],
+                  "entry_points":["main"]
+                }]
+                """);
+        var directive = objectMapper.readTree("""
+                {
+                  "source_verdict":"REJECT",
+                  "remediation_mode":"SURGICAL_PATCH",
+                  "affected_paths":["cmd/main.go"],
+                  "required_changes":["Add export flag"]
+                }
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-patch")
+                .withTechnicalSpec(spec)
+                .withGeneratedSourceCode(baselineSource)
+                .withFeatureManifest(manifest)
+                .withRemediationDirective(directive);
+
+        when(contextReducer.reducePatchImplementationPass(eq(ctx), eq(java.util.List.of("cmd/main.go"))))
+                .thenReturn(view("run-patch", "IMPLEMENTATION_ENGINEER_PATCH"));
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
+                {
+                  "source_files": {
+                    "cmd/main.go": "package main\\nfunc main() { export() }\\nfunc export() {}"
+                  }
+                }
+                """));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .startsWith(AgentSystemPrompts.IMPLEMENTATION_PATCH_PROMPT)
+                .contains("PATCH SCOPE (SURGICAL_PATCH mode)")
+                .contains("cmd/main.go");
+        assertThat(result.validatedOutput().get("source_files").get("cmd/main.go").asText()).contains("export");
+        assertThat(result.validatedOutput().get("source_files").get("cmd/util.go").asText()).contains("helper");
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("SURGICAL_PATCH falls back to full regeneration when merged envelope is rejected")
+    void execute_surgicalPatch_validationFailure_fallsBackToFullRegen() throws Exception {
+        var spec = objectMapper.readTree("""
+                {
+                  "runtime_environment":{"execution_model":"CLI"},
+                  "core_features":["CLI main"]
+                }
+                """);
+        var baselineSource = objectMapper.readTree("""
+                {"cmd/main.go":"package main"}
+                """);
+        var manifest = objectMapper.readTree("""
+                [{
+                  "feature_id":"cli-main",
+                  "feature_name":"CLI main",
+                  "files":["cmd/main.go"],
+                  "entry_points":["main"]
+                }]
+                """);
+        var directive = objectMapper.readTree("""
+                {
+                  "source_verdict":"REJECT",
+                  "remediation_mode":"SURGICAL_PATCH",
+                  "affected_paths":["cmd/main.go"],
+                  "required_changes":["Fix main"]
+                }
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-patch-fallback")
+                .withTechnicalSpec(spec)
+                .withGeneratedSourceCode(baselineSource)
+                .withFeatureManifest(manifest)
+                .withRemediationDirective(directive);
+
+        when(contextReducer.reducePatchImplementationPass(eq(ctx), eq(java.util.List.of("cmd/main.go"))))
+                .thenReturn(view("run-patch-fallback", "IMPLEMENTATION_ENGINEER_PATCH"));
+        stubImplementationView("run-patch-fallback", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER);
+
+        when(llmClient.call(argThat(req -> req != null && req.getSystemPrompt().contains("SURGICAL PATCH on an existing codebase"))))
+                .thenReturn(LlmCallResult.ofText("""
+                        {"source_files":{"cmd/main.go":"// TODO fix"}}
+                        """));
+        when(llmClient.call(argThat(req -> req != null && req.getSystemPrompt().startsWith(AgentSystemPrompts.IMPLEMENTATION_ENGINEER_PROMPT))))
+                .thenReturn(LlmCallResult.ofText(CLI_ENVELOPE));
+
+        AgentResult result = coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        verify(llmClient, atLeast(2)).call(any(LlmCallRequest.class));
+        assertThat(result.validatedOutput().get("source_files").has("cmd/main.go")).isTrue();
+        assertThat(result.validatedOutput().get("feature_manifest")).hasSize(1);
     }
 
     private void stubImplementationView(String runId, ContextReducer.AgentRole role) {

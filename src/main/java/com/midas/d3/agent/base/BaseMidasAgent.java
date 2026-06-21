@@ -13,11 +13,14 @@ import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
+import com.midas.d3.statemachine.remediation.RemediationDirectiveSupport;
+import com.midas.d3.validation.ControllerValidator;
 import com.midas.d3.validation.GoalKeeperValidator;
 import com.midas.d3.validation.ValidationHookException;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -126,7 +129,7 @@ public abstract class BaseMidasAgent {
 
         MidasState stage = resolveStage();
 
-        AgentContextView view = contextReducer.reduce(context, getRole());
+        AgentContextView view = reduceAgentContext(context);
         String baseUserMessage = buildUserMessage(view);
 
         GoalKeeperValidator validator = validatorRegistry.getValidator(stage)
@@ -172,7 +175,7 @@ public abstract class BaseMidasAgent {
                         getAgentName(), attempt, MAX_AGENT_RETRIES,
                         sanitized == null ? 0 : sanitized.length());
 
-                JsonNode validated = validator.validate(sanitized);
+                JsonNode validated = validateAgentOutput(stage, sanitized, validator, context);
 
                 log.info("[{}] Attempt {}/{} — validation passed.", getAgentName(), attempt, MAX_AGENT_RETRIES);
                 return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens, modelUsed);
@@ -214,10 +217,35 @@ public abstract class BaseMidasAgent {
         return stage;
     }
 
+    private JsonNode validateAgentOutput(MidasState stage,
+                                         String sanitized,
+                                         GoalKeeperValidator validator,
+                                         MidasContext context) throws ValidationHookException {
+        if (stage == MidasState.PRODUCT_REVIEW && validator instanceof ControllerValidator controllerValidator) {
+            return controllerValidator.validateWithFeatureManifest(sanitized, context.getFeatureManifest());
+        }
+        return validator.validate(sanitized);
+    }
+
+    protected AgentContextView reduceAgentContext(MidasContext context) {
+        if (getRole() == ContextReducer.AgentRole.SECOPS_ENGINEER
+                && RemediationDirectiveSupport.isSurgicalPatch(context.getRemediationDirective())) {
+            List<String> affectedPaths = RemediationDirectiveSupport.affectedPaths(context.getRemediationDirective());
+            return contextReducer.reducePatchSecOpsPass(
+                    context,
+                    affectedPaths,
+                    context.getGeneratedSourceCode(),
+                    context.getGeneratedTests());
+        }
+        return contextReducer.reduce(context, getRole());
+    }
+
     private String effectiveSystemPrompt(MidasContext context) {
         if (getRole() == ContextReducer.AgentRole.SECOPS_ENGINEER) {
-            return AgentSystemPrompts.appendProductReviewRemediation(
-                    getSystemPrompt(), context.getRemediationDirective());
+            String basePrompt = RemediationDirectiveSupport.isSurgicalPatch(context.getRemediationDirective())
+                    ? AgentSystemPrompts.SECOPS_DELTA_PROMPT
+                    : getSystemPrompt();
+            return AgentSystemPrompts.appendProductReviewRemediation(basePrompt, context.getRemediationDirective());
         }
         return getSystemPrompt();
     }

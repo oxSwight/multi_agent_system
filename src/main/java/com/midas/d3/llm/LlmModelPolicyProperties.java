@@ -14,7 +14,7 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "midas.llm")
 public class LlmModelPolicyProperties {
 
-    private String model = "gemini-1.5-flash";
+    private String model = "gemini-2.5-flash";
 
     private Map<String, String> stageModels = new LinkedHashMap<>();
 }

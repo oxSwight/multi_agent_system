@@ -19,12 +19,17 @@ import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
+import com.midas.d3.validation.ImplementationEngineerValidator;
+import com.midas.d3.validation.ImplementationOutputUnwrapper;
 import com.midas.d3.validation.ValidationHookException;
+import com.midas.d3.statemachine.remediation.RemediationDirectiveSupport;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
@@ -68,6 +73,189 @@ public class CodeGenerationCoordinator {
                 .orElseThrow(() -> new IllegalStateException(
                         "No GoalKeeperValidator registered for CODE_GENERATION."));
 
+        if (RemediationDirectiveSupport.isSurgicalPatch(context.getRemediationDirective())) {
+            return executeSurgicalPatchWithFallback(context, agentName, validator);
+        }
+        return executeFullGeneration(context, agentName, validator);
+    }
+
+    private AgentResult executeSurgicalPatchWithFallback(MidasContext context,
+                                                         String agentName,
+                                                         GoalKeeperValidator validator) {
+        try {
+            return executeSurgicalPatch(context, agentName, validator);
+        } catch (PatchFallbackException e) {
+            log.warn("[CodeGenerationCoordinator] Surgical patch failed for run [{}] — {}. Falling back to full regeneration.",
+                    context.getPipelineRunId(), e.getMessage());
+            return executeFullGeneration(context, agentName, validator);
+        }
+    }
+
+    private AgentResult executeSurgicalPatch(MidasContext context,
+                                             String agentName,
+                                             GoalKeeperValidator validator) {
+        List<String> affectedPaths = RemediationDirectiveSupport.affectedPaths(context.getRemediationDirective());
+        JsonNode baselineSource = context.getGeneratedSourceCode();
+        JsonNode baselineManifest = context.getFeatureManifest();
+
+        if (affectedPaths.isEmpty() || baselineSource == null || baselineSource.isNull()
+                || baselineManifest == null || baselineManifest.isNull()) {
+            throw new PatchFallbackException("Surgical patch prerequisites missing — affected paths or baseline artifacts absent.");
+        }
+
+        if (HybridExecutionModel.isHybrid(context)) {
+            return executeHybridSurgicalPatch(context, agentName, validator, affectedPaths, baselineSource, baselineManifest);
+        }
+
+        PatchAttemptResult patchResult = executePatchPass(
+                context,
+                null,
+                affectedPaths,
+                agentName,
+                validator);
+        JsonNode mergedSource = applySourcePatch(baselineSource, patchResult.patchSourceFiles());
+        JsonNode envelope = validateMergedPatchEnvelope(mergedSource, baselineManifest, context, validator);
+        String json = serializeEnvelope(envelope);
+        return new AgentResult(envelope, json, patchResult.attemptsUsed(),
+                patchResult.promptTokens(), patchResult.completionTokens(), patchResult.modelId());
+    }
+
+    private AgentResult executeHybridSurgicalPatch(MidasContext context,
+                                                   String agentName,
+                                                   GoalKeeperValidator validator,
+                                                   List<String> affectedPaths,
+                                                   JsonNode baselineSource,
+                                                   JsonNode baselineManifest) {
+        List<String> clientPaths = filterPathsForSurface(affectedPaths, ImplementationSurface.CLIENT);
+        List<String> serverPaths = filterPathsForSurface(affectedPaths, ImplementationSurface.SERVER);
+
+        if (clientPaths.isEmpty() && serverPaths.isEmpty()) {
+            throw new PatchFallbackException("No affected paths resolved to a HYBRID surface.");
+        }
+
+        JsonNode mergedSource = baselineSource.deepCopy();
+        int totalAttempts = 0;
+        int totalPromptTokens = 0;
+        int totalCompletionTokens = 0;
+        String modelId = "";
+
+        if (!clientPaths.isEmpty()) {
+            PatchAttemptResult clientPatch = executePatchPass(
+                    context, ImplementationSurface.CLIENT, clientPaths, agentName + "Client", validator);
+            mergedSource = applySourcePatch(mergedSource, clientPatch.patchSourceFiles());
+            totalAttempts += clientPatch.attemptsUsed();
+            totalPromptTokens += clientPatch.promptTokens();
+            totalCompletionTokens += clientPatch.completionTokens();
+            modelId = clientPatch.modelId();
+        }
+        if (!serverPaths.isEmpty()) {
+            PatchAttemptResult serverPatch = executePatchPass(
+                    context, ImplementationSurface.SERVER, serverPaths, agentName + "Server", validator);
+            mergedSource = applySourcePatch(mergedSource, serverPatch.patchSourceFiles());
+            totalAttempts += serverPatch.attemptsUsed();
+            totalPromptTokens += serverPatch.promptTokens();
+            totalCompletionTokens += serverPatch.completionTokens();
+            if (modelId.isBlank()) {
+                modelId = serverPatch.modelId();
+            }
+        }
+
+        JsonNode envelope = validateMergedPatchEnvelope(mergedSource, baselineManifest, context, validator);
+        String json = serializeEnvelope(envelope);
+        return new AgentResult(envelope, json, totalAttempts, totalPromptTokens, totalCompletionTokens, modelId);
+    }
+
+    private PatchAttemptResult executePatchPass(MidasContext context,
+                                                ImplementationSurface surface,
+                                                List<String> pathsForPass,
+                                                String llmAgentName,
+                                                GoalKeeperValidator validator) {
+        AgentContextView view = surface == null
+                ? contextReducer.reducePatchImplementationPass(context, pathsForPass)
+                : contextReducer.reducePatchImplementationPass(context, pathsForPass, surface);
+
+        String baseUserMessage = buildPatchUserMessage(view, surface);
+        String modelOverride = llmModelPolicy.resolve(MidasState.CODE_GENERATION);
+        ImplementationEngineerValidator implValidator = requireImplementationValidator(validator);
+        String lastError = null;
+        int totalPromptTokens = 0;
+        int totalCompletionTokens = 0;
+
+        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
+            String userMessage = attempt == 1
+                    ? baseUserMessage
+                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+
+            log.info("[CodeGenerationCoordinator] PATCH {} attempt {}/{} — run=[{}]",
+                    surface != null ? surface.name() : "SINGLE",
+                    attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
+
+            try {
+                LlmCallResult llmResult = llmClient.call(LlmCallRequest.of(
+                        MidasState.CODE_GENERATION,
+                        llmAgentName,
+                        effectivePatchSystemPrompt(context),
+                        userMessage,
+                        context.getPipelineRunId(),
+                        modelOverride));
+                totalPromptTokens += llmResult.promptTokens();
+                totalCompletionTokens += llmResult.completionTokens();
+                String sanitized = JsonSanitizer.sanitize(llmResult.text());
+                JsonNode patchSourceFiles = implValidator.validatePatchOutput(sanitized, pathsForPass);
+                return new PatchAttemptResult(patchSourceFiles, attempt, totalPromptTokens, totalCompletionTokens,
+                        llmResult.modelUsed());
+
+            } catch (ValidationHookException e) {
+                lastError = String.join(" | ", e.getViolations());
+                log.warn("[CodeGenerationCoordinator] PATCH attempt {}/{} rejected: {}",
+                        attempt, MAX_PASS_RETRIES, lastError);
+                backoffBeforeRetry(attempt);
+
+            } catch (LlmCallException e) {
+                if (!e.isRetryable()) {
+                    throw e;
+                }
+                lastError = "LLM transport error: " + e.getMessage();
+                backoffBeforeRetry(attempt);
+            }
+        }
+
+        throw new PatchFallbackException("Patch LLM pass exhausted retries: " + lastError);
+    }
+
+    private JsonNode applySourcePatch(JsonNode baseline, JsonNode patch) {
+        try {
+            return SourceMapPatcher.apply(baseline, patch, objectMapper);
+        } catch (PatchValidationException e) {
+            throw new PatchFallbackException(e.getMessage());
+        }
+    }
+
+    private JsonNode validateMergedPatchEnvelope(JsonNode mergedSource,
+                                                 JsonNode baselineManifest,
+                                                 MidasContext context,
+                                                 GoalKeeperValidator validator) {
+        JsonNode envelope = buildEnvelope(mergedSource, baselineManifest);
+        try {
+            String json = objectMapper.writeValueAsString(envelope);
+            return requireImplementationValidator(validator).validateWithTechnicalSpec(
+                    json, context.getTechnicalSpec());
+        } catch (JsonProcessingException e) {
+            throw new PatchFallbackException("Failed to serialize merged patch envelope: " + e.getMessage());
+        } catch (ValidationHookException e) {
+            throw new PatchFallbackException("Merged patch envelope rejected: " + String.join(" | ", e.getViolations()));
+        }
+    }
+
+    private String serializeEnvelope(JsonNode envelope) {
+        try {
+            return objectMapper.writeValueAsString(envelope);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize implementation envelope.", e);
+        }
+    }
+
+    private AgentResult executeFullGeneration(MidasContext context, String agentName, GoalKeeperValidator validator) {
         if (HybridExecutionModel.isHybrid(context)) {
             return executeHybridFanOut(context, agentName, validator);
         }
@@ -90,13 +278,14 @@ public class CodeGenerationCoordinator {
                 ? AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT
                 : AgentSystemPrompts.HYBRID_SERVER_IMPLEMENTATION_PROMPT;
         PassResult pass = executePass(context, surface, systemPrompt, agentName, validator);
+        JsonNode envelope = buildEnvelope(pass.sourceFiles(), pass.featureManifest());
         String json;
         try {
-            json = objectMapper.writeValueAsString(pass.validated());
+            json = objectMapper.writeValueAsString(envelope);
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize " + surface + " source map.", e);
+            throw new IllegalStateException("Failed to serialize " + surface + " implementation envelope.", e);
         }
-        return new AgentResult(pass.validated(), json, pass.attemptsUsed(),
+        return new AgentResult(envelope, json, pass.attemptsUsed(),
                 pass.promptTokens(), pass.completionTokens(), pass.modelId());
     }
 
@@ -126,25 +315,28 @@ public class CodeGenerationCoordinator {
         PassResult clientPass = clientFuture.join();
         PassResult serverPass = serverFuture.join();
 
-        JsonNode merged = ImplementationSourceMerger.merge(
-                clientPass.validated(), serverPass.validated(), objectMapper);
+        JsonNode mergedSources = ImplementationSourceMerger.merge(
+                clientPass.sourceFiles(), serverPass.sourceFiles(), objectMapper);
+        JsonNode mergedManifest = FeatureManifestMerger.merge(
+                clientPass.featureManifest(), serverPass.featureManifest(), objectMapper);
+        JsonNode envelope = buildEnvelope(mergedSources, mergedManifest);
 
         String mergedJson;
         try {
-            mergedJson = objectMapper.writeValueAsString(merged);
+            mergedJson = objectMapper.writeValueAsString(envelope);
+            requireImplementationValidator(validator).validateWithTechnicalSpec(
+                    mergedJson, context.getTechnicalSpec());
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize merged HYBRID source map.", e);
+            throw new IllegalStateException("Failed to serialize merged HYBRID implementation envelope.", e);
         }
-
-        validator.validate(mergedJson);
 
         int totalAttempts = clientPass.attemptsUsed() + serverPass.attemptsUsed();
         log.info("[CodeGenerationCoordinator] HYBRID fan-out complete for run [{}] — {} client files, {} server files.",
                 context.getPipelineRunId(),
-                clientPass.validated().size(),
-                serverPass.validated().size());
+                clientPass.sourceFiles().size(),
+                serverPass.sourceFiles().size());
 
-        return new AgentResult(merged, mergedJson, totalAttempts,
+        return new AgentResult(envelope, mergedJson, totalAttempts,
                 clientPass.promptTokens() + serverPass.promptTokens(),
                 clientPass.completionTokens() + serverPass.completionTokens(),
                 clientPass.modelId());
@@ -183,8 +375,19 @@ public class CodeGenerationCoordinator {
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode validated = validator.validate(sanitized);
-                return new PassResult(validated, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
+                JsonNode envelope;
+                if (HybridExecutionModel.isHybrid(context) && surface != null) {
+                    // In HYBRID fan-out each pass contains only a surface-local partial manifest.
+                    // Full core_features coverage is validated after client/server merge.
+                    envelope = requireImplementationValidator(validator).validate(sanitized);
+                } else {
+                    envelope = requireImplementationValidator(validator)
+                            .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
+                }
+                ImplementationOutputUnwrapper.UnwrappedEnvelope unwrapped =
+                        ImplementationOutputUnwrapper.unwrap(envelope);
+                return new PassResult(unwrapped.sourceFiles(), unwrapped.featureManifest(), attempt,
+                        totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -243,8 +446,9 @@ public class CodeGenerationCoordinator {
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
-                JsonNode validated = validator.validate(sanitized);
-                return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
+                JsonNode envelope = requireImplementationValidator(validator)
+                        .validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
+                return new AgentResult(envelope, sanitized, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
                 lastError = String.join(" | ", e.getViolations());
@@ -272,6 +476,59 @@ public class CodeGenerationCoordinator {
         return AgentSystemPrompts.appendProductReviewRemediation(
                 baseSystemPrompt, context.getRemediationDirective());
     }
+
+    private String effectivePatchSystemPrompt(MidasContext context) {
+        return AgentSystemPrompts.appendProductReviewRemediation(
+                AgentSystemPrompts.IMPLEMENTATION_PATCH_PROMPT, context.getRemediationDirective());
+    }
+
+    String buildPatchUserMessage(AgentContextView view, ImplementationSurface surface) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("USER IDEA:\n").append(view.getRawUserIdea()).append("\n\n");
+
+        if (surface != null) {
+            sb.append("SURGICAL PATCH PASS: ")
+              .append(surface.name())
+              .append(" — patch ONLY affected paths on the ")
+              .append(surface == ImplementationSurface.CLIENT ? "client" : "server")
+              .append(" surface.\n\n");
+        } else {
+            sb.append("SURGICAL PATCH PASS — patch ONLY the affected paths listed in the remediation directive.\n\n");
+        }
+
+        Map<String, JsonNode> artifacts = view.safeArtifacts();
+        if (!artifacts.isEmpty()) {
+            sb.append("UPSTREAM ARTIFACTS:\n");
+            artifacts.forEach((key, node) ->
+                    sb.append("## ").append(key).append("\n")
+                      .append(node.toPrettyString()).append("\n\n"));
+        }
+
+        sb.append("TASK: Produce the surgical patch output. Follow the system prompt JSON schema exactly.");
+        return sb.toString();
+    }
+
+    private static List<String> filterPathsForSurface(List<String> paths, ImplementationSurface surface) {
+        List<String> filtered = new ArrayList<>();
+        for (String path : paths) {
+            boolean include = surface == ImplementationSurface.CLIENT
+                    ? ArchitectureSurfaceSlicer.isClientPath(path)
+                    : ArchitectureSurfaceSlicer.isServerPath(path);
+            if (include) {
+                filtered.add(path);
+            }
+        }
+        return filtered;
+    }
+
+    private static final class PatchFallbackException extends RuntimeException {
+        PatchFallbackException(String message) {
+            super(message);
+        }
+    }
+
+    private record PatchAttemptResult(JsonNode patchSourceFiles, int attemptsUsed,
+                                      int promptTokens, int completionTokens, String modelId) {}
 
     String buildUserMessage(AgentContextView view, ImplementationSurface surface) {
         StringBuilder sb = new StringBuilder();
@@ -339,5 +596,20 @@ public class CodeGenerationCoordinator {
         }
     }
 
-    private record PassResult(JsonNode validated, int attemptsUsed, int promptTokens, int completionTokens, String modelId) {}
+    private JsonNode buildEnvelope(JsonNode sourceFiles, JsonNode featureManifest) {
+        ObjectNode envelope = objectMapper.createObjectNode();
+        envelope.set("source_files", sourceFiles);
+        envelope.set("feature_manifest", featureManifest);
+        return envelope;
+    }
+
+    private static ImplementationEngineerValidator requireImplementationValidator(GoalKeeperValidator validator) {
+        if (!(validator instanceof ImplementationEngineerValidator implValidator)) {
+            throw new IllegalStateException("CODE_GENERATION requires ImplementationEngineerValidator.");
+        }
+        return implValidator;
+    }
+
+    private record PassResult(JsonNode sourceFiles, JsonNode featureManifest, int attemptsUsed,
+                              int promptTokens, int completionTokens, String modelId) {}
 }

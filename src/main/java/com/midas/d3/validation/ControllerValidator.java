@@ -1,41 +1,18 @@
 package com.midas.d3.validation;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/**
- * Validates Agent 7 (Controller / Product-Owner gate) output against the quality-gate schema.
- *
- * <pre>
- * {
- *   "verdict": "PASS | PASS_WITH_NOTES | REJECT",
- *   "summary": String,
- *   "coverage_matrix": [
- *     {"requested_feature": String, "status": "COVERED | PARTIAL | MISSING", "evidence": String}
- *   ],
- *   "remediation_block": {
- *     "required_changes": [String],
- *     "recommendations": [String]
- *   }
- * }
- * </pre>
- *
- * <p><b>Scope.</b> This validator only enforces the <em>structure</em> of the verdict report — it
- * does NOT decide PASS vs REJECT (that is the LLM's judgement) and it does NOT treat a well-formed
- * REJECT as a validation failure. A REJECT is a perfectly valid report; the state-machine routing
- * ({@code ProductReviewRejectedGuard}) is what turns a REJECT verdict into a terminal ERROR.
- * Consequently, when the verdict is REJECT the {@code remediation_block.required_changes} list must
- * be non-empty so the rejection is actionable.
- */
 @Component
 public class ControllerValidator extends AbstractGoalKeeperValidator {
 
-    /** Canonical verdict values. Also referenced by the routing guard. */
     public static final String VERDICT_PASS            = "PASS";
     public static final String VERDICT_PASS_WITH_NOTES = "PASS_WITH_NOTES";
     public static final String VERDICT_REJECT          = "REJECT";
@@ -53,14 +30,47 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
     @Override public String agentName() { return "ControllerAgent"; }
     @Override public String stage()     { return "PRODUCT_REVIEW"; }
 
+    public JsonNode validateWithFeatureManifest(String rawJson, JsonNode featureManifest)
+            throws ValidationHookException {
+        if (rawJson == null || rawJson.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output is null or blank — no JSON to validate.");
+        }
+
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(rawJson.strip());
+        } catch (JsonProcessingException e) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "JSON parse error: " + e.getOriginalMessage());
+        }
+
+        if (!root.isObject()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "Expected JSON object at root, got: " + root.getNodeType());
+        }
+
+        List<String> violations = new java.util.ArrayList<>();
+        collectViolations(root, violations, featureManifest);
+
+        if (!violations.isEmpty()) {
+            throw new ValidationHookException(agentName(), stage(), violations);
+        }
+
+        return root;
+    }
+
     @Override
     protected void collectViolations(JsonNode root, List<String> violations) {
+        collectViolations(root, violations, null);
+    }
+
+    private void collectViolations(JsonNode root, List<String> violations, JsonNode featureManifest) {
         String verdict = validateVerdict(root, violations);
-        validateCoverageMatrix(root, violations);
+        validateCoverageMatrix(root, violations, featureManifest);
         validateRemediationBlock(root, verdict, violations);
     }
 
-    /** @return the upper-cased verdict (possibly invalid/empty); never null. */
     private String validateVerdict(JsonNode root, List<String> violations) {
         JsonNode node = root.get("verdict");
         if (node == null || node.isNull() || node.isMissingNode() || !node.isTextual()
@@ -77,7 +87,7 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
         return verdict;
     }
 
-    private void validateCoverageMatrix(JsonNode root, List<String> violations) {
+    private void validateCoverageMatrix(JsonNode root, List<String> violations, JsonNode featureManifest) {
         JsonNode matrix = root.get("coverage_matrix");
         if (matrix == null || matrix.isNull() || matrix.isMissingNode()) {
             violations.add("Missing required array field: 'coverage_matrix' "
@@ -93,6 +103,9 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
                     + "(one per requested feature).");
             return;
         }
+
+        ManifestReferenceIndex manifestIndex = buildManifestReferenceIndex(featureManifest);
+
         for (int i = 0; i < matrix.size(); i++) {
             JsonNode entry = matrix.get(i);
             if (!entry.isObject()) {
@@ -110,6 +123,69 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
                 violations.add("coverage_matrix[" + i + "].status must be one of "
                         + VALID_STATUSES + " but was '" + status.asText().strip() + "'.");
             }
+            JsonNode evidence = entry.get("evidence");
+            if (evidence == null || !evidence.isTextual() || evidence.asText().isBlank()) {
+                violations.add("coverage_matrix[" + i + "].evidence is missing or blank.");
+            } else if (manifestIndex.isPresent()) {
+                validateEvidenceReferencesManifest(i, evidence.asText().strip(), manifestIndex, violations);
+            }
+        }
+    }
+
+    private void validateEvidenceReferencesManifest(int index,
+                                                    String evidence,
+                                                    ManifestReferenceIndex manifestIndex,
+                                                    List<String> violations) {
+        String evidenceLower = evidence.toLowerCase(Locale.ROOT);
+        boolean matched = manifestIndex.featureIds().stream().anyMatch(evidenceLower::contains)
+                || manifestIndex.filePaths().stream().anyMatch(evidenceLower::contains);
+        if (!matched) {
+            violations.add("coverage_matrix[" + index + "].evidence must reference a feature_id "
+                    + "or file path from featureManifest.");
+        }
+    }
+
+    private ManifestReferenceIndex buildManifestReferenceIndex(JsonNode featureManifest) {
+        if (featureManifest == null || featureManifest.isNull() || featureManifest.isMissingNode()
+                || !featureManifest.isArray() || featureManifest.isEmpty()) {
+            return ManifestReferenceIndex.absent();
+        }
+
+        Set<String> featureIds = new HashSet<>();
+        Set<String> filePaths = new HashSet<>();
+
+        for (int i = 0; i < featureManifest.size(); i++) {
+            JsonNode entry = featureManifest.get(i);
+            if (!entry.isObject()) {
+                continue;
+            }
+            JsonNode featureIdNode = entry.get("feature_id");
+            if (featureIdNode != null && featureIdNode.isTextual() && !featureIdNode.asText().isBlank()) {
+                featureIds.add(featureIdNode.asText().strip().toLowerCase(Locale.ROOT));
+            }
+            JsonNode filesNode = entry.get("files");
+            if (filesNode != null && filesNode.isArray()) {
+                for (JsonNode fileNode : filesNode) {
+                    if (fileNode.isTextual() && !fileNode.asText().isBlank()) {
+                        filePaths.add(fileNode.asText().strip().toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
+        }
+
+        if (featureIds.isEmpty() && filePaths.isEmpty()) {
+            return ManifestReferenceIndex.absent();
+        }
+        return new ManifestReferenceIndex(featureIds, filePaths);
+    }
+
+    private record ManifestReferenceIndex(Set<String> featureIds, Set<String> filePaths) {
+        static ManifestReferenceIndex absent() {
+            return new ManifestReferenceIndex(Set.of(), Set.of());
+        }
+
+        boolean isPresent() {
+            return !featureIds.isEmpty() || !filePaths.isEmpty();
         }
     }
 
@@ -130,7 +206,6 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
             violations.add("remediation_block.required_changes must be an array when present.");
         }
 
-        // A REJECT verdict must carry actionable remediation — otherwise the rejection is useless.
         if (VERDICT_REJECT.equals(verdict)) {
             boolean hasActionableChanges = requiredChanges != null
                     && requiredChanges.isArray() && !requiredChanges.isEmpty();

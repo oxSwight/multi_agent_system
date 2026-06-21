@@ -15,8 +15,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("LlmModelPolicy Tests")
 class LlmModelPolicyTest {
 
-    private static final String DEFAULT_MODEL = "gemini-1.5-flash";
-    private static final String PRO_MODEL = "gemini-1.5-pro";
+    private static final String DEFAULT_MODEL = "gemini-2.5-flash";
+    private static final String STAGE_MODEL = "gemini-2.5-flash";
 
     private LlmModelPolicy policy;
 
@@ -25,21 +25,21 @@ class LlmModelPolicyTest {
         LlmModelPolicyProperties properties = new LlmModelPolicyProperties();
         properties.setModel(DEFAULT_MODEL);
         properties.setStageModels(Map.of(
-                MidasState.CODE_GENERATION.name(), PRO_MODEL,
-                MidasState.TEST_GENERATION.name(), PRO_MODEL));
+                MidasState.CODE_GENERATION.name(), STAGE_MODEL,
+                MidasState.TEST_GENERATION.name(), STAGE_MODEL));
         policy = new LlmModelPolicy(properties);
     }
 
     @Test
-    @DisplayName("CODE_GENERATION resolves to configured Pro model")
-    void resolve_codeGeneration_returnsProModel() {
-        assertThat(policy.resolve(MidasState.CODE_GENERATION)).isEqualTo(PRO_MODEL);
+    @DisplayName("CODE_GENERATION resolves to configured Flash model")
+    void resolve_codeGeneration_returnsStageModel() {
+        assertThat(policy.resolve(MidasState.CODE_GENERATION)).isEqualTo(STAGE_MODEL);
     }
 
     @Test
-    @DisplayName("TEST_GENERATION resolves to configured Pro model")
-    void resolve_testGeneration_returnsProModel() {
-        assertThat(policy.resolve(MidasState.TEST_GENERATION)).isEqualTo(PRO_MODEL);
+    @DisplayName("TEST_GENERATION resolves to configured Flash model")
+    void resolve_testGeneration_returnsStageModel() {
+        assertThat(policy.resolve(MidasState.TEST_GENERATION)).isEqualTo(STAGE_MODEL);
     }
 
     @ParameterizedTest

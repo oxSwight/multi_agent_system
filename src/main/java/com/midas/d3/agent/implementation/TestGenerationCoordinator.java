@@ -19,7 +19,12 @@ import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.GoalKeeperValidator;
+import com.midas.d3.validation.QaEngineerValidator;
 import com.midas.d3.validation.ValidationHookException;
+import com.midas.d3.statemachine.remediation.RemediationDirectiveSupport;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -60,6 +65,167 @@ public class TestGenerationCoordinator {
         GoalKeeperValidator validator = validatorRegistry.getValidator(MidasState.TEST_GENERATION)
                 .orElseThrow(() -> new IllegalStateException(
                         "No GoalKeeperValidator registered for TEST_GENERATION."));
+
+        if (RemediationDirectiveSupport.isSurgicalPatch(context.getRemediationDirective())) {
+            return executeSurgicalTestPatch(context, agentName, validator);
+        }
+        return executeFullGeneration(context, agentName, validator);
+    }
+
+    private AgentResult executeSurgicalTestPatch(MidasContext context,
+                                                 String agentName,
+                                                 GoalKeeperValidator validator) {
+        List<String> affectedPaths = RemediationDirectiveSupport.affectedPaths(context.getRemediationDirective());
+        JsonNode baselineTests = context.getGeneratedTests();
+        JsonNode patchedSource = context.getGeneratedSourceCode();
+
+        if (affectedPaths.isEmpty() || patchedSource == null || patchedSource.isNull()) {
+            throw new IllegalStateException("Surgical test patch requires affected_paths and patched source.");
+        }
+
+        if (HybridExecutionModel.isHybrid(context)) {
+            return executeHybridSurgicalTestPatch(context, agentName, validator, affectedPaths, baselineTests, patchedSource);
+        }
+
+        PatchAttemptResult patchResult = executeTestPatchPass(
+                context, null, affectedPaths, patchedSource, agentName, validator);
+        JsonNode mergedTests = mergeTestDelta(baselineTests, patchResult.patchTests());
+        String mergedJson = serializeTestMap(mergedTests);
+        validator.validate(mergedJson);
+        return new AgentResult(mergedTests, mergedJson, patchResult.attemptsUsed(),
+                patchResult.promptTokens(), patchResult.completionTokens(), patchResult.modelId());
+    }
+
+    private AgentResult executeHybridSurgicalTestPatch(MidasContext context,
+                                                       String agentName,
+                                                       GoalKeeperValidator validator,
+                                                       List<String> affectedPaths,
+                                                       JsonNode baselineTests,
+                                                       JsonNode patchedSource) {
+        List<String> clientPaths = filterPathsForSurface(affectedPaths, ImplementationSurface.CLIENT);
+        List<String> serverPaths = filterPathsForSurface(affectedPaths, ImplementationSurface.SERVER);
+
+        JsonNode mergedTests = baselineTests != null && baselineTests.isObject()
+                ? baselineTests.deepCopy()
+                : objectMapper.createObjectNode();
+        int totalAttempts = 0;
+        int totalPromptTokens = 0;
+        int totalCompletionTokens = 0;
+        String modelId = "";
+
+        if (!clientPaths.isEmpty()) {
+            PatchAttemptResult clientPatch = executeTestPatchPass(
+                    context, ImplementationSurface.CLIENT, clientPaths, patchedSource, agentName + "Client", validator);
+            mergedTests = mergeTestDelta(mergedTests, clientPatch.patchTests());
+            totalAttempts += clientPatch.attemptsUsed();
+            totalPromptTokens += clientPatch.promptTokens();
+            totalCompletionTokens += clientPatch.completionTokens();
+            modelId = clientPatch.modelId();
+        }
+        if (!serverPaths.isEmpty()) {
+            PatchAttemptResult serverPatch = executeTestPatchPass(
+                    context, ImplementationSurface.SERVER, serverPaths, patchedSource, agentName + "Server", validator);
+            mergedTests = mergeTestDelta(mergedTests, serverPatch.patchTests());
+            totalAttempts += serverPatch.attemptsUsed();
+            totalPromptTokens += serverPatch.promptTokens();
+            totalCompletionTokens += serverPatch.completionTokens();
+            if (modelId.isBlank()) {
+                modelId = serverPatch.modelId();
+            }
+        }
+
+        if (totalAttempts == 0) {
+            throw new IllegalStateException("No HYBRID surface matched affected_paths for surgical test patch.");
+        }
+
+        String mergedJson = serializeTestMap(mergedTests);
+        validator.validate(mergedJson);
+        return new AgentResult(mergedTests, mergedJson, totalAttempts, totalPromptTokens, totalCompletionTokens, modelId);
+    }
+
+    private PatchAttemptResult executeTestPatchPass(MidasContext context,
+                                                    ImplementationSurface surface,
+                                                    List<String> pathsForPass,
+                                                    JsonNode patchedSource,
+                                                    String llmAgentName,
+                                                    GoalKeeperValidator validator) {
+        AgentContextView view = surface == null
+                ? contextReducer.reducePatchTestPass(context, pathsForPass, patchedSource)
+                : contextReducer.reducePatchTestPass(context, pathsForPass, patchedSource, surface);
+
+        String baseUserMessage = buildPatchUserMessage(view, surface);
+        String modelOverride = llmModelPolicy.resolve(MidasState.TEST_GENERATION);
+        QaEngineerValidator qaValidator = requireQaValidator(validator);
+        String lastError = null;
+        int totalPromptTokens = 0;
+        int totalCompletionTokens = 0;
+
+        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
+            String userMessage = attempt == 1
+                    ? baseUserMessage
+                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+
+            log.info("[TestGenerationCoordinator] PATCH {} attempt {}/{} — run=[{}]",
+                    surface != null ? surface.name() : "SINGLE",
+                    attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
+
+            try {
+                LlmCallResult llmResult = llmClient.call(LlmCallRequest.of(
+                        MidasState.TEST_GENERATION,
+                        llmAgentName,
+                        effectivePatchSystemPrompt(context),
+                        userMessage,
+                        context.getPipelineRunId(),
+                        modelOverride));
+                totalPromptTokens += llmResult.promptTokens();
+                totalCompletionTokens += llmResult.completionTokens();
+                String sanitized = JsonSanitizer.sanitize(llmResult.text());
+                JsonNode patchTests = qaValidator.validatePatchDelta(sanitized);
+                return new PatchAttemptResult(patchTests, attempt, totalPromptTokens, totalCompletionTokens,
+                        llmResult.modelUsed());
+
+            } catch (ValidationHookException e) {
+                lastError = String.join(" | ", e.getViolations());
+                log.warn("[TestGenerationCoordinator] PATCH attempt {}/{} rejected: {}",
+                        attempt, MAX_PASS_RETRIES, lastError);
+                backoffBeforeRetry(attempt);
+
+            } catch (LlmCallException e) {
+                if (!e.isRetryable()) {
+                    throw e;
+                }
+                lastError = "LLM transport error: " + e.getMessage();
+                backoffBeforeRetry(attempt);
+            }
+        }
+
+        throw new AgentExecutionException(
+                llmAgentName,
+                ContextReducer.AgentRole.QA_ENGINEER,
+                MAX_PASS_RETRIES,
+                "Surgical test patch failed: " + lastError);
+    }
+
+    private JsonNode mergeTestDelta(JsonNode baselineTests, JsonNode deltaTests) {
+        ObjectNode merged = baselineTests != null && baselineTests.isObject()
+                ? baselineTests.deepCopy()
+                : objectMapper.createObjectNode();
+        if (deltaTests == null || !deltaTests.isObject() || deltaTests.isEmpty()) {
+            throw new IllegalStateException("Surgical test patch produced an empty delta map.");
+        }
+        deltaTests.fields().forEachRemaining(entry -> merged.set(entry.getKey(), entry.getValue()));
+        return merged;
+    }
+
+    private String serializeTestMap(JsonNode tests) {
+        try {
+            return objectMapper.writeValueAsString(tests);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize merged test map.", e);
+        }
+    }
+
+    private AgentResult executeFullGeneration(MidasContext context, String agentName, GoalKeeperValidator validator) {
 
         if (HybridExecutionModel.isHybrid(context)) {
             return executeHybridFanOut(context, agentName, validator);
@@ -265,6 +431,59 @@ public class TestGenerationCoordinator {
         return AgentSystemPrompts.appendProductReviewRemediation(
                 baseSystemPrompt, context.getRemediationDirective());
     }
+
+    private String effectivePatchSystemPrompt(MidasContext context) {
+        return AgentSystemPrompts.appendProductReviewRemediation(
+                AgentSystemPrompts.QA_PATCH_PROMPT, context.getRemediationDirective());
+    }
+
+    String buildPatchUserMessage(AgentContextView view, ImplementationSurface surface) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("USER IDEA:\n").append(view.getRawUserIdea()).append("\n\n");
+
+        if (surface != null) {
+            sb.append("SURGICAL TEST PATCH PASS: ")
+              .append(surface.name())
+              .append(" — write delta tests ONLY for affected paths on the ")
+              .append(surface == ImplementationSurface.CLIENT ? "client" : "server")
+              .append(" surface.\n\n");
+        } else {
+            sb.append("SURGICAL TEST PATCH PASS — write delta tests ONLY for the affected source paths.\n\n");
+        }
+
+        Map<String, JsonNode> artifacts = view.safeArtifacts();
+        if (!artifacts.isEmpty()) {
+            sb.append("UPSTREAM ARTIFACTS:\n");
+            artifacts.forEach((key, node) ->
+                    sb.append("## ").append(key).append("\n")
+                      .append(node.toPrettyString()).append("\n\n"));
+        }
+
+        sb.append("TASK: Produce the surgical test patch output. Follow the system prompt JSON schema exactly.");
+        return sb.toString();
+    }
+
+    private static List<String> filterPathsForSurface(List<String> paths, ImplementationSurface surface) {
+        List<String> filtered = new ArrayList<>();
+        for (String path : paths) {
+            boolean include = surface == ImplementationSurface.CLIENT
+                    ? ArchitectureSurfaceSlicer.isClientPath(path)
+                    : ArchitectureSurfaceSlicer.isServerPath(path);
+            if (include) {
+                filtered.add(path);
+            }
+        }
+        return filtered;
+    }
+
+    private static QaEngineerValidator requireQaValidator(GoalKeeperValidator validator) {
+        if (!(validator instanceof QaEngineerValidator qaValidator)) {
+            throw new IllegalStateException("TEST_GENERATION requires QaEngineerValidator.");
+        }
+        return qaValidator;
+    }
+
+    private record PatchAttemptResult(JsonNode patchTests, int attemptsUsed, int promptTokens, int completionTokens, String modelId) {}
 
     String buildUserMessage(AgentContextView view, ImplementationSurface surface) {
         StringBuilder sb = new StringBuilder();

@@ -72,7 +72,7 @@ class DashboardControllerTest {
 
     private static final List<AgentLogDto> AGENT_LOGS = List.of(
             new AgentLogDto("SystemAnalystAgent", "{\"business_goal\":\"test\"}", 1400L, 80, 40, "gemini-1.5-flash", false),
-            new AgentLogDto("ImplementationEngineerAgent", "{\"code\":\"...\"}", 2600L, 120, 60, "gemini-1.5-pro", false)
+            new AgentLogDto("ImplementationEngineerAgent", "{\"code\":\"...\"}", 2600L, 120, 60, "gemini-2.5-flash", false)
     );
 
     private static final RunDetailsDto DETAILS =

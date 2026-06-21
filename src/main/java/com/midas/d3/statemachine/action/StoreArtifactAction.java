@@ -8,6 +8,7 @@ import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineContextKeys;
 import com.midas.d3.statemachine.PipelineTopology;
+import com.midas.d3.validation.ImplementationOutputUnwrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.statemachine.StateContext;
@@ -96,7 +97,7 @@ public class StoreArtifactAction implements Action<MidasState, MidasEvent> {
             case SYSTEM_ANALYSIS      -> ctx.withTechnicalSpec(node);
             case ARCHITECTURE_DESIGN  -> ctx.withArchitectureDesign(node);
             case INTEGRATION_STRATEGY -> ctx.withIntegrationStrategy(node);
-            case CODE_GENERATION      -> ctx.withGeneratedSourceCode(node);
+            case CODE_GENERATION      -> storeCodeGeneration(ctx, node);
             case TEST_GENERATION      -> ctx.withGeneratedTests(node);
             case SECOPS_AUDIT         -> ctx.withSecOpsArtifacts(node);
             case PRODUCT_REVIEW       -> ctx.withProductReviewReport(node);
@@ -105,6 +106,16 @@ public class StoreArtifactAction implements Action<MidasState, MidasEvent> {
                 yield ctx;
             }
         };
+    }
+
+    private MidasContext storeCodeGeneration(MidasContext ctx, JsonNode node) {
+        if (node.has("source_files") && node.has("feature_manifest")) {
+            ImplementationOutputUnwrapper.UnwrappedEnvelope unwrapped =
+                    ImplementationOutputUnwrapper.unwrap(node);
+            return ctx.withGeneratedSourceCode(unwrapped.sourceFiles())
+                    .withFeatureManifest(unwrapped.featureManifest());
+        }
+        return ctx.withGeneratedSourceCode(node);
     }
 
     private MidasState resolvePendingStage(StateContext<MidasState, MidasEvent> context) {

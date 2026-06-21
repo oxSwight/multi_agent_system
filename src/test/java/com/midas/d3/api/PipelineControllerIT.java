@@ -93,8 +93,30 @@ class PipelineControllerIT {
 
     private static final String VALID_CODE_GEN = """
             {
-              "src/main/java/com/example/TaskController.java":
-                "public class TaskController { }"
+              "source_files": {
+                "src/main/java/com/example/TaskController.java":
+                  "public class TaskController { }"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "create-task",
+                  "feature_name": "Create task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "assign-task",
+                  "feature_name": "Assign task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "track-progress",
+                  "feature_name": "Track progress",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                }
+              ]
             }
             """;
 
@@ -118,7 +140,7 @@ class PipelineControllerIT {
               "verdict": "PASS",
               "summary": "All requested features were delivered.",
               "coverage_matrix": [
-                {"requested_feature": "Create task", "status": "COVERED", "evidence": "TaskController create"}
+                {"requested_feature": "Create task", "status": "COVERED", "evidence": "create-task in src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {"required_changes": [], "recommendations": []}
             }
@@ -129,7 +151,7 @@ class PipelineControllerIT {
               "verdict": "REJECT",
               "summary": "Task assignment was never implemented.",
               "coverage_matrix": [
-                {"requested_feature": "Assign task", "status": "MISSING", "evidence": "no assignment endpoint"}
+                {"requested_feature": "Assign task", "status": "MISSING", "evidence": "assign-task absent from src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {
                 "required_changes": ["Implement task assignment end-to-end"],
@@ -567,6 +589,7 @@ class PipelineControllerIT {
                     .body("architectureDesign", notNullValue())
                     .body("integrationStrategy",notNullValue())
                     .body("generatedSourceCode",notNullValue())
+                    .body("featureManifest",     notNullValue())
                     .body("generatedTests",     notNullValue())
                     .body("secOpsArtifacts",    notNullValue())
                     .body("productReviewReport",notNullValue())

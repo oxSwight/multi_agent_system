@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.midas.d3.agent.implementation.ArchitectureSurfaceSlicer;
 import com.midas.d3.agent.implementation.ImplementationSurface;
+import com.midas.d3.agent.implementation.SourceMapPathFilter;
 import com.midas.d3.agent.implementation.SourceMapSlicer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -109,7 +110,8 @@ public class ContextReducer {
         // that always run on the path to this gate, so both are required (fail-fast if absent).
         ARTIFACT_DEPENDENCIES.put(AgentRole.CONTROLLER, List.of(
                 ArtifactDependency.required("technicalSpec"),
-                ArtifactDependency.required("secOpsArtifacts")));
+                ArtifactDependency.required("secOpsArtifacts"),
+                ArtifactDependency.required("featureManifest")));
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
@@ -223,6 +225,103 @@ public class ContextReducer {
                 .build();
     }
 
+    public AgentContextView reducePatchImplementationPass(MidasContext context, List<String> affectedPaths) {
+        Objects.requireNonNull(context, "context must not be null");
+        Objects.requireNonNull(affectedPaths, "affectedPaths must not be null");
+
+        Map<String, JsonNode> artifacts = new LinkedHashMap<>();
+        requirePatchArtifact("technicalSpec", context.getTechnicalSpec(), artifacts);
+        requirePatchArtifact("architectureDesign", context.getArchitectureDesign(), artifacts);
+        includePatchOptional("integrationStrategy", context.getIntegrationStrategy(), artifacts);
+        includePatchOptional("remediationDirective", context.getRemediationDirective(), artifacts);
+
+        JsonNode source = context.getGeneratedSourceCode();
+        if (source != null && !source.isNull() && source.isObject()) {
+            artifacts.put("generatedSourceCode",
+                    SourceMapPathFilter.filter(source, affectedPaths, objectMapper));
+        }
+
+        return buildPatchView("IMPLEMENTATION_ENGINEER_PATCH", context, artifacts);
+    }
+
+    public AgentContextView reducePatchImplementationPass(MidasContext context, List<String> affectedPaths,
+                                                          ImplementationSurface surface) {
+        Objects.requireNonNull(surface, "surface must not be null");
+        AgentContextView base = reducePatchImplementationPass(context, affectedPaths);
+        Map<String, JsonNode> artifacts = new LinkedHashMap<>(base.safeArtifacts());
+        JsonNode architecture = artifacts.get("architectureDesign");
+        if (architecture != null && !architecture.isNull()) {
+            artifacts.put("architectureDesign",
+                    ArchitectureSurfaceSlicer.slice(architecture, surface, objectMapper));
+        }
+        return AgentContextView.builder()
+                .agentName("IMPLEMENTATION_ENGINEER_PATCH_" + surface.name())
+                .pipelineRunId(context.getPipelineRunId())
+                .rawUserIdea(context.getRawUserIdea())
+                .requiredArtifacts(artifacts)
+                .estimatedTokenBudget(estimateTokens(context.getRawUserIdea(), artifacts))
+                .build();
+    }
+
+    public AgentContextView reducePatchTestPass(MidasContext context, List<String> affectedPaths,
+                                                JsonNode patchedSource) {
+        Objects.requireNonNull(context, "context must not be null");
+        Objects.requireNonNull(affectedPaths, "affectedPaths must not be null");
+        Objects.requireNonNull(patchedSource, "patchedSource must not be null");
+
+        Map<String, JsonNode> artifacts = new LinkedHashMap<>();
+        requirePatchArtifact("technicalSpec", context.getTechnicalSpec(), artifacts);
+        requirePatchArtifact("architectureDesign", context.getArchitectureDesign(), artifacts);
+        artifacts.put("generatedSourceCode",
+                SourceMapPathFilter.filter(patchedSource, affectedPaths, objectMapper));
+        includePatchOptional("remediationDirective", context.getRemediationDirective(), artifacts);
+
+        return buildPatchView("QA_ENGINEER_PATCH", context, artifacts);
+    }
+
+    public AgentContextView reducePatchTestPass(MidasContext context, List<String> affectedPaths,
+                                                JsonNode patchedSource, ImplementationSurface surface) {
+        Objects.requireNonNull(surface, "surface must not be null");
+        AgentContextView base = reducePatchTestPass(context, affectedPaths, patchedSource);
+        Map<String, JsonNode> artifacts = new LinkedHashMap<>(base.safeArtifacts());
+        JsonNode architecture = artifacts.get("architectureDesign");
+        if (architecture != null && !architecture.isNull()) {
+            artifacts.put("architectureDesign",
+                    ArchitectureSurfaceSlicer.slice(architecture, surface, objectMapper));
+        }
+        JsonNode sourceCode = artifacts.get("generatedSourceCode");
+        if (sourceCode != null && !sourceCode.isNull()) {
+            artifacts.put("generatedSourceCode",
+                    SourceMapSlicer.slice(sourceCode, surface, objectMapper));
+        }
+        return AgentContextView.builder()
+                .agentName("QA_ENGINEER_PATCH_" + surface.name())
+                .pipelineRunId(context.getPipelineRunId())
+                .rawUserIdea(context.getRawUserIdea())
+                .requiredArtifacts(artifacts)
+                .estimatedTokenBudget(estimateTokens(context.getRawUserIdea(), artifacts))
+                .build();
+    }
+
+    public AgentContextView reducePatchSecOpsPass(MidasContext context, List<String> affectedPaths,
+                                                  JsonNode patchedSource, JsonNode patchedTests) {
+        Objects.requireNonNull(context, "context must not be null");
+        Objects.requireNonNull(affectedPaths, "affectedPaths must not be null");
+        Objects.requireNonNull(patchedSource, "patchedSource must not be null");
+        Objects.requireNonNull(patchedTests, "patchedTests must not be null");
+
+        Map<String, JsonNode> artifacts = new LinkedHashMap<>();
+        requirePatchArtifact("technicalSpec", context.getTechnicalSpec(), artifacts);
+        requirePatchArtifact("architectureDesign", context.getArchitectureDesign(), artifacts);
+        artifacts.put("generatedSourceCode",
+                SourceMapPathFilter.filter(patchedSource, affectedPaths, objectMapper));
+        artifacts.put("generatedTests",
+                SourceMapPathFilter.filter(patchedTests, affectedPaths, objectMapper));
+        includePatchOptional("remediationDirective", context.getRemediationDirective(), artifacts);
+
+        return buildPatchView("SECOPS_ENGINEER_PATCH", context, artifacts);
+    }
+
     /**
      * Serializes an {@link AgentContextView} to a compact (non-pretty) JSON string.
      * Validates size against configured limit.
@@ -269,6 +368,7 @@ public class ContextReducer {
             case "generatedSourceCode"-> ctx.getGeneratedSourceCode();
             case "generatedTests"     -> ctx.getGeneratedTests();
             case "secOpsArtifacts"    -> ctx.getSecOpsArtifacts();
+            case "featureManifest"    -> ctx.getFeatureManifest();
             case "remediationDirective" -> ctx.getRemediationDirective();
             default -> throw new IllegalArgumentException("Unknown artifact key: " + key);
         };
@@ -283,6 +383,34 @@ public class ContextReducer {
             charCount += node.toString().length();
         }
         return (int) Math.min(charCount / 4L, Integer.MAX_VALUE);
+    }
+
+    private void requirePatchArtifact(String key, JsonNode node, Map<String, JsonNode> out) {
+        if (node == null || node.isNull() || node.isMissingNode()) {
+            throw new IllegalArgumentException(
+                    "Patch reducer requires artifact [%s] but it is absent in the current context.".formatted(key));
+        }
+        out.put(key, node);
+    }
+
+    private void includePatchOptional(String key, JsonNode node, Map<String, JsonNode> out) {
+        if (node != null && !node.isNull() && !node.isMissingNode()) {
+            out.put(key, node);
+        }
+    }
+
+    private AgentContextView buildPatchView(String agentName, MidasContext context,
+                                            Map<String, JsonNode> artifacts) {
+        int estimatedTokens = estimateTokens(context.getRawUserIdea(), artifacts);
+        log.debug("ContextReducer → {} artifacts={} estimatedTokens={}",
+                agentName, artifacts.keySet(), estimatedTokens);
+        return AgentContextView.builder()
+                .agentName(agentName)
+                .pipelineRunId(context.getPipelineRunId())
+                .rawUserIdea(context.getRawUserIdea())
+                .requiredArtifacts(artifacts)
+                .estimatedTokenBudget(estimatedTokens)
+                .build();
     }
 
     // ── Inner Exceptions ─────────────────────────────────────────────────────

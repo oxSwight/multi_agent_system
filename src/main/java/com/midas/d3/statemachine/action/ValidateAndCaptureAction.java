@@ -1,11 +1,13 @@
 package com.midas.d3.statemachine.action;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.context.MidasContext;
 import com.midas.d3.sanitizer.JsonSanitizer;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineContextKeys;
 import com.midas.d3.statemachine.ValidatorRegistry;
+import com.midas.d3.validation.ControllerValidator;
 import com.midas.d3.validation.GoalKeeperValidator;
 import com.midas.d3.validation.ValidationHookException;
 import lombok.RequiredArgsConstructor;
@@ -76,7 +78,7 @@ public class ValidateAndCaptureAction implements Action<MidasState, MidasEvent> 
 
         // Validate
         try {
-            JsonNode validated = validatorOpt.get().validate(llmOutput);
+            JsonNode validated = validateOutput(sourceStage, llmOutput, validatorOpt.get(), vars);
             vars.put(PipelineContextKeys.LAST_VALIDATED_NODE, validated);
             vars.remove(PipelineContextKeys.LAST_VALIDATION_ERROR);
             log.debug("[ValidateAndCaptureAction][{}] Validation PASSED.", sourceStage);
@@ -85,6 +87,18 @@ public class ValidateAndCaptureAction implements Action<MidasState, MidasEvent> 
             vars.put(PipelineContextKeys.LAST_VALIDATION_ERROR, e.getMessage());
             log.warn("[ValidateAndCaptureAction][{}] Validation FAILED: {}", sourceStage, e.getMessage());
         }
+    }
+
+    private JsonNode validateOutput(MidasState sourceStage,
+                                    String llmOutput,
+                                    GoalKeeperValidator validator,
+                                    Map<Object, Object> vars) throws ValidationHookException {
+        if (sourceStage == MidasState.PRODUCT_REVIEW && validator instanceof ControllerValidator controllerValidator) {
+            MidasContext midasContext = (MidasContext) vars.get(PipelineContextKeys.MIDAS_CONTEXT);
+            JsonNode featureManifest = midasContext != null ? midasContext.getFeatureManifest() : null;
+            return controllerValidator.validateWithFeatureManifest(llmOutput, featureManifest);
+        }
+        return validator.validate(llmOutput);
     }
 
     private MidasState resolveSourceStage(StateContext<MidasState, MidasEvent> context) {

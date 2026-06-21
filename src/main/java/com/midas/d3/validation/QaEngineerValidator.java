@@ -26,6 +26,10 @@ public class QaEngineerValidator extends AbstractGoalKeeperValidator {
     @Override public String agentName() { return "QaEngineer"; }
     @Override public String stage()     { return "TEST_GENERATION"; }
 
+    public JsonNode validatePatchDelta(String rawJson) throws ValidationHookException {
+        return validate(rawJson);
+    }
+
     @Override
     protected void collectViolations(JsonNode root, List<String> violations) {
         if (root.isEmpty()) {

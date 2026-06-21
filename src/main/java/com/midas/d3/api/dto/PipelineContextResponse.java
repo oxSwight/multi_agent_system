@@ -25,11 +25,13 @@ public record PipelineContextResponse(
         JsonNode architectureDesign,
         JsonNode integrationStrategy,
         JsonNode generatedSourceCode,
+        JsonNode featureManifest,
         JsonNode generatedTests,
         JsonNode secOpsArtifacts,
         JsonNode productReviewReport,
         int productReviewRemediationAttempts,
         JsonNode remediationDirective,
+        String remediationMode,
         List<AuditEntry> auditLog
 ) {
     /**
@@ -48,12 +50,27 @@ public record PipelineContextResponse(
                 ctx.getArchitectureDesign(),
                 ctx.getIntegrationStrategy(),
                 ctx.getGeneratedSourceCode(),
+                ctx.getFeatureManifest(),
                 ctx.getGeneratedTests(),
                 ctx.getSecOpsArtifacts(),
                 ctx.getProductReviewReport(),
                 ctx.getProductReviewRemediationAttempts(),
                 ctx.getRemediationDirective(),
+                resolveRemediationMode(ctx),
                 ctx.safeAuditLog()
         );
+    }
+
+    private static String resolveRemediationMode(MidasContext ctx) {
+        JsonNode directive = ctx.getRemediationDirective();
+        if (directive == null || directive.isNull() || directive.isMissingNode()) {
+            return null;
+        }
+        JsonNode modeNode = directive.get("remediation_mode");
+        if (modeNode == null || !modeNode.isTextual()) {
+            return null;
+        }
+        String mode = modeNode.asText().strip();
+        return mode.isEmpty() ? null : mode;
     }
 }

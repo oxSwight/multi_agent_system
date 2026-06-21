@@ -49,7 +49,9 @@ services:
       # Gemini LLM
       MIDAS_LLM_BASE_URL: ${MIDAS_LLM_BASE_URL:-https://generativelanguage.googleapis.com}
       MIDAS_LLM_API_KEY: ${MIDAS_LLM_API_KEY:-}
-      MIDAS_LLM_MODEL: ${MIDAS_LLM_MODEL:-gemini-2.0-flash}
+      MIDAS_LLM_MODEL: ${MIDAS_LLM_MODEL:-gemini-2.5-flash}
+      MIDAS_LLM_MODEL_CODE: ${MIDAS_LLM_MODEL_CODE:-gemini-3.5-flash}
+      MIDAS_LLM_MODEL_TEST: ${MIDAS_LLM_MODEL_TEST:-gemini-2.5-flash}
 
       # Nous / OpenAI-compatible LLM
       MIDAS_NOUS_BASE_URL: ${MIDAS_NOUS_BASE_URL:-http://localhost:1234}

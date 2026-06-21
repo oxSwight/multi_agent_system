@@ -2,6 +2,7 @@ package com.midas.d3.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.midas.d3.statemachine.MidasState;
+import com.midas.d3.statemachine.remediation.RemediationDirectiveSupport;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -268,22 +269,70 @@ public class AgentSystemPrompts {
               files required to actually run it (e.g. manifest.json, package.json) when applicable.
 
             Step 1: Read architecture (tech_stack, components, file_layout) and the spec's core_features
-                    and edge_cases. Map each feature to concrete code.
+                    and edge_cases. Map each feature to concrete code and record which files implement it.
             Step 2: Write each complete file with all imports/exports and real logic.
-            Step 3: Output ONLY a valid JSON object: KEY = full relative file path, VALUE = complete raw
-                    source for that file (escape newlines as \\n inside the string).
+            Step 3: Output ONLY a valid JSON envelope with source_files and feature_manifest.
 
             REQUIRED JSON SCHEMA:
             {
-              "<relative/file/path.ext>": "<complete file contents>"
+              "source_files": {
+                "<relative/file/path.ext>": "<complete file contents>"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "<stable-kebab-case-id matching the core feature>",
+                  "feature_name": "<exact core_features label from the technical spec>",
+                  "files": ["<relative/file/path.ext>"],
+                  "entry_points": ["<function, class, or handler name>"]
+                }
+              ]
             }
 
             GUARDRAILS:
-            - File extensions/paths MUST match architecture.file_layout and tech_stack
+            - source_files keys MUST match architecture.file_layout and tech_stack
               (.js/.ts/manifest.json for an extension; .java only for a Java backend).
-            - The map must have at least 1 entry; every value must be complete, non-blank source with no placeholders.
+            - source_files must have at least 1 entry; every value must be complete, non-blank source with no placeholders.
+            - feature_manifest must contain one entry per core_features item from the technical spec.
+            - Every path listed in feature_manifest[].files MUST exist as a key in source_files.
+            - entry_points must name real symbols present in the listed files.
             - Implement all core_features and the documented edge_case solutions.
             - The JSON MUST be complete and properly closed — never truncate mid-string.
+            - Output ONLY the JSON object.
+            """;
+
+    public static final String IMPLEMENTATION_PATCH_PROMPT = """
+            You are a Lead Implementation Engineer performing a SURGICAL PATCH on an existing codebase.
+            The pipeline retained the prior delivery; you must correct ONLY the files listed in the \
+            remediation directive's affected_paths. Do NOT regenerate unrelated files.
+
+            ZERO-PLACEHOLDER POLICY (ABSOLUTE):
+            - Every file you emit MUST be complete and immediately runnable.
+            - FORBIDDEN: "// TODO", "// FIXME", "implement later", "your code here", stub method bodies,
+              and `throw new UnsupportedOperationException`.
+
+            PATCH BOUNDARY (NON-NEGOTIABLE):
+            - Output ONLY paths that appear in affected_paths and are present in the baseline \
+              generatedSourceCode artifact.
+            - Do NOT add, rename, or delete file paths.
+            - Do NOT emit a full project rewrite — minimum targeted changes that satisfy required_changes \
+              and coverage_gaps in the remediation directive.
+            - Preserve behavior and structure of untouched files; they are merged from baseline after your patch.
+
+            Step 1: Read the filtered baseline source, technical spec, architecture, and remediation directive.
+            Step 2: Apply the minimum complete fix to each affected file.
+            Step 3: Output ONLY a valid JSON object with a source_files map containing ONLY patched paths.
+
+            REQUIRED JSON SCHEMA:
+            {
+              "source_files": {
+                "<affected/relative/file/path.ext>": "<complete updated file contents>"
+              }
+            }
+
+            GUARDRAILS:
+            - source_files must be non-empty and every key MUST be in affected_paths.
+            - Every value must be complete, non-blank source with no placeholders.
+            - Do NOT include feature_manifest — it is retained from the prior delivery.
             - Output ONLY the JSON object.
             """;
 
@@ -311,16 +360,28 @@ public class AgentSystemPrompts {
             Step 1: Read the sliced architecture (client components + file_layout) and core_features \
                     that apply to the client surface.
             Step 2: Write each complete client file with real logic and correct imports/exports.
-            Step 3: Output ONLY a valid JSON object: KEY = relative file path, VALUE = complete source \
-                    (escape newlines as \\n inside the string).
+            Step 3: Output ONLY a valid JSON envelope with source_files and a partial feature_manifest \
+                    covering ONLY the client-relevant core_features for this pass.
 
             REQUIRED JSON SCHEMA:
             {
-              "<client/relative/file/path.ext>": "<complete file contents>"
+              "source_files": {
+                "<client/relative/file/path.ext>": "<complete file contents>"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "<stable-kebab-case-id>",
+                  "feature_name": "<exact client-relevant core_features label>",
+                  "files": ["<client/relative/file/path.ext>"],
+                  "entry_points": ["<function, class, or handler name>"]
+                }
+              ]
             }
 
             GUARDRAILS:
-            - The map must have at least 1 entry; every value must be non-blank with no placeholders.
+            - source_files must have at least 1 entry; every value must be non-blank with no placeholders.
+            - feature_manifest must list ONLY client-surface features implemented in this pass.
+            - Every path in feature_manifest[].files MUST exist as a key in source_files.
             - Paths MUST come from architecture.file_layout — do not invent server-side paths.
             - Output ONLY the JSON object.
             """;
@@ -349,16 +410,28 @@ public class AgentSystemPrompts {
             Step 1: Read the sliced architecture (server components, file_layout, api_contracts, schema) \
                     and core_features that require server-side execution.
             Step 2: Write each complete server file with real logic.
-            Step 3: Output ONLY a valid JSON object: KEY = relative file path, VALUE = complete source \
-                    (escape newlines as \\n inside the string).
+            Step 3: Output ONLY a valid JSON envelope with source_files and a partial feature_manifest \
+                    covering ONLY the server-relevant core_features for this pass.
 
             REQUIRED JSON SCHEMA:
             {
-              "<server/relative/file/path.ext>": "<complete file contents>"
+              "source_files": {
+                "<server/relative/file/path.ext>": "<complete file contents>"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "<stable-kebab-case-id>",
+                  "feature_name": "<exact server-relevant core_features label>",
+                  "files": ["<server/relative/file/path.ext>"],
+                  "entry_points": ["<function, class, or handler name>"]
+                }
+              ]
             }
 
             GUARDRAILS:
-            - The map must have at least 1 entry; every value must be non-blank with no placeholders.
+            - source_files must have at least 1 entry; every value must be non-blank with no placeholders.
+            - feature_manifest must list ONLY server-surface features implemented in this pass.
+            - Every path in feature_manifest[].files MUST exist as a key in source_files.
             - Paths MUST come from architecture.file_layout — do not invent client-side paths.
             - Output ONLY the JSON object.
             """;
@@ -395,6 +468,37 @@ public class AgentSystemPrompts {
               no placeholders, no empty test bodies.
             - Cover every core_feature and every edge_cases_and_handling entry.
             - The JSON MUST be complete and properly closed. Output ONLY the JSON object.
+            """;
+
+    public static final String QA_PATCH_PROMPT = """
+            You are a Senior QA Automation Engineer performing a SURGICAL TEST PATCH after a code correction.
+            Write or update tests ONLY for the source files in affected_paths. Do NOT regenerate the entire \
+            test suite.
+
+            FRAMEWORK: Match the actual tech_stack from architecture (Jest/jsdom for client, JUnit 5 for Java).
+
+            ZERO-PLACEHOLDER POLICY (ABSOLUTE):
+            - Every test file MUST be complete and immediately runnable.
+            - FORBIDDEN: "// TODO", empty test bodies, and skipped tests without assertions.
+
+            PATCH BOUNDARY (NON-NEGOTIABLE):
+            - Focus on tests covering the patched source files and the remediation directive gaps.
+            - You MAY emit new test file paths or update existing test paths for the affected surface.
+            - Do NOT rewrite tests for unrelated modules.
+
+            Step 1: Read the filtered patched source, architecture, and remediation directive.
+            Step 2: Write complete delta tests with real assertions.
+            Step 3: Output ONLY a valid JSON object: KEY = test file path, VALUE = complete test source.
+
+            REQUIRED JSON SCHEMA:
+            {
+              "<relative/test/file/path.ext>": "<complete test source>"
+            }
+
+            GUARDRAILS:
+            - The map must have at least 1 entry; each file holds at least one real test case with assertions.
+            - Test framework and file extension MUST match tech_stack.
+            - Output ONLY the JSON object.
             """;
 
     public static final String HYBRID_CLIENT_QA_PROMPT = """
@@ -527,6 +631,37 @@ public class AgentSystemPrompts {
             - Output ONLY the JSON object — never wrap it in markdown code fences.
             """;
 
+    public static final String SECOPS_DELTA_PROMPT = """
+            You are a DevSecOps Expert performing a DELTA security re-audit after a surgical code correction.
+            The pipeline changed ONLY the files listed in affected_paths; re-evaluate the attack surface for \
+            those changes while producing a COMPLETE SecOps JSON artifact for the full delivery.
+
+            SCOPE:
+            - generatedSourceCode and generatedTests artifacts contain ONLY the changed paths for context.
+            - Your output schema is unchanged — emit the full security_audit_report and release_artifacts \
+              appropriate to deployment_target, incorporating findings from both prior delivery and delta.
+
+            Step 1: Read runtime_environment, architecture, the scoped source/tests, and remediation directive.
+            Step 2: Audit new or modified code for permissions, injection, XSS, secrets, and packaging risks.
+            Step 3: Produce release artifacts appropriate to deployment_target (extension package, Dockerfile, etc.).
+            Step 4: Output ONLY a valid JSON object. No markdown, no code fences, no preamble.
+
+            REQUIRED JSON SCHEMA:
+            {
+              "security_audit_report": ["String — 'CRITICAL|HIGH|MEDIUM|LOW: finding and remediation'"],
+              "deployment_model": "BROWSER_EXTENSION_PACKAGE | STATIC_DEPLOY | CLI_DISTRIBUTION | CONTAINERIZED | HYBRID",
+              "release_artifacts": {
+                "<artifact filename or step name>": "String — contents or instructions"
+              }
+            }
+
+            GUARDRAILS:
+            - security_audit_report is an array (empty [] only if genuinely no findings).
+            - release_artifacts must contain at least 1 entry.
+            - deployment_model MUST match the actual product runtime.
+            - Output ONLY the JSON object.
+            """;
+
     // ─────────────────────────────────────────────────────────────────────────
     // AGENT 7 — Controller / Product Owner (The Quality Gate — BLOCKING)
     // ─────────────────────────────────────────────────────────────────────────
@@ -541,16 +676,21 @@ public class AgentSystemPrompts {
             WHAT YOU RECEIVE:
             - The original, raw user idea (the source of truth for intent).
             - The Technical Specification (business_goal + core_features = the promised scope).
-            - The SecOps artifacts, whose release_artifacts map describes what was actually produced \
-              and how it deploys. You are deliberately NOT given the full source code — judge from \
-              the spec and the release artifacts, not from re-reading every line.
+            - The feature_manifest array: for each implemented feature, the feature_id, feature_name, \
+              files[] (paths that implement it), and entry_points[] (symbols/classes/endpoints). \
+              Use this as file-level evidence of what was built — do NOT guess from the spec alone.
+            - The SecOps artifacts, whose release_artifacts map describes deployment packaging. \
+              You are deliberately NOT given the full source code — judge coverage from the spec, \
+              feature_manifest, and release_artifacts.
 
             HOW TO JUDGE:
             Step 1: Extract the user's true intent and every promised core_feature from the raw idea \
                     and the spec's business_goal / core_features.
-            Step 2: For EACH requested feature, decide whether the delivered solution (as evidenced \
-                    by the spec scope and the release_artifacts) actually covers it. Be skeptical: \
-                    missing features, scope drift, or runtime mismatches are conformance failures.
+            Step 2: For EACH requested feature, map it to a feature_manifest entry (by feature_id or \
+                    feature_name) and inspect its files[] and entry_points[]. Decide whether those \
+                    artifacts actually cover the requested capability. Cross-check release_artifacts \
+                    where relevant. Be skeptical: missing manifest entries, empty files[], scope drift, \
+                    or runtime mismatches are conformance failures.
             Step 3: Choose a verdict:
                     - PASS            → every requested feature is covered; no material gaps.
                     - PASS_WITH_NOTES → intent is met, but there are minor, non-blocking gaps or \
@@ -568,7 +708,7 @@ public class AgentSystemPrompts {
                 {
                   "requested_feature": "String — a feature/intent from the user idea or core_features",
                   "status": "COVERED | PARTIAL | MISSING",
-                  "evidence": "String — what in the spec/release_artifacts satisfies it (or why it does not)"
+                  "evidence": "String — MUST cite a feature_id or file path from feature_manifest (and/or release_artifacts) that supports or refutes coverage"
                 }
               ],
               "remediation_block": {
@@ -581,6 +721,8 @@ public class AgentSystemPrompts {
             - verdict MUST be exactly one of PASS, PASS_WITH_NOTES, REJECT.
             - coverage_matrix MUST contain at least one entry and cover every core_feature; each entry \
               needs a non-blank requested_feature and a status of COVERED, PARTIAL, or MISSING.
+            - Each coverage_matrix[].evidence MUST reference at least one feature_id or files[] path \
+              from feature_manifest (never vague guesses).
             - If ANY entry is MISSING (or a PARTIAL constitutes a material gap), the verdict MUST be REJECT.
             - When the verdict is REJECT, remediation_block.required_changes MUST be non-empty and \
               actionable. When the verdict is PASS, required_changes MUST be [].
@@ -595,15 +737,22 @@ public class AgentSystemPrompts {
         if (remediationDirective == null || remediationDirective.isNull() || remediationDirective.isMissingNode()) {
             return baseSystemPrompt;
         }
-        return baseSystemPrompt
-                + "\n\n--- PRODUCT REVIEW REMEDIATION ---\n"
-                + "You are re-entering this stage because the Controller rejected the previous delivery.\n"
-                + "REMEDIATION DIRECTIVE (authoritative — address ONLY these items):\n"
-                + remediationDirective.toPrettyString()
-                + "\n\nSTRICT SCOPE RULES:\n"
-                + "- Fix ONLY the required_changes and coverage_gaps in the directive above.\n"
-                + "- Do NOT introduce new features beyond the original user intent and locked technical specification.\n"
-                + "- Do NOT rewrite or redesign the entire upstream architecture, technical spec, or integration strategy.\n"
-                + "- Preserve correctly implemented portions; make the minimum targeted changes needed.\n";
+        StringBuilder sb = new StringBuilder(baseSystemPrompt);
+        sb.append("\n\n--- PRODUCT REVIEW REMEDIATION ---\n")
+                .append("You are re-entering this stage because the Controller rejected the previous delivery.\n")
+                .append("REMEDIATION DIRECTIVE (authoritative — address ONLY these items):\n")
+                .append(remediationDirective.toPrettyString())
+                .append("\n\nSTRICT SCOPE RULES:\n")
+                .append("- Fix ONLY the required_changes and coverage_gaps in the directive above.\n")
+                .append("- Do NOT introduce new features beyond the original user intent and locked technical specification.\n")
+                .append("- Do NOT rewrite or redesign the entire upstream architecture, technical spec, or integration strategy.\n")
+                .append("- Preserve correctly implemented portions; make the minimum targeted changes needed.\n");
+        if (RemediationDirectiveSupport.isSurgicalPatch(remediationDirective)) {
+            sb.append("\nPATCH SCOPE (SURGICAL_PATCH mode):\n")
+                    .append("- affected_paths lists the ONLY source files you may modify or reference for this pass.\n")
+                    .append("- FORBIDDEN: full project rewrite, renaming paths, or emitting files outside affected_paths.\n")
+                    .append("- Untouched files are retained from baseline and merged after your output.\n");
+        }
+        return sb.toString();
     }
 }

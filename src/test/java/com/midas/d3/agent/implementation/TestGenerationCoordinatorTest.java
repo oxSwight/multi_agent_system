@@ -62,7 +62,7 @@ class TestGenerationCoordinatorTest {
                 contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
         when(validatorRegistry.getValidator(MidasState.TEST_GENERATION))
                 .thenReturn(Optional.of(validator));
-        when(llmModelPolicy.resolve(MidasState.TEST_GENERATION)).thenReturn("gemini-1.5-pro");
+        when(llmModelPolicy.resolve(MidasState.TEST_GENERATION)).thenReturn("gemini-2.5-flash");
     }
 
     @AfterEach
@@ -90,7 +90,7 @@ class TestGenerationCoordinatorTest {
         verify(llmClient, times(1)).call(captor.capture());
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.HYBRID_SERVER_QA_PROMPT);
-        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-1.5-pro");
+        assertThat(captor.getValue().getModelOverride()).isEqualTo("gemini-2.5-flash");
         verify(contextReducer).reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER));
         assertThat(result.validatedOutput().has("src/test/java/com/example/AppTest.java")).isTrue();
         assertThat(result.attemptsUsed()).isEqualTo(1);
@@ -274,6 +274,51 @@ class TestGenerationCoordinatorTest {
         verify(llmClient, times(1)).call(captor.capture());
         assertThat(captor.getValue().getSystemPrompt())
                 .isEqualTo(AgentSystemPrompts.QA_ENGINEER_PROMPT);
+    }
+
+    @Test
+    @DisplayName("SURGICAL_PATCH generates delta tests and merges into baseline")
+    void execute_surgicalPatch_mergesDeltaTestsIntoBaseline() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var patchedSource = objectMapper.readTree("""
+                {"cmd/main.go":"package main\\nfunc main() {}"}
+                """);
+        var baselineTests = objectMapper.readTree("""
+                {"cmd/util_test.go":"func TestUtil(t *testing.T) {}"}
+                """);
+        var directive = objectMapper.readTree("""
+                {
+                  "source_verdict":"REJECT",
+                  "remediation_mode":"SURGICAL_PATCH",
+                  "affected_paths":["cmd/main.go"],
+                  "required_changes":["Cover main"]
+                }
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-test-patch")
+                .withTechnicalSpec(spec)
+                .withGeneratedSourceCode(patchedSource)
+                .withGeneratedTests(baselineTests)
+                .withRemediationDirective(directive);
+
+        when(contextReducer.reducePatchTestPass(eq(ctx), eq(java.util.List.of("cmd/main.go")), eq(patchedSource)))
+                .thenReturn(view("run-test-patch", "QA_ENGINEER_PATCH"));
+
+        when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
+                {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                """));
+
+        AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(1)).call(captor.capture());
+        assertThat(captor.getValue().getSystemPrompt())
+                .startsWith(AgentSystemPrompts.QA_PATCH_PROMPT)
+                .contains("PATCH SCOPE (SURGICAL_PATCH mode)");
+        assertThat(result.validatedOutput().has("cmd/main_test.go")).isTrue();
+        assertThat(result.validatedOutput().has("cmd/util_test.go")).isTrue();
+        assertThat(result.attemptsUsed()).isEqualTo(1);
     }
 
     private void stubQaView(String runId, ContextReducer.AgentRole role) {

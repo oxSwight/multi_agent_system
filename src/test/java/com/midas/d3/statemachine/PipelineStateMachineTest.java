@@ -52,6 +52,62 @@ class PipelineStateMachineTest {
             }
             """;
 
+    private static final String VALID_CODE_GEN = """
+            {
+              "source_files": {
+                "src/main/java/com/example/TaskController.java": "public class TaskController { }"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "create-task",
+                  "feature_name": "Create task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "assign-task",
+                  "feature_name": "Assign task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "track-progress",
+                  "feature_name": "Track progress",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                }
+              ]
+            }
+            """;
+
+    private static final String VALID_CODE_GEN_REMEDIATED = """
+            {
+              "source_files": {
+                "src/main/java/com/example/TaskController.java": "public class TaskController { void assign() {} }"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "create-task",
+                  "feature_name": "Create task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "assign-task",
+                  "feature_name": "Assign task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController.assign"]
+                },
+                {
+                  "feature_id": "track-progress",
+                  "feature_name": "Track progress",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                }
+              ]
+            }
+            """;
+
     private static final String INVALID_JSON = "{ broken json";
 
     private static final String CONTROLLER_PASS = """
@@ -59,7 +115,7 @@ class PipelineStateMachineTest {
               "verdict": "PASS",
               "summary": "All requested features are covered by the delivered solution.",
               "coverage_matrix": [
-                {"requested_feature": "Create task", "status": "COVERED", "evidence": "TaskController exposes create"}
+                {"requested_feature": "Create task", "status": "COVERED", "evidence": "create-task in src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {"required_changes": [], "recommendations": []}
             }
@@ -70,12 +126,40 @@ class PipelineStateMachineTest {
               "verdict": "REJECT",
               "summary": "The assignment feature requested by the user was never implemented.",
               "coverage_matrix": [
-                {"requested_feature": "Assign task", "status": "MISSING", "evidence": "No assignment endpoint or UI exists"}
+                {"requested_feature": "Assign task", "status": "MISSING", "evidence": "assign-task absent from src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {
                 "required_changes": ["Implement task assignment end-to-end (API + persistence + UI)"],
                 "recommendations": []
               }
+            }
+            """;
+
+    private static final String INVALID_PATCH_WITH_PLACEHOLDER = """
+            {
+              "source_files": {
+                "src/main/java/com/example/TaskController.java": "public class TaskController { // TODO implement assign }"
+              },
+              "feature_manifest": [
+                {
+                  "feature_id": "create-task",
+                  "feature_name": "Create task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "assign-task",
+                  "feature_name": "Assign task",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                },
+                {
+                  "feature_id": "track-progress",
+                  "feature_name": "Track progress",
+                  "files": ["src/main/java/com/example/TaskController.java"],
+                  "entry_points": ["TaskController"]
+                }
+              ]
             }
             """;
 
@@ -293,15 +377,15 @@ class PipelineStateMachineTest {
             """);
         assertState(MidasState.CODE_GENERATION);
 
-        // Stage 4
-        sendSubmit("""
-            {
-              "src/main/java/com/example/TaskController.java": "public class TaskController { }"
-            }
-            """);
+        sendSubmit(VALID_CODE_GEN);
         assertState(MidasState.TEST_GENERATION);
 
-        // Stage 5
+        MidasContext afterCodeGen = extractContext();
+        assertThat(afterCodeGen.getGeneratedSourceCode()).isNotNull();
+        assertThat(afterCodeGen.getFeatureManifest()).isNotNull();
+        assertThat(afterCodeGen.getGeneratedSourceCode().has("src/main/java/com/example/TaskController.java")).isTrue();
+        assertThat(afterCodeGen.getFeatureManifest()).hasSize(3);
+
         sendSubmit("""
             {
               "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void test() {} }"
@@ -328,6 +412,7 @@ class PipelineStateMachineTest {
         assertThat(ctx.getArchitectureDesign()).isNotNull();
         assertThat(ctx.getIntegrationStrategy()).isNotNull();
         assertThat(ctx.getGeneratedSourceCode()).isNotNull();
+        assertThat(ctx.getFeatureManifest()).isNotNull();
         assertThat(ctx.getGeneratedTests()).isNotNull();
         assertThat(ctx.getSecOpsArtifacts()).isNotNull();
         assertThat(ctx.getProductReviewReport()).isNotNull();
@@ -425,7 +510,7 @@ class PipelineStateMachineTest {
               "verdict": "PASS_WITH_NOTES",
               "summary": "Intent met; minor polish suggested.",
               "coverage_matrix": [
-                {"requested_feature": "Create task", "status": "COVERED", "evidence": "implemented"}
+                {"requested_feature": "Create task", "status": "COVERED", "evidence": "create-task in src/main/java/com/example/TaskController.java"}
               ],
               "remediation_block": {"required_changes": [], "recommendations": ["Add input debounce"]}
             }
@@ -451,8 +536,14 @@ class PipelineStateMachineTest {
         assertThat(ctx.getRemediationDirective().get("source_verdict").asText()).isEqualTo("REJECT");
         assertThat(ctx.getRemediationDirective().get("required_changes").isArray()).isTrue();
         assertThat(ctx.getRemediationDirective().get("required_changes")).isNotEmpty();
-        assertThat(ctx.getGeneratedSourceCode()).isNull();
-        assertThat(ctx.getGeneratedTests()).isNull();
+        assertThat(ctx.getRemediationDirective().get("remediation_mode").asText()).isEqualTo("SURGICAL_PATCH");
+        assertThat(ctx.getRemediationDirective().get("affected_paths").isArray()).isTrue();
+        assertThat(ctx.getRemediationDirective().get("affected_paths")).isNotEmpty();
+        assertThat(ctx.getRemediationDirective().get("affected_features").isArray()).isTrue();
+        assertThat(ctx.getRemediationDirective().get("affected_features")).isNotEmpty();
+        assertThat(ctx.getGeneratedSourceCode()).isNotNull();
+        assertThat(ctx.getGeneratedTests()).isNotNull();
+        assertThat(ctx.getFeatureManifest()).isNotNull();
         assertThat(ctx.getSecOpsArtifacts()).isNull();
         assertThat(ctx.getTechnicalSpec()).isNotNull();
         assertThat(ctx.getArchitectureDesign()).isNotNull();
@@ -476,6 +567,84 @@ class PipelineStateMachineTest {
         assertThat(ctx.getProductReviewReport()).isNotNull();
         assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("REJECT");
         assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getLastErrorMessage())
+                .contains("REJECTED")
+                .contains("Implement task assignment end-to-end (API + persistence + UI)");
+        assertThat(ctx.safeAuditLog())
+                .anyMatch(e -> e.getSeverity() == com.midas.d3.context.AuditEntry.Severity.ERROR);
+    }
+
+    @Test
+    @DisplayName("E2E: REJECT → SURGICAL_PATCH remediation → PASS (golden path)")
+    void e2e_reject_surgicalPatch_pass() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+
+        MidasContext afterReject = extractContext();
+        assertThat(afterReject.getRemediationDirective().get("remediation_mode").asText())
+                .isEqualTo("SURGICAL_PATCH");
+        assertThat(afterReject.getSecOpsArtifacts()).isNull();
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_PASS);
+
+        assertState(MidasState.COMPLETED);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirective().get("remediation_mode").asText()).isEqualTo("SURGICAL_PATCH");
+        assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("PASS");
+        assertThat(ctx.getGeneratedSourceCode().get("src/main/java/com/example/TaskController.java").asText())
+                .contains("assign");
+        assertThat(ctx.getFeatureManifest()).hasSize(3);
+        assertThat(ctx.getGeneratedTests()).isNotNull();
+        assertThat(ctx.getSecOpsArtifacts()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("E2E: REJECT → SURGICAL_PATCH patch validation fails → full regen envelope → PASS")
+    void e2e_reject_surgicalPatchFails_fullRegenFallback_pass() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+        assertThat(extractContext().getRemediationDirective().get("remediation_mode").asText())
+                .isEqualTo("SURGICAL_PATCH");
+
+        sendSubmit(INVALID_PATCH_WITH_PLACEHOLDER);
+        assertState(MidasState.CODE_GENERATION);
+        assertThat(extractContext().getValidationRetries()).isEqualTo(1);
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_PASS);
+
+        assertState(MidasState.COMPLETED);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("PASS");
+        assertThat(ctx.getGeneratedSourceCode().get("src/main/java/com/example/TaskController.java").asText())
+                .contains("assign");
+        assertThat(ctx.getFeatureManifest()).hasSize(3);
+        assertThat(ctx.getValidationRetries()).isZero();
+    }
+
+    @Test
+    @DisplayName("E2E: REJECT → SURGICAL_PATCH → second REJECT → ERROR (remediation exhausted)")
+    void e2e_reject_surgicalPatch_secondReject_error() {
+        drivePipelineToProductReview();
+        sendSubmit(CONTROLLER_REJECT);
+        assertState(MidasState.CODE_GENERATION);
+        assertThat(extractContext().getRemediationDirective().get("remediation_mode").asText())
+                .isEqualTo("SURGICAL_PATCH");
+
+        drivePipelineFromCodeGeneration();
+        sendSubmit(CONTROLLER_REJECT);
+
+        assertState(MidasState.ERROR);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewReport()).isNotNull();
+        assertThat(ctx.getProductReviewReport().get("verdict").asText()).isEqualTo("REJECT");
+        assertThat(ctx.getProductReviewRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirective().get("remediation_mode").asText()).isEqualTo("SURGICAL_PATCH");
         assertThat(ctx.getLastErrorMessage())
                 .contains("REJECTED")
                 .contains("Implement task assignment end-to-end (API + persistence + UI)");
@@ -654,11 +823,7 @@ class PipelineStateMachineTest {
             }
             """);
         assertState(MidasState.CODE_GENERATION);
-        sendSubmit("""
-            {
-              "src/main/java/com/example/TaskController.java": "public class TaskController { }"
-            }
-            """);
+        sendSubmit(VALID_CODE_GEN);
         assertState(MidasState.TEST_GENERATION);
         sendSubmit("""
             {
@@ -676,11 +841,7 @@ class PipelineStateMachineTest {
     }
 
     private void drivePipelineFromCodeGeneration() {
-        sendSubmit("""
-            {
-              "src/main/java/com/example/TaskController.java": "public class TaskController { void assign() {} }"
-            }
-            """);
+        sendSubmit(VALID_CODE_GEN_REMEDIATED);
         assertState(MidasState.TEST_GENERATION);
         sendSubmit("""
             {

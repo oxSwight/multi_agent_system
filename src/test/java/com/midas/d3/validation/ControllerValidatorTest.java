@@ -37,7 +37,7 @@ class ControllerValidatorTest {
                   "verdict": "PASS",
                   "summary": "Everything requested was delivered.",
                   "coverage_matrix": [
-                    {"requested_feature": "Create task", "status": "COVERED", "evidence": "implemented"}
+                    {"requested_feature": "Create task", "status": "COVERED", "evidence": "create-task in TaskController.java"}
                   ],
                   "remediation_block": {"required_changes": [], "recommendations": []}
                 }
@@ -54,7 +54,7 @@ class ControllerValidatorTest {
                   "verdict": "PASS_WITH_NOTES",
                   "summary": "Met intent with minor notes.",
                   "coverage_matrix": [
-                    {"requested_feature": "Delete task", "status": "PARTIAL", "evidence": "soft delete only"}
+                    {"requested_feature": "Delete task", "status": "PARTIAL", "evidence": "delete-task partial in Task.java"}
                   ],
                   "remediation_block": {"required_changes": [], "recommendations": ["Add hard delete"]}
                 }
@@ -70,7 +70,7 @@ class ControllerValidatorTest {
                   "verdict": "REJECT",
                   "summary": "Assignment feature missing.",
                   "coverage_matrix": [
-                    {"requested_feature": "Assign task", "status": "MISSING", "evidence": "no endpoint"}
+                    {"requested_feature": "Assign task", "status": "MISSING", "evidence": "assign-task not in TaskController.java"}
                   ],
                   "remediation_block": {"required_changes": ["Implement task assignment"], "recommendations": []}
                 }
@@ -85,7 +85,7 @@ class ControllerValidatorTest {
             String json = """
                 {
                   "verdict": "pass",
-                  "coverage_matrix": [{"requested_feature": "F", "status": "covered"}],
+                  "coverage_matrix": [{"requested_feature": "F", "status": "covered", "evidence": "feature-a covered"}],
                   "remediation_block": {"required_changes": []}
                 }
                 """;
@@ -104,7 +104,7 @@ class ControllerValidatorTest {
         void missingVerdict() {
             String json = """
                 {
-                  "coverage_matrix": [{"requested_feature": "F", "status": "COVERED"}],
+                  "coverage_matrix": [{"requested_feature": "F", "status": "COVERED", "evidence": "feature-a covered"}],
                   "remediation_block": {"required_changes": []}
                 }
                 """;
@@ -119,7 +119,7 @@ class ControllerValidatorTest {
             String json = """
                 {
                   "verdict": "MAYBE",
-                  "coverage_matrix": [{"requested_feature": "F", "status": "COVERED"}],
+                  "coverage_matrix": [{"requested_feature": "F", "status": "COVERED", "evidence": "feature-a covered"}],
                   "remediation_block": {"required_changes": []}
                 }
                 """;
@@ -134,7 +134,7 @@ class ControllerValidatorTest {
             String json = """
                 {
                   "verdict": "REJECT",
-                  "coverage_matrix": [{"requested_feature": "F", "status": "MISSING"}],
+                  "coverage_matrix": [{"requested_feature": "F", "status": "MISSING", "evidence": "feature-a missing"}],
                   "remediation_block": {"required_changes": [], "recommendations": []}
                 }
                 """;
@@ -200,7 +200,7 @@ class ControllerValidatorTest {
             String json = """
                 {
                   "verdict": "PASS",
-                  "coverage_matrix": [{"requested_feature": "F", "status": "DONE"}],
+                  "coverage_matrix": [{"requested_feature": "F", "status": "DONE", "evidence": "feature-a"}],
                   "remediation_block": {"required_changes": []}
                 }
                 """;
@@ -211,6 +211,97 @@ class ControllerValidatorTest {
     }
 
     // ── Remediation block + structural guards ─────────────────────────────────
+
+    @Nested
+    @DisplayName("Evidence cross-references featureManifest when present")
+    class ManifestEvidenceRules {
+
+        private static final String MANIFEST = """
+                [
+                  {
+                    "feature_id": "create-task",
+                    "feature_name": "Create task",
+                    "files": ["src/main/java/com/example/TaskController.java"],
+                    "entry_points": ["TaskController"]
+                  },
+                  {
+                    "feature_id": "assign-task",
+                    "feature_name": "Assign task",
+                    "files": ["src/main/java/com/example/TaskController.java"],
+                    "entry_points": ["TaskController"]
+                  }
+                ]
+                """;
+
+        @Test
+        @DisplayName("evidence citing feature_id passes validateWithFeatureManifest")
+        void evidenceWithFeatureId_passes() throws Exception {
+            String json = """
+                {
+                  "verdict": "PASS",
+                  "summary": "Covered.",
+                  "coverage_matrix": [
+                    {"requested_feature": "Create task", "status": "COVERED", "evidence": "create-task mapped in manifest"}
+                  ],
+                  "remediation_block": {"required_changes": [], "recommendations": []}
+                }
+                """;
+            JsonNode manifest = new JacksonConfig().objectMapper().readTree(MANIFEST);
+            assertThatNoException().isThrownBy(() -> validator.validateWithFeatureManifest(json, manifest));
+        }
+
+        @Test
+        @DisplayName("evidence citing manifest file path passes validateWithFeatureManifest")
+        void evidenceWithFilePath_passes() throws Exception {
+            String json = """
+                {
+                  "verdict": "PASS",
+                  "summary": "Covered.",
+                  "coverage_matrix": [
+                    {"requested_feature": "Create task", "status": "COVERED", "evidence": "src/main/java/com/example/TaskController.java implements create"}
+                  ],
+                  "remediation_block": {"required_changes": [], "recommendations": []}
+                }
+                """;
+            JsonNode manifest = new JacksonConfig().objectMapper().readTree(MANIFEST);
+            assertThatNoException().isThrownBy(() -> validator.validateWithFeatureManifest(json, manifest));
+        }
+
+        @Test
+        @DisplayName("evidence not referencing manifest fails validateWithFeatureManifest")
+        void evidenceWithoutManifestReference_fails() throws Exception {
+            String json = """
+                {
+                  "verdict": "PASS",
+                  "summary": "Covered.",
+                  "coverage_matrix": [
+                    {"requested_feature": "Create task", "status": "COVERED", "evidence": "implemented somewhere"}
+                  ],
+                  "remediation_block": {"required_changes": [], "recommendations": []}
+                }
+                """;
+            JsonNode manifest = new JacksonConfig().objectMapper().readTree(MANIFEST);
+            assertThatThrownBy(() -> validator.validateWithFeatureManifest(json, manifest))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("featureManifest");
+        }
+
+        @Test
+        @DisplayName("validate without manifest skips cross-reference")
+        void validateWithoutManifest_skipsCrossReference() {
+            String json = """
+                {
+                  "verdict": "PASS",
+                  "summary": "Covered.",
+                  "coverage_matrix": [
+                    {"requested_feature": "Create task", "status": "COVERED", "evidence": "implemented somewhere"}
+                  ],
+                  "remediation_block": {"required_changes": [], "recommendations": []}
+                }
+                """;
+            assertThatNoException().isThrownBy(() -> validator.validate(json));
+        }
+    }
 
     @Nested
     @DisplayName("Rejects bad remediation_block and malformed input")

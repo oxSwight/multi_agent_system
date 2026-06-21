@@ -61,7 +61,7 @@ public class GeminiLlmClient implements LlmClient {
     public GeminiLlmClient(
             WebClient.Builder webClientBuilder,
             @Value("${midas.llm.api-key:}") String apiKey,
-            @Value("${midas.llm.model:gemini-1.5-flash}") String model,
+            @Value("${midas.llm.model:gemini-2.5-flash}") String model,
             @Value("${midas.llm.timeout-seconds:120}") int timeoutSeconds,
             @Value("${midas.llm.http-max-retries:2}") int httpMaxRetries) {
 

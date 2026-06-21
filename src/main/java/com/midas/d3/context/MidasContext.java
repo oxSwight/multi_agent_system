@@ -62,6 +62,8 @@ public final class MidasContext {
      */
     @With private final JsonNode generatedSourceCode;
 
+    @With private final JsonNode featureManifest;
+
     /**
      * Agent 5 output: generated test files map (filename → test source code).
      */
@@ -150,6 +152,10 @@ public final class MidasContext {
 
     public Optional<JsonNode> getGeneratedSourceCodeOpt() {
         return Optional.ofNullable(generatedSourceCode);
+    }
+
+    public Optional<JsonNode> getFeatureManifestOpt() {
+        return Optional.ofNullable(featureManifest);
     }
 
     public Optional<JsonNode> getGeneratedTestsOpt() {
