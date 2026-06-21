@@ -36,6 +36,7 @@ midas:
   validation:
     max-retries: 3
   llm:
+    client-type: GEMINI
     timeout-seconds: 5
     base-url: http://localhost:11434
     api-key: ''

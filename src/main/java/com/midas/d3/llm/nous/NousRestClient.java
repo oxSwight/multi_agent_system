@@ -8,6 +8,7 @@ import com.midas.d3.llm.nous.dto.NousRequest;
 import com.midas.d3.llm.nous.dto.NousResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,7 @@ import java.time.Duration;
 
 @Slf4j
 @Component
+@ConditionalOnProperty(prefix = "midas.llm", name = "client-type", havingValue = "NOUS")
 public class NousRestClient implements LlmClient {
 
     private static final String CHAT_COMPLETIONS_PATH = "/v1/chat/completions";

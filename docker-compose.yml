@@ -46,17 +46,18 @@ services:
       # Security
       MIDAS_JWT_SECRET: ${MIDAS_JWT_SECRET:?MIDAS_JWT_SECRET must be set}
 
-      # Gemini LLM
+      # LLM client selection (NOUS = Ollama/OpenAI-compatible; GEMINI = Google AI Studio)
+      MIDAS_LLM_CLIENT_TYPE: ${MIDAS_LLM_CLIENT_TYPE:-NOUS}
       MIDAS_LLM_BASE_URL: ${MIDAS_LLM_BASE_URL:-https://generativelanguage.googleapis.com}
       MIDAS_LLM_API_KEY: ${MIDAS_LLM_API_KEY:-}
-      MIDAS_LLM_MODEL: ${MIDAS_LLM_MODEL:-gemini-2.5-flash}
-      MIDAS_LLM_MODEL_CODE: ${MIDAS_LLM_MODEL_CODE:-gemini-3.5-flash}
-      MIDAS_LLM_MODEL_TEST: ${MIDAS_LLM_MODEL_TEST:-gemini-2.5-flash}
+      MIDAS_LLM_MODEL: ${MIDAS_LLM_MODEL:-qwen2.5-coder:7b}
+      MIDAS_LLM_MODEL_CODE: ${MIDAS_LLM_MODEL_CODE:-qwen2.5-coder:7b}
+      MIDAS_LLM_MODEL_TEST: ${MIDAS_LLM_MODEL_TEST:-qwen2.5-coder:7b}
 
-      # Nous / OpenAI-compatible LLM
-      MIDAS_NOUS_BASE_URL: ${MIDAS_NOUS_BASE_URL:-http://localhost:1234}
-      MIDAS_NOUS_API_KEY: ${MIDAS_NOUS_API_KEY:-}
-      MIDAS_NOUS_MODEL: ${MIDAS_NOUS_MODEL:-nous-hermes-2-mistral-7b-dpo}
+      # Nous / OpenAI-compatible LLM (Ollama on host via host.docker.internal)
+      MIDAS_NOUS_BASE_URL: ${MIDAS_NOUS_BASE_URL:-http://host.docker.internal:11434}
+      MIDAS_NOUS_API_KEY: ${MIDAS_NOUS_API_KEY:-ollama-local-dev}
+      MIDAS_NOUS_MODEL: ${MIDAS_NOUS_MODEL:-qwen2.5-coder:7b}
       MIDAS_NOUS_TIMEOUT_SECONDS: ${MIDAS_NOUS_TIMEOUT_SECONDS:-120}
       MIDAS_NOUS_MAX_RETRIES: ${MIDAS_NOUS_MAX_RETRIES:-2}
 
