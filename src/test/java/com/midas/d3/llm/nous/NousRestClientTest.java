@@ -24,6 +24,34 @@ class NousRestClientTest {
             """;
 
     @Test
+    @DisplayName("Extracts prompt and completion tokens when Ollama returns usage block")
+    void call_withUsageBlock_extractsTokenCounts() {
+        String body = """
+                {"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],
+                 "usage":{"prompt_tokens":256,"completion_tokens":64,"total_tokens":320}}
+                """;
+        ExchangeFunction exchange = request -> Mono.just(ClientResponse.create(HttpStatus.OK)
+                .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                .body(body)
+                .build());
+
+        NousRestClient client = newClient(exchange);
+
+        LlmCallRequest request = LlmCallRequest.of(
+                MidasState.SYSTEM_ANALYSIS,
+                "SystemAnalystAgent",
+                "system",
+                "user",
+                "run-tokens");
+
+        LlmCallResult result = client.call(request);
+
+        assertThat(result.promptTokens()).isEqualTo(256);
+        assertThat(result.completionTokens()).isEqualTo(64);
+        assertThat(result.finishReason()).isEqualTo("stop");
+    }
+
+    @Test
     @DisplayName("Falls back to Ollama reasoning field when content is empty")
     void call_emptyContent_usesReasoningField() {
         String body = """

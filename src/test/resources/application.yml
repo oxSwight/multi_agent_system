@@ -35,6 +35,9 @@ midas:
     max-artifact-size-kb: 512
   validation:
     max-retries: 3
+  agent-retry:
+    parse-max-attempts: 2
+    validation-max-attempts: 3
   llm:
     client-type: GEMINI
     timeout-seconds: 5

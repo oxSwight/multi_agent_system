@@ -17,6 +17,15 @@ import java.util.Optional;
 public class NousResponse {
 
     private List<Choice> choices;
+    private Usage usage;
+
+    public int extractPromptTokens() {
+        return usage != null && usage.promptTokens != null ? usage.promptTokens : 0;
+    }
+
+    public int extractCompletionTokens() {
+        return usage != null && usage.completionTokens != null ? usage.completionTokens : 0;
+    }
 
     /**
      * Extracts the assistant's reply text from the first choice.
@@ -88,5 +97,17 @@ public class NousResponse {
         private String content;
         /** Ollama DeepSeek-R1 chain-of-thought; ignored for artifact extraction. */
         private String reasoning;
+    }
+
+    @Getter
+    @NoArgsConstructor
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Usage {
+        @com.fasterxml.jackson.annotation.JsonProperty("prompt_tokens")
+        private Integer promptTokens;
+        @com.fasterxml.jackson.annotation.JsonProperty("completion_tokens")
+        private Integer completionTokens;
+        @com.fasterxml.jackson.annotation.JsonProperty("total_tokens")
+        private Integer totalTokens;
     }
 }

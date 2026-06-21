@@ -34,7 +34,7 @@ import java.util.Map;
 @Component
 public class PerFileCodeGenerationStrategy {
 
-    static final int MAX_PASS_RETRIES = AgentRetryPolicy.MAX_VALIDATION_ATTEMPTS;
+    static final int MAX_PASS_RETRIES = AgentRetryPolicy.maxValidationAttempts();
 
     private final LlmClient llmClient;
     private final LlmModelPolicy llmModelPolicy;
@@ -72,6 +72,7 @@ public class PerFileCodeGenerationStrategy {
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
         String modelId = "";
+        String lastFinishReason = "";
 
         log.info("[PerFileCodeGenerationStrategy] {} generating {} file(s) for run [{}].",
                 surface != null ? surface.name() + " pass" : "Single pass",
@@ -88,6 +89,7 @@ public class PerFileCodeGenerationStrategy {
             totalPromptTokens += fileResult.promptTokens();
             totalCompletionTokens += fileResult.completionTokens();
             modelId = fileResult.modelId();
+            lastFinishReason = fileResult.finishReason();
         }
 
         JsonNode featureManifest = FeatureManifestBuilder.build(
@@ -114,6 +116,9 @@ public class PerFileCodeGenerationStrategy {
             throw new IllegalStateException("Failed to serialize assembled implementation envelope.", e);
         }
 
+        LlmCallObservability.logExecutionSummary(
+                context.getPipelineRunId(), llmAgentName,
+                totalPromptTokens, totalCompletionTokens, lastFinishReason);
         return new PassResult(sourceFiles, featureManifest, totalAttempts,
                 totalPromptTokens, totalCompletionTokens, modelId);
     }
@@ -154,16 +159,18 @@ public class PerFileCodeGenerationStrategy {
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
+        String lastFinishReason = "";
+        int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
 
-        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
+        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
             String userMessage = attempt == 1
                     ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
 
             log.info("[PerFileCodeGenerationStrategy] {} file [{}/{}] {} attempt {}/{} — run=[{}]",
                     surface != null ? surface.name() : "SINGLE",
                     fileIndex, totalFiles, targetPath,
-                    attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
+                    attempt, effectiveMax, context.getPipelineRunId());
 
             try {
                 LlmCallResult llmResult = invokeLlm(context, llmAgentName, LlmCallRequest.of(
@@ -172,19 +179,21 @@ public class PerFileCodeGenerationStrategy {
                         systemPrompt,
                         userMessage,
                         context.getPipelineRunId(),
-                        modelOverride), attempt, MAX_PASS_RETRIES);
+                        modelOverride), attempt, effectiveMax);
 
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
+                lastFinishReason = llmResult.finishReason();
                 String sanitized = JsonSanitizer.sanitize(llmResult.text());
                 SingleFileLLMResponse parsed = validator.validateSingleFileOutput(sanitized, targetPath);
                 return new FileGenerationResult(parsed.content(), attempt,
-                        totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
+                        totalPromptTokens, totalCompletionTokens, llmResult.modelUsed(), lastFinishReason);
 
             } catch (ValidationHookException e) {
+                effectiveMax = AgentRetryPolicy.maxAttemptsFor(e);
                 lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
                 log.warn("[PerFileCodeGenerationStrategy] file [{}] attempt {}/{} rejected: {}",
-                        targetPath, attempt, MAX_PASS_RETRIES, lastError);
+                        targetPath, attempt, effectiveMax, lastError);
                 if (!AgentRetryPolicy.canRetry(e, attempt)) {
                     break;
                 }
@@ -199,10 +208,13 @@ public class PerFileCodeGenerationStrategy {
             }
         }
 
+        LlmCallObservability.logExecutionSummary(
+                context.getPipelineRunId(), llmAgentName,
+                totalPromptTokens, totalCompletionTokens, lastFinishReason);
         throw new AgentExecutionException(
                 llmAgentName,
                 ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
-                MAX_PASS_RETRIES,
+                effectiveMax,
                 "Per-file generation failed for [" + targetPath + "]: " + lastError);
     }
 
@@ -257,10 +269,10 @@ public class PerFileCodeGenerationStrategy {
         return AgentSystemPrompts.appendProductReviewRemediation(baseSystemPrompt, context.getRemediationDirective());
     }
 
-    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt) {
+    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt, int maxAttempts) {
         return baseUserMessage
                 + "\n\n"
-                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + MAX_PASS_RETRIES + ") ---\n"
+                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
                 + "Your previous response was rejected by the schema validator.\n"
                 + "Violations found:\n"
                 + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"
@@ -273,11 +285,8 @@ public class PerFileCodeGenerationStrategy {
                                       int attempt,
                                       int maxAttempts) throws LlmCallException {
         LlmCallResult result = llmClient.call(request);
-        LlmCallObservability.logCallMetadata(
+        LlmCallObservability.logTelemetry(
                 context.getPipelineRunId(), llmAgentName, attempt, maxAttempts, result);
-        LlmCallObservability.logFinOps(
-                context.getPipelineRunId(), llmAgentName, result.modelUsed(),
-                result.promptTokens(), result.completionTokens());
         AgentRetryPolicy.failFastIfTruncated(result, llmAgentName, context.getPipelineRunId());
         return result;
     }
@@ -304,5 +313,6 @@ public class PerFileCodeGenerationStrategy {
                                           int attemptsUsed,
                                           int promptTokens,
                                           int completionTokens,
-                                          String modelId) {}
+                                          String modelId,
+                                          String finishReason) {}
 }

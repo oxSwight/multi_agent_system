@@ -54,6 +54,10 @@ midas:
   validation:
     max-retries: 3
 
+  agent-retry:
+    parse-max-attempts: ${MIDAS_AGENT_RETRY_PARSE_MAX:2}
+    validation-max-attempts: ${MIDAS_AGENT_RETRY_VALIDATION_MAX:3}
+
   finops:
     # Approximate Gemini 2.5 Flash list prices (USD per 1M tokens) for dashboard estimates.
     usd-per-million-prompt-tokens: ${MIDAS_FINOPS_USD_PER_M_PROMPT:0.075}

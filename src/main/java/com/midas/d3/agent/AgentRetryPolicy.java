@@ -10,23 +10,50 @@ import java.util.List;
  * Retry limits for agent LLM loops (parse vs schema/business vs MAX_TOKENS).
  *
  * <ul>
- *   <li>JSON parse error — at most 1 retry (2 total attempts)</li>
- *   <li>{@link ValidationHookException} (schema/business) — up to 3 attempts</li>
+ *   <li>JSON parse error — at most 1 retry (2 total attempts by default)</li>
+ *   <li>{@link ValidationHookException} (schema/business) — up to 3 attempts by default</li>
  *   <li>{@code finishReason=MAX_TOKENS} — 0 retries (fail fast)</li>
  * </ul>
+ *
+ * <p>Limits are configurable via {@link AgentRetryPolicyProperties}; defaults apply in unit tests
+ * without a Spring context.
  */
 public final class AgentRetryPolicy {
 
-    /** Total attempts allowed for schema/business validation failures. */
+    private static volatile int maxParseAttempts = 2;
+    private static volatile int maxValidationAttempts = 3;
+
+    /** @deprecated use {@link #maxValidationAttempts()} */
+    @Deprecated
     public static final int MAX_VALIDATION_ATTEMPTS = 3;
 
-    /** Total attempts allowed when the only failure is a JSON parse error. */
+    /** @deprecated use {@link #maxParseAttempts()} */
+    @Deprecated
     public static final int MAX_PARSE_ATTEMPTS = 2;
 
     private AgentRetryPolicy() {}
 
+    public static void configure(int parseMaxAttempts, int validationMaxAttempts) {
+        if (parseMaxAttempts < 1) {
+            throw new IllegalArgumentException("parseMaxAttempts must be >= 1, got: " + parseMaxAttempts);
+        }
+        if (validationMaxAttempts < 1) {
+            throw new IllegalArgumentException("validationMaxAttempts must be >= 1, got: " + validationMaxAttempts);
+        }
+        maxParseAttempts = parseMaxAttempts;
+        maxValidationAttempts = validationMaxAttempts;
+    }
+
+    public static int maxParseAttempts() {
+        return maxParseAttempts;
+    }
+
+    public static int maxValidationAttempts() {
+        return maxValidationAttempts;
+    }
+
     public static int maxAttemptsFor(ValidationHookException exception) {
-        return exception.isParseError() ? MAX_PARSE_ATTEMPTS : MAX_VALIDATION_ATTEMPTS;
+        return exception.isParseError() ? maxParseAttempts : maxValidationAttempts;
     }
 
     public static boolean canRetry(ValidationHookException exception, int attempt) {

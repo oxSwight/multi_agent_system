@@ -40,7 +40,7 @@ import java.util.concurrent.Executor;
 @Service
 public class TestGenerationCoordinator {
 
-    static final int MAX_PASS_RETRIES = AgentRetryPolicy.MAX_VALIDATION_ATTEMPTS;
+    static final int MAX_PASS_RETRIES = AgentRetryPolicy.maxValidationAttempts();
 
     private final ContextReducer contextReducer;
     private final LlmClient llmClient;
@@ -161,15 +161,17 @@ public class TestGenerationCoordinator {
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
+        String lastFinishReason = "";
+        int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
 
-        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
+        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
             String userMessage = attempt == 1
                     ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
 
             log.info("[TestGenerationCoordinator] PATCH {} attempt {}/{} — run=[{}]",
                     surface != null ? surface.name() : "SINGLE",
-                    attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
+                    attempt, effectiveMax, context.getPipelineRunId());
 
             try {
                 LlmCallResult llmResult = invokeLlm(
@@ -180,18 +182,23 @@ public class TestGenerationCoordinator {
                         userMessage,
                         context.getPipelineRunId(),
                         modelOverride),
-                        attempt, MAX_PASS_RETRIES);
+                        attempt, effectiveMax);
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
+                lastFinishReason = llmResult.finishReason();
                 String sanitized = JsonSanitizer.sanitize(llmResult.text());
                 JsonNode patchTests = qaValidator.validatePatchDelta(sanitized);
+                LlmCallObservability.logExecutionSummary(
+                        context.getPipelineRunId(), llmAgentName,
+                        totalPromptTokens, totalCompletionTokens, lastFinishReason);
                 return new PatchAttemptResult(patchTests, attempt, totalPromptTokens, totalCompletionTokens,
                         llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
+                effectiveMax = AgentRetryPolicy.maxAttemptsFor(e);
                 lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
                 log.warn("[TestGenerationCoordinator] PATCH attempt {}/{} rejected: {}",
-                        attempt, MAX_PASS_RETRIES, lastError);
+                        attempt, effectiveMax, lastError);
                 if (!AgentRetryPolicy.canRetry(e, attempt)) {
                     break;
                 }
@@ -206,10 +213,13 @@ public class TestGenerationCoordinator {
             }
         }
 
+        LlmCallObservability.logExecutionSummary(
+                context.getPipelineRunId(), llmAgentName,
+                totalPromptTokens, totalCompletionTokens, lastFinishReason);
         throw new AgentExecutionException(
                 llmAgentName,
                 ContextReducer.AgentRole.QA_ENGINEER,
-                MAX_PASS_RETRIES,
+                effectiveMax,
                 "Surgical test patch failed: " + lastError);
     }
 
@@ -327,14 +337,16 @@ public class TestGenerationCoordinator {
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
+        String lastFinishReason = "";
+        int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
 
-        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
+        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
             String userMessage = attempt == 1
                     ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
 
             log.info("[TestGenerationCoordinator] {} pass attempt {}/{} — run=[{}]",
-                    surface, attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
+                    surface, attempt, effectiveMax, context.getPipelineRunId());
 
             try {
                 LlmCallResult llmResult = invokeLlm(
@@ -345,19 +357,24 @@ public class TestGenerationCoordinator {
                         userMessage,
                         context.getPipelineRunId(),
                         modelOverride),
-                        attempt, MAX_PASS_RETRIES);
+                        attempt, effectiveMax);
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
+                lastFinishReason = llmResult.finishReason();
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
                 JsonNode validated = validator.validate(sanitized);
+                LlmCallObservability.logExecutionSummary(
+                        context.getPipelineRunId(), llmAgentName,
+                        totalPromptTokens, totalCompletionTokens, lastFinishReason);
                 return new PassResult(validated, attempt, totalPromptTokens, totalCompletionTokens, llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
+                effectiveMax = AgentRetryPolicy.maxAttemptsFor(e);
                 lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
                 log.warn("[TestGenerationCoordinator] {} pass attempt {}/{} rejected: {}",
-                        surface, attempt, MAX_PASS_RETRIES, lastError);
+                        surface, attempt, effectiveMax, lastError);
                 if (!AgentRetryPolicy.canRetry(e, attempt)) {
                     break;
                 }
@@ -369,15 +386,18 @@ public class TestGenerationCoordinator {
                 }
                 lastError = "LLM transport error: " + e.getMessage();
                 log.warn("[TestGenerationCoordinator] {} pass attempt {}/{} transport error: {}",
-                        surface, attempt, MAX_PASS_RETRIES, e.getMessage());
+                        surface, attempt, effectiveMax, e.getMessage());
                 backoffBeforeRetry(attempt);
             }
         }
 
+        LlmCallObservability.logExecutionSummary(
+                context.getPipelineRunId(), llmAgentName,
+                totalPromptTokens, totalCompletionTokens, lastFinishReason);
         throw new AgentExecutionException(
                 llmAgentName,
                 ContextReducer.AgentRole.QA_ENGINEER,
-                MAX_PASS_RETRIES,
+                effectiveMax,
                 surface + " pass failed: " + lastError);
     }
 
@@ -392,14 +412,16 @@ public class TestGenerationCoordinator {
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
+        String lastFinishReason = "";
+        int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
 
-        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
+        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
             String userMessage = attempt == 1
                     ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
 
             log.info("[TestGenerationCoordinator] Single pass attempt {}/{} — run=[{}]",
-                    attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
+                    attempt, effectiveMax, context.getPipelineRunId());
 
             try {
                 LlmCallResult llmResult = invokeLlm(
@@ -410,20 +432,25 @@ public class TestGenerationCoordinator {
                         userMessage,
                         context.getPipelineRunId(),
                         modelOverride),
-                        attempt, MAX_PASS_RETRIES);
+                        attempt, effectiveMax);
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
+                lastFinishReason = llmResult.finishReason();
                 String raw = llmResult.text();
 
                 String sanitized = JsonSanitizer.sanitize(raw);
                 JsonNode validated = validator.validate(sanitized);
+                LlmCallObservability.logExecutionSummary(
+                        context.getPipelineRunId(), llmAgentName,
+                        totalPromptTokens, totalCompletionTokens, lastFinishReason);
                 return new AgentResult(validated, sanitized, attempt, totalPromptTokens, totalCompletionTokens,
                         llmResult.modelUsed(), llmResult.finishReason());
 
             } catch (ValidationHookException e) {
+                effectiveMax = AgentRetryPolicy.maxAttemptsFor(e);
                 lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
                 log.warn("[TestGenerationCoordinator] Single pass attempt {}/{} rejected: {}",
-                        attempt, MAX_PASS_RETRIES, lastError);
+                        attempt, effectiveMax, lastError);
                 if (!AgentRetryPolicy.canRetry(e, attempt)) {
                     break;
                 }
@@ -438,10 +465,13 @@ public class TestGenerationCoordinator {
             }
         }
 
+        LlmCallObservability.logExecutionSummary(
+                context.getPipelineRunId(), agentName,
+                totalPromptTokens, totalCompletionTokens, lastFinishReason);
         throw new AgentExecutionException(
                 agentName,
                 ContextReducer.AgentRole.QA_ENGINEER,
-                MAX_PASS_RETRIES,
+                effectiveMax,
                 lastError);
     }
 
@@ -529,10 +559,10 @@ public class TestGenerationCoordinator {
         return sb.toString();
     }
 
-    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt) {
+    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt, int maxAttempts) {
         return baseUserMessage
                 + "\n\n"
-                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + MAX_PASS_RETRIES + ") ---\n"
+                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
                 + "Your previous response was rejected by the schema validator.\n"
                 + "Violations found:\n"
                 + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"
@@ -545,11 +575,8 @@ public class TestGenerationCoordinator {
                                     int attempt,
                                     int maxAttempts) throws LlmCallException {
         LlmCallResult result = llmClient.call(request);
-        LlmCallObservability.logCallMetadata(
+        LlmCallObservability.logTelemetry(
                 context.getPipelineRunId(), llmAgentName, attempt, maxAttempts, result);
-        LlmCallObservability.logFinOps(
-                context.getPipelineRunId(), llmAgentName, result.modelUsed(),
-                result.promptTokens(), result.completionTokens());
         AgentRetryPolicy.failFastIfTruncated(result, llmAgentName, context.getPipelineRunId());
         return result;
     }

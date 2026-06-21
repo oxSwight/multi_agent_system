@@ -100,7 +100,8 @@ public class NousRestClient implements LlmClient {
                             request.getAgentName(), request.getPipelineRunId());
                 }
 
-                return LlmCallResult.of(text, effectiveModel, 0, 0, finishReason);
+                return LlmCallResult.of(text, effectiveModel,
+                        response.extractPromptTokens(), response.extractCompletionTokens(), finishReason);
 
             } catch (LlmCallException e) {
                 throw e;
