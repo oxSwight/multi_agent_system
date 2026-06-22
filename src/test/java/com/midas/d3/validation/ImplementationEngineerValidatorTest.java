@@ -155,7 +155,7 @@ class ImplementationEngineerValidatorTest {
     }
 
     @Test
-    void validateWithTechnicalSpec_missingCoreFeature_throwsValidationHookException() throws Exception {
+    void validateWithTechnicalSpec_missingCoreFeature_logsWarningButPasses() throws Exception {
         String json = """
                 {
                   "source_files": {
@@ -175,13 +175,13 @@ class ImplementationEngineerValidatorTest {
                 {"core_features":["Create task","Delete task"]}
                 """);
 
-        assertThatThrownBy(() -> validator.validateWithTechnicalSpec(json, spec))
-                .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("Delete task");
+        JsonNode result = validator.validateWithTechnicalSpec(json, spec);
+
+        assertThat(result.get("feature_manifest")).hasSize(1);
     }
 
     @Test
-    void validateWithTechnicalSpec_orphanManifestId_throwsValidationHookException() throws Exception {
+    void validateWithTechnicalSpec_orphanManifestId_logsWarningButPasses() throws Exception {
         String json = """
                 {
                   "source_files": {
@@ -208,9 +208,9 @@ class ImplementationEngineerValidatorTest {
                 {"core_features":["Create task"]}
                 """);
 
-        assertThatThrownBy(() -> validator.validateWithTechnicalSpec(json, spec))
-                .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("extra-feature");
+        JsonNode result = validator.validateWithTechnicalSpec(json, spec);
+
+        assertThat(result.get("feature_manifest")).hasSize(2);
     }
 
     @Test

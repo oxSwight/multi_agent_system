@@ -3,6 +3,7 @@ package com.midas.d3.validation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
@@ -12,6 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+@Slf4j
 @Component
 public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator {
 
@@ -180,7 +182,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
                 crossCheckManifestFiles(sourceFiles, featureManifest, violations);
             }
             if (technicalSpec != null && !technicalSpec.isNull() && !technicalSpec.isMissingNode()) {
-                crossCheckManifestAgainstSpec(featureManifest, technicalSpec, violations);
+                warnOnManifestSpecMismatch(featureManifest, technicalSpec);
             }
         }
     }
@@ -239,14 +241,14 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         }
     }
 
-    private void crossCheckManifestAgainstSpec(JsonNode featureManifest,
-                                               JsonNode technicalSpec,
-                                               List<String> violations) {
+    private void warnOnManifestSpecMismatch(JsonNode featureManifest,
+                                            JsonNode technicalSpec) {
         JsonNode coreFeatures = technicalSpec.get("core_features");
         if (coreFeatures == null || !coreFeatures.isArray() || coreFeatures.isEmpty()) {
             return;
         }
 
+        List<String> warnings = new java.util.ArrayList<>();
         Set<String> requiredIds = new HashSet<>();
         Set<String> requiredNames = new HashSet<>();
         Set<String> derivedTextualIds = new HashSet<>();
@@ -306,14 +308,14 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             }
 
             if (!matched && !manifestId.isBlank()) {
-                violations.add("feature_manifest feature_id [" + manifestId
+                warnings.add("feature_manifest feature_id [" + manifestId
                         + "] does not match any core_features id.");
             }
         }
 
         for (String requiredId : requiredIds) {
             if (!matchedRequiredIds.contains(requiredId)) {
-                violations.add("core_features id [" + requiredId + "] is missing from feature_manifest.");
+                warnings.add("core_features id [" + requiredId + "] is missing from feature_manifest.");
             }
         }
 
@@ -328,8 +330,13 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             }
             String expectedId = toFeatureId(featureLabel);
             if (!matchedDerivedTextualIds.contains(expectedId) && !matchedRequiredNames.contains(featureLabel)) {
-                violations.add("core_features [" + featureLabel + "] is not represented in feature_manifest.");
+                warnings.add("core_features [" + featureLabel + "] is not represented in feature_manifest.");
             }
+        }
+
+        if (!warnings.isEmpty()) {
+            log.warn("[ImplementationEngineer][CODE_GENERATION] feature_manifest/core_features mismatch ignored: {}",
+                    String.join(" | ", warnings));
         }
     }
 

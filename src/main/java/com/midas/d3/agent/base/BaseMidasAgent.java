@@ -18,6 +18,7 @@ import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.statemachine.remediation.RemediationDirectiveSupport;
 import com.midas.d3.validation.ControllerValidator;
 import com.midas.d3.validation.GoalKeeperValidator;
+import com.midas.d3.validation.SoftwareArchitectValidator;
 import com.midas.d3.validation.ValidationHookException;
 import lombok.extern.slf4j.Slf4j;
 
@@ -247,6 +248,9 @@ public abstract class BaseMidasAgent {
                                          MidasContext context) throws ValidationHookException {
         if (stage == MidasState.PRODUCT_REVIEW && validator instanceof ControllerValidator controllerValidator) {
             return controllerValidator.validateWithFeatureManifest(sanitized, context.getFeatureManifest());
+        }
+        if (stage == MidasState.ARCHITECTURE_DESIGN && validator instanceof SoftwareArchitectValidator architectValidator) {
+            return architectValidator.validateWithTechnicalSpec(sanitized, context.getTechnicalSpec());
         }
         return validator.validate(sanitized);
     }
