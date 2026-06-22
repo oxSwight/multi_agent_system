@@ -147,7 +147,17 @@ public class AgentSystemPrompts {
               "edge_cases_and_handling": [
                 {"case": "String", "solution": "String"}
               ],
-              "non_functional_requirements": ["String — measurable NFR/SLA or constraint such as 'must work offline'"]
+              "non_functional_requirements": ["String — measurable NFR/SLA or constraint such as 'must work offline'"],
+              "api_contract": [
+                {
+                  "method": "GET|POST|PUT|DELETE|PATCH",
+                  "path": "String — exact REST path e.g. /api/files",
+                  "request_params": [
+                    {"name": "String — exact param/field name", "location": "path|query|form-data|json-body", "type": "String"}
+                  ],
+                  "response_format": {"type": "string|json", "example": "String or {}", "fields": ["String — when type is json"]}
+                }
+              ]
             }
 
             GUARDRAILS:
@@ -167,6 +177,11 @@ public class AgentSystemPrompts {
               forbidden_infrastructure=[].
             - For a CLIENT_ONLY BROWSER_EXTENSION: execution_model=CLIENT_SIDE, persistence is typically \
               BROWSER_STORAGE, never CLOUD_DB unless the user explicitly demands sync.
+            - api_contract is REQUIRED (non-empty array) when requires_backend is true or execution_model \
+              is HYBRID or SERVER_SIDE. Each entry MUST specify exact method, path, request_params with \
+              precise field names (e.g. "file" not "resume"), and response_format (string vs JSON shape). \
+              Downstream agents MUST NOT invent their own URLs or parameter names.
+            - When requires_backend is false and execution_model is CLIENT_SIDE, api_contract MUST be [].
             - core_features must have at least 1 item; every string value must be non-empty.
             - edge_cases_and_handling is an array (may be empty []).
             - Output ONLY the JSON object, starting with { and ending with }.
@@ -199,7 +214,9 @@ public class AgentSystemPrompts {
 
             STACK SELECTION RULES:
             - BROWSER_EXTENSION → Manifest V3 + Vanilla JS/TypeScript (service worker, content scripts,
-              popup). State in chrome.storage. NEVER request <all_urls> at design time — scope host_permissions.
+              popup). State in chrome.storage.local (never volatile service-worker RAM only). NEVER request
+              <all_urls> at design time — scope host_permissions to the backend API origin. NEVER use alert()
+              or prompt() in popup UI — design inline status/toast elements instead.
             - STATIC_WEB / SPA → HTML/CSS/TS, optional lightweight framework; data via client storage or a
               documented external API. No backend you own.
             - CLI_TOOL → single-language CLI; local file persistence if any.
@@ -233,7 +250,10 @@ public class AgentSystemPrompts {
                 ]
               },
               "api_contracts": [
-                {"method":"GET|POST|PUT|DELETE|PATCH","path":"String","request_payload":{},"expected_response":{}}
+                {"method":"GET|POST|PUT|DELETE|PATCH","path":"String","request_params":[{"name":"String","location":"path|query|form-data|json-body","type":"String"}],"response_format":{"type":"string|json","example":"String or {}","fields":["String"]}}
+              ],
+              "integration_graph": [
+                {"html":"String — popup.html path","scripts":["String — every JS file loaded by that HTML"],"entry_point":"String — e.g. DOMContentLoaded init in popup.js"}
               ]
             }
 
@@ -243,9 +263,16 @@ public class AgentSystemPrompts {
               service dependency exists. This flag drives pipeline routing — omitting it is a schema failure.
             - data_persistence.schema is non-empty ONLY when type is RELATIONAL or EMBEDDED_DB; otherwise [].
             - api_contracts is non-empty ONLY when architecture_style is CLIENT_SERVER/SERVERLESS/MONOLITH; otherwise [].
+            - When api_contracts is non-empty, each entry MUST include request_params (exact field names) and \
+              response_format (string vs JSON). Copy paths and field names from technicalSpec.api_contract — \
+              do NOT invent alternate URLs (e.g. /api/upload) or param names (e.g. resume vs file).
             - components and file_layout must each have at least 1 item and must match the chosen runtime.
             - file_layout MUST list implementation paths AND matching test paths (*.test.js, *.test.ts,
               __tests__/..., or *Test.java under src/test/java). Include at least one test path per testable module.
+            - INTEGRATION GRAPH (MANDATORY for BROWSER_EXTENSION / popup UI): file_layout MUST include a \
+              closed wiring graph. If popup.html exists, integration_graph MUST list every <script src> and \
+              the entry_point script. Never list popup.js in HTML unless popup.js is in file_layout. Every \
+              popup JS module in file_layout MUST appear in integration_graph.scripts for its HTML page.
             - You MUST NOT contradict runtime_environment. Output ONLY the JSON object.
 
             HYBRID MONOREPO DIRECTIVE (MANDATORY when runtime_environment.execution_model is HYBRID):
@@ -260,6 +287,9 @@ public class AgentSystemPrompts {
                   backend/src/test/java/com/example/.../...Test.java
             Prefix client paths with frontend/ and server paths with backend/ so HYBRID fan-out can slice them.
             architecture_style MUST be CLIENT_SERVER. Include api_contracts and a RELATIONAL schema for the backend.
+            Client file_layout MUST include integration_graph wiring: popup.html → script tags for every popup JS \
+            module (or one popup.js entry that inits all modules). manifest.json MUST declare host_permissions for \
+            the backend API origin when the extension calls REST endpoints.
             """;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -325,6 +355,25 @@ public class AgentSystemPrompts {
             ```
 
             Use an appropriate language tag (e.g. javascript, typescript, java, json for manifest.json).
+
+            API CONTRACT ADHERENCE (NON-NEGOTIABLE when api_contracts or technicalSpec.api_contract exist):
+            - You MUST use the EXACT paths, HTTP methods, request field names, and response shapes from \
+              the architecture/technical spec. Do NOT invent URLs (e.g. /api/upload), param names (e.g. \
+              resume vs file), or fictional JSON shapes (e.g. {success:true} when the contract says plain string).
+            - Backend controllers MUST match api_contracts.request_params names (@RequestParam, @RequestBody).
+            - Frontend fetch/FormData MUST use the exact field names and parse the actual response format.
+
+            BROWSER EXTENSION / POPUP RULES (when generating client-side extension files):
+            - INTEGRATION: Never create orphan JS files. If you write popup.html, EVERY popup JS module MUST \
+              be loaded via correct <script src="..."> tags OR a single entry script (popup.js) that inits all \
+              modules. Never reference a script path that is not in file_layout. Never emit popup.js in HTML \
+              unless you also generate popup.js.
+            - FORBIDDEN UX: window.alert() and window.prompt() — use inline status/toast UI in the HTML.
+            - CSS: popup stylesheets MUST include *, *::before, *::after { box-sizing: border-box; }, a fixed \
+              popup width (~360px), overflow-y: auto, and modern spacing. Prefer Tailwind CSS via CDN for \
+              professional UI when not using a component library.
+            - MV3: manifest.json MUST include host_permissions for any API origin the extension fetches. Use \
+              chrome.storage.local for profiles/settings — never rely on volatile service-worker module variables alone.
 
             GUARDRAILS:
             - Generate ONLY the TARGET FILE — do not emit other paths, prose, or a multi-file envelope.
@@ -405,6 +454,18 @@ public class AgentSystemPrompts {
 
             Use an appropriate language tag (e.g. javascript, typescript, json for manifest.json).
 
+            API CONTRACT ADHERENCE (NON-NEGOTIABLE):
+            - Use EXACT api_contracts paths, methods, request field names, and response_format from architecture.
+            - Do NOT invent alternate endpoints or parameter names in fetch/FormData calls.
+
+            CLIENT EXTENSION INTEGRATION (NON-NEGOTIABLE):
+            - Never create orphan JS modules. popup.html MUST include <script src> for every popup JS file \
+              in file_layout OR one popup.js entry that wires all modules.
+            - FORBIDDEN: alert(), prompt(). Use inline UI feedback elements present in the HTML.
+            - popup.css MUST use box-sizing: border-box and popup-appropriate dimensions (~360px width).
+            - manifest.json MUST declare host_permissions for backend API origins used in fetch().
+            - Persist extension state with chrome.storage.local — not in-memory service worker variables only.
+
             GUARDRAILS:
             - Generate ONLY the TARGET FILE — do not emit server paths, prose, or a multi-file envelope.
             - The pipeline already knows the TARGET FILE path — do NOT include path metadata in your response.
@@ -448,6 +509,11 @@ public class AgentSystemPrompts {
 
             Use an appropriate language tag (e.g. java, yaml, xml).
 
+            API CONTRACT ADHERENCE (NON-NEGOTIABLE):
+            - Implement EXACT api_contracts: paths, HTTP methods, request_params field names, response_format.
+            - @RequestParam / @RequestBody names MUST match request_params exactly (e.g. "file" not "resume").
+            - Return the response shape defined in response_format (plain string vs JSON object).
+
             GUARDRAILS:
             - Generate ONLY the TARGET FILE — do not emit client paths, prose, or a multi-file envelope.
             - The pipeline already knows the TARGET FILE path — do NOT include path metadata in your response.
@@ -484,6 +550,16 @@ public class AgentSystemPrompts {
             ```
 
             Use an appropriate language tag (e.g. javascript, typescript, java).
+
+            REALITY-BASED TESTING (NON-NEGOTIABLE):
+            - You MUST import/require the ACTUAL generated source modules from generatedSourceCode — never \
+              test a phantom reimplementation inline in the test file.
+            - DOM tests MUST use element ids and selectors that EXIST in the generated HTML — read popup.html \
+              (or equivalent) and copy exact id values (e.g. #add-profile-btn not #addProfileButton).
+            - API tests MUST use the EXACT paths and field names from api_contracts / technicalSpec.api_contract \
+              — never invent ports (3000), paths (/upload), or param names that differ from the contract.
+            - FORBIDDEN: asserting behavior of HTML elements, endpoints, or prompts that do not appear in \
+              the generated source artifacts. File presence alone is not a passing test.
 
             GUARDRAILS:
             - Generate ONLY the TARGET TEST FILE — do not emit other paths, prose, or a multi-file envelope.
@@ -560,6 +636,13 @@ public class AgentSystemPrompts {
             ```
 
             Use typescript, javascript, or an appropriate tag for the test file.
+
+            REALITY-BASED TESTING (NON-NEGOTIABLE):
+            - MUST import/require modules from the sliced generatedSourceCode — test real popup JS, not stubs.
+            - getElementById / querySelector selectors MUST match ids in the actual generated popup.html.
+            - fetch mocks MUST use api_contracts paths and request field names exactly — no hallucinated URLs.
+            - FORBIDDEN: testing #addProfileButton when HTML has #add-profile-btn; testing port 3000 when \
+              architecture specifies 8080; testing /upload when contract says /api/files.
 
             GUARDRAILS:
             - Generate ONLY the TARGET TEST FILE — do not emit server test paths, prose, or a multi-file envelope.

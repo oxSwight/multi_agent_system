@@ -99,10 +99,11 @@ public class PerFileCodeGenerationStrategy {
 
         try {
             String json = objectMapper.writeValueAsString(envelope);
+            JsonNode architecture = view.safeArtifacts().get("architectureDesign");
             if (hybridPartialPass) {
                 validator.validate(json);
             } else {
-                validator.validateWithTechnicalSpec(json, context.getTechnicalSpec());
+                validator.validateWithTechnicalSpec(json, context.getTechnicalSpec(), architecture);
             }
         } catch (ValidationHookException e) {
             throw new AgentExecutionException(

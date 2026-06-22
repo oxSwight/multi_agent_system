@@ -179,7 +179,8 @@ class GoalKeeperValidatorTest {
                     "schema": [{"table_name": "users", "columns": [{"name": "id", "type": "BIGINT"}]}]
                   },
                   "api_contracts": [
-                    {"method": "GET", "path": "/api/users", "request_payload": {}, "expected_response": {}}
+                    {"method": "GET", "path": "/api/users", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
                   ]
                 }
                 """;
@@ -273,7 +274,8 @@ class GoalKeeperValidatorTest {
                   "components": [{"name": "C", "type": "CONTROLLER", "responsibility": "x"}],
                   "file_layout": ["src/main/java/com/example/C.java"],
                   "data_persistence": {"type": "NONE", "schema": []},
-                  "api_contracts": [{"method": "FETCH", "path": "/x"}]
+                  "api_contracts": [{"method": "FETCH", "path": "/x", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["x"]}}]
                 }
                 """;
             assertThatThrownBy(() -> architectValidator.validate(json))
@@ -304,7 +306,8 @@ class GoalKeeperValidatorTest {
                     "schema": [{"table_name": "profiles", "columns": [{"name": "id", "type": "BIGINT"}]}]
                   },
                   "api_contracts": [
-                    {"method": "GET", "path": "/api/profiles", "request_payload": {}, "expected_response": {}}
+                    {"method": "GET", "path": "/api/profiles", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
                   ]
                 }
                 """;
@@ -330,7 +333,8 @@ class GoalKeeperValidatorTest {
                     "schema": [{"table_name": "profiles", "columns": [{"name": "id", "type": "BIGINT"}]}]
                   },
                   "api_contracts": [
-                    {"method": "GET", "path": "/api/profiles", "request_payload": {}, "expected_response": {}}
+                    {"method": "GET", "path": "/api/profiles", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
                   ]
                 }
                 """;
@@ -354,7 +358,8 @@ class GoalKeeperValidatorTest {
                   "file_layout": ["frontend/manifest.json", "frontend/src/popup.html"],
                   "data_persistence": {"type": "BROWSER_STORAGE", "schema": []},
                   "api_contracts": [
-                    {"method": "GET", "path": "/api/profiles", "request_payload": {}, "expected_response": {}}
+                    {"method": "GET", "path": "/api/profiles", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
                   ]
                 }
                 """;

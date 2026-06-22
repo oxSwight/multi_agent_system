@@ -396,10 +396,33 @@ public class SoftwareArchitectValidator extends AbstractGoalKeeperValidator {
 
                 }
 
+                if (serverStyle) {
+                    validateRigidApiContract(ep, i, violations);
+                }
+
             }
 
         }
 
+    }
+
+    private void validateRigidApiContract(JsonNode ep, int index, List<String> violations) {
+        if (!ep.has("request_params") || !ep.get("request_params").isArray()) {
+            violations.add("api_contracts[" + index + "].request_params must be an array "
+                    + "with exact field names (e.g. [{\"name\":\"file\",\"location\":\"form-data\",\"type\":\"MultipartFile\"}]).");
+        } else {
+            String method = ep.has("method") ? ep.get("method").asText("").toUpperCase() : "";
+            boolean allowsEmptyParams = "GET".equals(method) || "DELETE".equals(method);
+            if (!allowsEmptyParams && ep.get("request_params").isEmpty()) {
+                violations.add("api_contracts[" + index + "].request_params must list exact field names for "
+                        + method + " requests.");
+            }
+        }
+        if (!ep.has("response_format") || ep.get("response_format").isNull() || ep.get("response_format").isMissingNode()) {
+            violations.add("api_contracts[" + index + "].response_format is required "
+                    + "(e.g. {\"type\":\"string\",\"example\":\"File uploaded successfully\"} "
+                    + "or {\"type\":\"json\",\"fields\":[\"message\"]}).");
+        }
     }
 
 }

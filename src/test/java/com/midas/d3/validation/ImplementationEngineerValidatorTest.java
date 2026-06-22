@@ -303,4 +303,31 @@ class ImplementationEngineerValidatorTest {
                 .isInstanceOf(ValidationHookException.class)
                 .hasMessageContaining("JSON envelope forbidden");
     }
+
+    @Test
+    void validateWithTechnicalSpec_orphanPopupJs_throws() throws Exception {
+        String json = """
+                {
+                  "source_files": {
+                    "frontend/src/popup.html": "<html><body><script src=\\"popup.js\\"></script></body></html>",
+                    "frontend/src/file_uploader.js": "document.getElementById('x');"
+                  },
+                  "feature_manifest": [
+                    {
+                      "feature_id": "upload",
+                      "feature_name": "Upload",
+                      "files": ["frontend/src/file_uploader.js"],
+                      "entry_points": ["upload"]
+                    }
+                  ]
+                }
+                """;
+        JsonNode architecture = objectMapper.readTree("""
+                {"api_contracts":[{"method":"POST","path":"/api/files"}]}
+                """);
+
+        assertThatThrownBy(() -> validator.validateWithTechnicalSpec(json, null, architecture))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("Orphan JavaScript");
+    }
 }

@@ -31,6 +31,34 @@ public class QaEngineerValidator extends AbstractGoalKeeperValidator {
     }
 
     /**
+     * Validates assembled test output against the actual generated source and architecture contracts.
+     */
+    public JsonNode validateWithGeneratedSource(String rawJson,
+                                                JsonNode generatedSource,
+                                                JsonNode architecture)
+            throws ValidationHookException {
+        JsonNode root = validate(rawJson);
+        if (generatedSource == null || !generatedSource.isObject()) {
+            return root;
+        }
+
+        List<String> violations = new java.util.ArrayList<>();
+        Iterator<Map.Entry<String, JsonNode>> fields = root.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            if (entry.getValue().isTextual()) {
+                FrontendIntegrationValidator.validateTestAgainstSource(
+                        entry.getKey(), entry.getValue().asText(), generatedSource, architecture, violations);
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            throw new ValidationHookException(agentName(), stage(), violations);
+        }
+        return root;
+    }
+
+    /**
      * Extracts and validates raw test source from a per-file LLM response.
      * The pipeline supplies {@code expectedPath}; the LLM must return only a markdown code block.
      */

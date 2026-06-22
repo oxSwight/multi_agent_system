@@ -30,6 +30,13 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
 
     public JsonNode validateWithTechnicalSpec(String rawJson, JsonNode technicalSpec)
             throws ValidationHookException {
+        return validateWithTechnicalSpec(rawJson, technicalSpec, null);
+    }
+
+    public JsonNode validateWithTechnicalSpec(String rawJson,
+                                                JsonNode technicalSpec,
+                                                JsonNode architecture)
+            throws ValidationHookException {
         if (rawJson == null || rawJson.isBlank()) {
             throw new ValidationHookException(agentName(), stage(),
                     "LLM output is null or blank — no JSON to validate.");
@@ -49,7 +56,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         }
 
         List<String> violations = new java.util.ArrayList<>();
-        collectViolations(root, violations, technicalSpec);
+        collectViolations(root, violations, technicalSpec, architecture);
 
         if (!violations.isEmpty()) {
             throw new ValidationHookException(agentName(), stage(), violations);
@@ -153,19 +160,21 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
 
     @Override
     protected void collectViolations(JsonNode root, List<String> violations) {
-        collectViolations(root, violations, null);
+        collectViolations(root, violations, null, null);
     }
 
-    private void collectViolations(JsonNode root, List<String> violations, JsonNode technicalSpec) {
+    private void collectViolations(JsonNode root, List<String> violations,
+                                   JsonNode technicalSpec, JsonNode architecture) {
         if (root.has("source_files") || root.has("feature_manifest")) {
-            validateEnvelope(root, violations, technicalSpec);
+            validateEnvelope(root, violations, technicalSpec, architecture);
             return;
         }
 
         violations.add("Implementation output must use the envelope schema with 'source_files' and 'feature_manifest'.");
     }
 
-    private void validateEnvelope(JsonNode root, List<String> violations, JsonNode technicalSpec) {
+    private void validateEnvelope(JsonNode root, List<String> violations,
+                                  JsonNode technicalSpec, JsonNode architecture) {
         JsonNode sourceFiles = root.get("source_files");
         JsonNode featureManifest = root.get("feature_manifest");
 
@@ -174,6 +183,8 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
 
         if (sourceFiles != null && sourceFiles.isObject()) {
             validateSourceFiles(sourceFiles, violations);
+            JsonNode contractSource = resolveApiContractSource(technicalSpec, architecture);
+            FrontendIntegrationValidator.validateSourceFiles(sourceFiles, contractSource, violations);
         }
 
         if (featureManifest != null && featureManifest.isArray()) {
@@ -338,6 +349,13 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             log.warn("[ImplementationEngineer][CODE_GENERATION] feature_manifest/core_features mismatch ignored: {}",
                     String.join(" | ", warnings));
         }
+    }
+
+    private static JsonNode resolveApiContractSource(JsonNode technicalSpec, JsonNode architecture) {
+        if (architecture != null && !architecture.isNull() && !architecture.isMissingNode()) {
+            return architecture;
+        }
+        return technicalSpec;
     }
 
     public static String toFeatureId(String featureLabel) {

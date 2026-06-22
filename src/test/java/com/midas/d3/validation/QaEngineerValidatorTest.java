@@ -52,4 +52,19 @@ class QaEngineerValidatorTest {
 
         assertThat(result.has("src/popup.test.ts")).isTrue();
     }
+
+    @Test
+    void validateWithGeneratedSource_hallucinatedId_throws() throws Exception {
+        var mapper = new JacksonConfig().objectMapper();
+        var generatedSource = mapper.createObjectNode();
+        generatedSource.put("frontend/src/popup.html", "<button id=\"add-profile-btn\"></button>");
+
+        String tests = """
+                {"frontend/__tests__/popup.test.js":"const b=document.getElementById('addProfileButton');"}
+                """;
+
+        assertThatThrownBy(() -> validator.validateWithGeneratedSource(tests, generatedSource, null))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("addProfileButton");
+    }
 }

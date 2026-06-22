@@ -93,7 +93,10 @@ public class PerFileTestGenerationStrategy {
         }
 
         try {
-            validator.validate(objectMapper.writeValueAsString(testFiles));
+            JsonNode generatedSource = view.safeArtifacts().get("generatedSourceCode");
+            JsonNode architecture = view.safeArtifacts().get("architectureDesign");
+            validator.validateWithGeneratedSource(
+                    objectMapper.writeValueAsString(testFiles), generatedSource, architecture);
         } catch (ValidationHookException e) {
             throw new AgentExecutionException(
                     llmAgentName,
