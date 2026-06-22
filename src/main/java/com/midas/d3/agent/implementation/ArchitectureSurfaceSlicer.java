@@ -35,7 +35,7 @@ public final class ArchitectureSurfaceSlicer {
         return sliced;
     }
 
-    static boolean isClientPath(String path) {
+    public static boolean isClientPath(String path) {
         if (path == null || path.isBlank()) {
             return false;
         }
@@ -44,6 +44,7 @@ public final class ArchitectureSurfaceSlicer {
             return false;
         }
         return normalized.equals("manifest.json")
+                || normalized.endsWith("manifest.json")
                 || normalized.endsWith(".ts")
                 || normalized.endsWith(".tsx")
                 || normalized.endsWith(".js")
@@ -52,6 +53,7 @@ public final class ArchitectureSurfaceSlicer {
                 || normalized.endsWith(".css")
                 || normalized.contains("content_script")
                 || normalized.contains("popup")
+                || normalized.startsWith("frontend/")
                 || normalized.startsWith("public/")
                 || normalized.startsWith("src/content")
                 || normalized.startsWith("src/popup")
@@ -59,12 +61,13 @@ public final class ArchitectureSurfaceSlicer {
                 || normalized.startsWith("src/client");
     }
 
-    static boolean isServerPath(String path) {
+    public static boolean isServerPath(String path) {
         if (path == null || path.isBlank()) {
             return false;
         }
         String normalized = path.toLowerCase(Locale.ROOT).replace('\\', '/');
-        return normalized.contains("src/main/java")
+        return normalized.startsWith("backend/")
+                || normalized.contains("src/main/java")
                 || normalized.endsWith(".java")
                 || normalized.endsWith("pom.xml")
                 || normalized.endsWith("build.gradle")

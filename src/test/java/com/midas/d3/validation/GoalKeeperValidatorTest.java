@@ -10,13 +10,14 @@ import static org.assertj.core.api.Assertions.*;
 
 class GoalKeeperValidatorTest {
 
+    private com.fasterxml.jackson.databind.ObjectMapper mapper;
     private SystemAnalystValidator systemAnalystValidator;
     private SoftwareArchitectValidator architectValidator;
     private SecOpsEngineerValidator secOpsValidator;
 
     @BeforeEach
     void setUp() {
-        var mapper = new JacksonConfig().objectMapper();
+        mapper = new JacksonConfig().objectMapper();
         systemAnalystValidator = new SystemAnalystValidator(mapper);
         architectValidator     = new SoftwareArchitectValidator(mapper);
         secOpsValidator        = new SecOpsEngineerValidator(mapper);
@@ -178,7 +179,8 @@ class GoalKeeperValidatorTest {
                     "schema": [{"table_name": "users", "columns": [{"name": "id", "type": "BIGINT"}]}]
                   },
                   "api_contracts": [
-                    {"method": "GET", "path": "/api/users", "request_payload": {}, "expected_response": {}}
+                    {"method": "GET", "path": "/api/users", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
                   ]
                 }
                 """;
@@ -272,12 +274,101 @@ class GoalKeeperValidatorTest {
                   "components": [{"name": "C", "type": "CONTROLLER", "responsibility": "x"}],
                   "file_layout": ["src/main/java/com/example/C.java"],
                   "data_persistence": {"type": "NONE", "schema": []},
-                  "api_contracts": [{"method": "FETCH", "path": "/x"}]
+                  "api_contracts": [{"method": "FETCH", "path": "/x", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["x"]}}]
                 }
                 """;
             assertThatThrownBy(() -> architectValidator.validate(json))
                     .isInstanceOf(ValidationHookException.class)
                     .hasMessageContaining("method");
+        }
+
+        @Test
+        void validate_hybridMonorepoWithBothSurfaces_passes() throws Exception {
+            String json = """
+                {
+                  "has_external_integrations": true,
+                  "architecture_style": "CLIENT_SERVER",
+                  "tech_stack": {"language": "Java", "framework": "Spring Boot",
+                                 "platform_apis": ["Manifest V3"], "build_tool": "Maven"},
+                  "components": [
+                    {"name": "popup", "type": "UI", "responsibility": "Extension UI"},
+                    {"name": "ApiController", "type": "CONTROLLER", "responsibility": "REST API"}
+                  ],
+                  "file_layout": [
+                    "frontend/manifest.json",
+                    "frontend/src/popup.html",
+                    "backend/pom.xml",
+                    "backend/src/main/java/com/example/App.java"
+                  ],
+                  "data_persistence": {
+                    "type": "RELATIONAL",
+                    "schema": [{"table_name": "profiles", "columns": [{"name": "id", "type": "BIGINT"}]}]
+                  },
+                  "api_contracts": [
+                    {"method": "GET", "path": "/api/profiles", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
+                  ]
+                }
+                """;
+            JsonNode technicalSpec = mapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+            JsonNode result = architectValidator.validateWithTechnicalSpec(json, technicalSpec);
+            assertThat(result.get("file_layout")).hasSize(4);
+        }
+
+        @Test
+        void validate_hybridMissingClientPaths_throwsValidationHookException() throws Exception {
+            String json = """
+                {
+                  "has_external_integrations": true,
+                  "architecture_style": "CLIENT_SERVER",
+                  "tech_stack": {"language": "Java", "framework": "Spring Boot",
+                                 "platform_apis": [], "build_tool": "Maven"},
+                  "components": [{"name": "ApiController", "type": "CONTROLLER", "responsibility": "REST API"}],
+                  "file_layout": ["backend/src/main/java/com/example/App.java"],
+                  "data_persistence": {
+                    "type": "RELATIONAL",
+                    "schema": [{"table_name": "profiles", "columns": [{"name": "id", "type": "BIGINT"}]}]
+                  },
+                  "api_contracts": [
+                    {"method": "GET", "path": "/api/profiles", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
+                  ]
+                }
+                """;
+            JsonNode technicalSpec = mapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+            assertThatThrownBy(() -> architectValidator.validateWithTechnicalSpec(json, technicalSpec))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("HYBRID mode requires client-side paths");
+        }
+
+        @Test
+        void validate_hybridMissingServerPaths_throwsValidationHookException() throws Exception {
+            String json = """
+                {
+                  "has_external_integrations": false,
+                  "architecture_style": "CLIENT_SERVER",
+                  "tech_stack": {"language": "TypeScript", "framework": "none",
+                                 "platform_apis": ["Manifest V3"], "build_tool": "none"},
+                  "components": [{"name": "popup", "type": "UI", "responsibility": "Extension UI"}],
+                  "file_layout": ["frontend/manifest.json", "frontend/src/popup.html"],
+                  "data_persistence": {"type": "BROWSER_STORAGE", "schema": []},
+                  "api_contracts": [
+                    {"method": "GET", "path": "/api/profiles", "request_params": [],
+                     "response_format": {"type": "json", "fields": ["id"]}}
+                  ]
+                }
+                """;
+            JsonNode technicalSpec = mapper.readTree("""
+                {"runtime_environment":{"execution_model":"HYBRID"}}
+                """);
+            assertThatThrownBy(() -> architectValidator.validateWithTechnicalSpec(json, technicalSpec))
+                    .isInstanceOf(ValidationHookException.class)
+                    .hasMessageContaining("HYBRID mode requires server-side paths");
         }
     }
 
@@ -300,6 +391,28 @@ class GoalKeeperValidatorTest {
                 """;
             JsonNode result = secOpsValidator.validate(json);
             assertThat(result.get("deployment_model").asText()).isEqualTo("BROWSER_EXTENSION_PACKAGE");
+        }
+
+        @Test
+        void validate_markdownExtensionPackage_noJsonRequired() {
+            String markdown = """
+                DEPLOYMENT_MODEL: BROWSER_EXTENSION_PACKAGE
+
+                ## Security Audit
+                - LOW: host_permissions scoped to required domains — OK
+                - MEDIUM: avoid innerHTML in content scripts
+
+                ## Release Artifacts
+                ```sh package.sh
+                #!/bin/bash
+                zip -r extension.zip manifest.json src/
+                ```
+                """;
+            JsonNode result = secOpsValidator.validate(markdown);
+            assertThat(result.get("deployment_model").asText()).isEqualTo("BROWSER_EXTENSION_PACKAGE");
+            assertThat(result.get("security_audit_report").size()).isGreaterThan(0);
+            assertThat(result.get("release_artifacts").get("package.sh").asText())
+                    .contains("extension.zip");
         }
 
         @Test

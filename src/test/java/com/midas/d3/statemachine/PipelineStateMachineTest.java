@@ -523,7 +523,30 @@ class PipelineStateMachineTest {
     }
 
     @Test
-    @DisplayName("PRODUCT_REVIEW with REJECT verdict → CODE_GENERATION remediation loop initiated")
+    @DisplayName("PRODUCT_REVIEW repairs invalid coverage_matrix evidence → COMPLETED")
+    void productReview_invalidEvidenceFallback_completes() {
+        drivePipelineToProductReview();
+
+        sendSubmit("""
+            {
+              "verdict": "PASS",
+              "summary": "Intent met.",
+              "coverage_matrix": [
+                {"requested_feature": "Create task", "status": "COVERED", "evidence": "implemented somewhere without manifest refs"},
+                {"requested_feature": "Assign task", "status": "COVERED", "evidence": ""}
+              ],
+              "remediation_block": {"required_changes": [], "recommendations": []}
+            }
+            """);
+
+        assertState(MidasState.COMPLETED);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getProductReviewReport()).isNotNull();
+        assertThat(ctx.getProductReviewReport().get("coverage_matrix").get(0).get("evidence").asText())
+                .contains("create-task");
+    }
+
+    @Test
     void productReview_reject_initiatesRemediationLoop() {
         drivePipelineToProductReview();
 

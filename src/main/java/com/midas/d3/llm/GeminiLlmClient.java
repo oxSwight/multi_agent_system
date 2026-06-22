@@ -4,7 +4,7 @@ import com.midas.d3.llm.dto.GeminiRequest;
 import com.midas.d3.llm.dto.GeminiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Primary;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -34,8 +34,8 @@ import java.util.regex.Pattern;
  * is safe for concurrent use.
  */
 @Slf4j
-@Primary
 @Component
+@ConditionalOnProperty(prefix = "midas.llm", name = "client-type", havingValue = "GEMINI", matchIfMissing = true)
 public class GeminiLlmClient implements LlmClient {
 
     private static final String GEMINI_BASE_URL =

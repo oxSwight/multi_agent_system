@@ -7,7 +7,7 @@ import com.midas.d3.llm.LlmClient;
 import com.midas.d3.llm.nous.dto.NousRequest;
 import com.midas.d3.llm.nous.dto.NousResponse;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -18,28 +18,25 @@ import java.time.Duration;
 
 @Slf4j
 @Component
+@ConditionalOnProperty(prefix = "midas.llm", name = "client-type", havingValue = "NOUS")
 public class NousRestClient implements LlmClient {
 
     private static final String CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
     private static final int MAX_RATE_LIMIT_RETRIES = 3;
     private static final long RATE_LIMIT_RETRY_DELAY_MS = 1_000L;
 
-    private final WebClient webClient;
-    private final String    model;
-    private final int       timeoutSeconds;
-    private final int       httpMaxRetries;
+    private final WebClient       webClient;
+    private final NousProperties  properties;
+    private final int             timeoutSeconds;
+    private final int             httpMaxRetries;
 
-    public NousRestClient(
-            WebClient.Builder webClientBuilder,
-            @Value("${midas.nous.base-url:http://localhost:1234}") String baseUrl,
-            @Value("${midas.nous.api-key:}") String apiKey,
-            @Value("${midas.nous.model:nous-hermes-2-mistral-7b-dpo}") String model,
-            @Value("${midas.nous.timeout-seconds:120}") int timeoutSeconds,
-            @Value("${midas.nous.http-max-retries:2}") int httpMaxRetries) {
+    public NousRestClient(WebClient.Builder webClientBuilder, NousProperties properties) {
+        this.properties     = properties;
+        this.timeoutSeconds = properties.getTimeoutSeconds();
+        this.httpMaxRetries = Math.max(0, properties.getHttpMaxRetries());
 
-        this.model          = model;
-        this.timeoutSeconds = timeoutSeconds;
-        this.httpMaxRetries = Math.max(0, httpMaxRetries);
+        String baseUrl = properties.getBaseUrl();
+        String apiKey  = properties.getApiKey();
 
         WebClient.Builder builder = webClientBuilder
                 .baseUrl(baseUrl)
@@ -51,8 +48,16 @@ public class NousRestClient implements LlmClient {
         }
 
         this.webClient = builder.build();
-        log.info("[NousRestClient] Initialized: baseUrl={}, model={}, timeoutSeconds={}, maxRetries={}",
-                baseUrl, model, timeoutSeconds, this.httpMaxRetries);
+        NousProperties.Routing routing = properties.getRouting();
+        if (routing.isEnabled()) {
+            log.info("[NousRestClient] Initialized: baseUrl={}, routing=enabled, defaultModel={}, "
+                            + "agentMappings={}, timeoutSeconds={}, maxRetries={}",
+                    baseUrl, routing.getDefaultModel(), routing.getAgents().size(),
+                    timeoutSeconds, this.httpMaxRetries);
+        } else {
+            log.info("[NousRestClient] Initialized: baseUrl={}, model={}, timeoutSeconds={}, maxRetries={}",
+                    baseUrl, properties.getModel(), timeoutSeconds, this.httpMaxRetries);
+        }
     }
 
     @Override
@@ -84,13 +89,19 @@ public class NousRestClient implements LlmClient {
                 String text = response.extractText()
                         .orElseThrow(() -> LlmCallException.emptyResponse(request.getAgentName()));
 
+                if (response.usedReasoningFallback()) {
+                    log.warn("[NousRestClient][{}] run=[{}] — content empty, using Ollama reasoning field ({} chars)",
+                            request.getAgentName(), request.getPipelineRunId(), text.length());
+                }
+
                 if (LlmCallResult.FINISH_REASON_MAX_TOKENS.equals(finishReason)) {
                     log.warn("[NousRestClient][{}] run=[{}] — ответ обрезан (MAX_TOKENS), "
                                     + "retry бесполезен без уменьшения scope",
                             request.getAgentName(), request.getPipelineRunId());
                 }
 
-                return LlmCallResult.of(text, effectiveModel, 0, 0, finishReason);
+                return LlmCallResult.of(text, effectiveModel,
+                        response.extractPromptTokens(), response.extractCompletionTokens(), finishReason);
 
             } catch (LlmCallException e) {
                 throw e;
@@ -171,15 +182,32 @@ public class NousRestClient implements LlmClient {
 
     @Override
     public String defaultModelId() {
-        return model;
+        NousProperties.Routing routing = properties.getRouting();
+        if (routing.isEnabled() && routing.getDefaultModel() != null && !routing.getDefaultModel().isBlank()) {
+            return routing.getDefaultModel().trim();
+        }
+        return properties.getModel();
     }
 
     private String resolveModel(LlmCallRequest request) {
+        NousProperties.Routing routing = properties.getRouting();
+        if (routing.isEnabled()) {
+            String agentName = request.getAgentName();
+            String mapped = routing.getAgents().get(agentName);
+            if (mapped != null && !mapped.isBlank()) {
+                return mapped.trim();
+            }
+            if (routing.getDefaultModel() != null && !routing.getDefaultModel().isBlank()) {
+                return routing.getDefaultModel().trim();
+            }
+            return properties.getModel();
+        }
+
         String override = request.getModelOverride();
         if (override != null && !override.isBlank()) {
             return override.trim();
         }
-        return model;
+        return properties.getModel();
     }
 
     private static void sleepQuietly(long millis) {

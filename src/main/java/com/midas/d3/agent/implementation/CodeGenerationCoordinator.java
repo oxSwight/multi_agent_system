@@ -43,7 +43,7 @@ import java.util.concurrent.Executor;
 @Service
 public class CodeGenerationCoordinator {
 
-    static final int MAX_PASS_RETRIES = AgentRetryPolicy.MAX_VALIDATION_ATTEMPTS;
+    static final int MAX_PASS_RETRIES = AgentRetryPolicy.maxValidationAttempts();
 
     private final ContextReducer contextReducer;
     private final LlmClient llmClient;
@@ -184,15 +184,17 @@ public class CodeGenerationCoordinator {
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
+        String lastFinishReason = "";
+        int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
 
-        for (int attempt = 1; attempt <= MAX_PASS_RETRIES; attempt++) {
+        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
             String userMessage = attempt == 1
                     ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt);
+                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
 
             log.info("[CodeGenerationCoordinator] PATCH {} attempt {}/{} — run=[{}]",
                     surface != null ? surface.name() : "SINGLE",
-                    attempt, MAX_PASS_RETRIES, context.getPipelineRunId());
+                    attempt, effectiveMax, context.getPipelineRunId());
 
             try {
                 LlmCallResult llmResult = invokeLlm(
@@ -203,18 +205,23 @@ public class CodeGenerationCoordinator {
                         userMessage,
                         context.getPipelineRunId(),
                         modelOverride),
-                        attempt, MAX_PASS_RETRIES);
+                        attempt, effectiveMax);
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
+                lastFinishReason = llmResult.finishReason();
                 String sanitized = JsonSanitizer.sanitize(llmResult.text());
                 JsonNode patchSourceFiles = implValidator.validatePatchOutput(sanitized, pathsForPass);
+                LlmCallObservability.logExecutionSummary(
+                        context.getPipelineRunId(), llmAgentName,
+                        totalPromptTokens, totalCompletionTokens, lastFinishReason);
                 return new PatchAttemptResult(patchSourceFiles, attempt, totalPromptTokens, totalCompletionTokens,
                         llmResult.modelUsed());
 
             } catch (ValidationHookException e) {
+                effectiveMax = AgentRetryPolicy.maxAttemptsFor(e);
                 lastError = AgentRetryPolicy.formatViolationsForFeedback(e);
                 log.warn("[CodeGenerationCoordinator] PATCH attempt {}/{} rejected: {}",
-                        attempt, MAX_PASS_RETRIES, lastError);
+                        attempt, effectiveMax, lastError);
                 if (!AgentRetryPolicy.canRetry(e, attempt)) {
                     break;
                 }
@@ -229,6 +236,9 @@ public class CodeGenerationCoordinator {
             }
         }
 
+        LlmCallObservability.logExecutionSummary(
+                context.getPipelineRunId(), llmAgentName,
+                totalPromptTokens, totalCompletionTokens, lastFinishReason);
         throw new PatchFallbackException("Patch LLM pass exhausted retries: " + lastError);
     }
 
@@ -468,10 +478,10 @@ public class CodeGenerationCoordinator {
         return sb.toString();
     }
 
-    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt) {
+    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt, int maxAttempts) {
         return baseUserMessage
                 + "\n\n"
-                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + MAX_PASS_RETRIES + ") ---\n"
+                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
                 + "Your previous response was rejected by the schema validator.\n"
                 + "Violations found:\n"
                 + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"
@@ -484,11 +494,8 @@ public class CodeGenerationCoordinator {
                                     int attempt,
                                     int maxAttempts) throws LlmCallException {
         LlmCallResult result = llmClient.call(request);
-        LlmCallObservability.logCallMetadata(
+        LlmCallObservability.logTelemetry(
                 context.getPipelineRunId(), llmAgentName, attempt, maxAttempts, result);
-        LlmCallObservability.logFinOps(
-                context.getPipelineRunId(), llmAgentName, result.modelUsed(),
-                result.promptTokens(), result.completionTokens());
         AgentRetryPolicy.failFastIfTruncated(result, llmAgentName, context.getPipelineRunId());
         return result;
     }

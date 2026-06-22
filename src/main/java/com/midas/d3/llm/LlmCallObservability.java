@@ -3,7 +3,7 @@ package com.midas.d3.llm;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Centralised logging for LLM call metadata (finish reason, response size) and FinOps token usage.
+ * Centralised logging for LLM call telemetry (tokens, finish reason) and FinOps visibility.
  */
 @Slf4j
 public final class LlmCallObservability {
@@ -11,38 +11,34 @@ public final class LlmCallObservability {
     private LlmCallObservability() {}
 
     /**
-     * Logs per-call metadata required for triage: finishReason, response size, model, attempt, runId.
-     * Emits an explicit WARN when the response was truncated by the model token limit.
+     * Logs per-call telemetry for triage during multi-attempt agent loops.
      */
-    public static void logCallMetadata(String runId,
-                                       String agentName,
-                                       int attempt,
-                                       int maxAttempts,
-                                       LlmCallResult result) {
-        int responseChars = result.text() != null ? result.text().length() : 0;
-        log.info("[LLM] run={} agent={} attempt={}/{} model={} finishReason={} responseChars={}",
-                runId, agentName, attempt, maxAttempts, result.modelUsed(),
-                nullToDash(result.finishReason()), responseChars);
+    public static void logTelemetry(String runId,
+                                    String agentName,
+                                    int attempt,
+                                    int maxAttempts,
+                                    LlmCallResult result) {
+        log.info("[LLM Telemetry] run={} Agent: {}, Tokens: {}/{}, Finish Reason: {} (attempt {}/{})",
+                runId, agentName, result.promptTokens(), result.completionTokens(),
+                nullToDash(result.finishReason()), attempt, maxAttempts);
 
         if (result.isTruncated()) {
-            log.warn("[LLM] run={} agent={} attempt={}/{} — ответ обрезан (MAX_TOKENS), "
-                            + "retry бесполезен без уменьшения scope",
+            log.warn("[LLM Telemetry] run={} agent={} attempt={}/{} — response truncated (MAX_TOKENS), "
+                            + "retry is useless without reducing scope",
                     runId, agentName, attempt, maxAttempts);
         }
     }
 
-    /** Logs token consumption after each LLM call for FinOps visibility. */
-    public static void logFinOps(String runId,
-                                 String agentName,
-                                 String model,
-                                 int promptTokens,
-                                 int completionTokens) {
-        if (promptTokens == 0 && completionTokens == 0) {
-            return;
-        }
-        log.info("[FinOps] run={} agent={} model={} prompt={} completion={} total={}",
-                runId, agentName, nullToDash(model), promptTokens, completionTokens,
-                promptTokens + completionTokens);
+    /**
+     * Logs accumulated telemetry at the end of an agent or coordinator pass.
+     */
+    public static void logExecutionSummary(String runId,
+                                           String agentName,
+                                           int promptTokens,
+                                           int completionTokens,
+                                           String finishReason) {
+        log.info("[LLM Telemetry] run={} Agent: {}, Tokens: {}/{}, Finish Reason: {}",
+                runId, agentName, promptTokens, completionTokens, nullToDash(finishReason));
     }
 
     private static String nullToDash(String value) {

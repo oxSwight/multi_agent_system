@@ -1,6 +1,8 @@
 package com.midas.d3.agent.implementation;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.midas.d3.agent.AgentSystemPrompts;
 import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.config.JacksonConfig;
@@ -14,7 +16,6 @@ import com.midas.d3.llm.LlmClient;
 import com.midas.d3.llm.LlmModelPolicy;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.ValidatorRegistry;
-import com.midas.d3.validation.GoalKeeperValidator;
 import com.midas.d3.validation.QaEngineerValidator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +50,8 @@ class TestGenerationCoordinatorTest {
     @Mock private ValidatorRegistry validatorRegistry;
 
     private ObjectMapper objectMapper;
-    private GoalKeeperValidator validator;
+    private QaEngineerValidator validator;
+    private PerFileTestGenerationStrategy perFileTestGenerationStrategy;
     private TestGenerationCoordinator coordinator;
     private ExecutorService agentTaskExecutor;
 
@@ -58,8 +60,11 @@ class TestGenerationCoordinatorTest {
         objectMapper = new JacksonConfig().objectMapper();
         validator = new QaEngineerValidator(objectMapper);
         agentTaskExecutor = Executors.newFixedThreadPool(2);
+        perFileTestGenerationStrategy = new PerFileTestGenerationStrategy(
+                llmClient, llmModelPolicy, objectMapper);
         coordinator = new TestGenerationCoordinator(
-                contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper, agentTaskExecutor);
+                contextReducer, llmClient, llmModelPolicy, validatorRegistry, objectMapper,
+                agentTaskExecutor, perFileTestGenerationStrategy);
         when(validatorRegistry.getValidator(MidasState.TEST_GENERATION))
                 .thenReturn(Optional.of(validator));
         when(llmModelPolicy.resolve(MidasState.TEST_GENERATION)).thenReturn("gemini-2.5-flash");
@@ -78,10 +83,13 @@ class TestGenerationCoordinatorTest {
                 """);
         var ctx = MidasContext.start("Build API", "run-001").withTechnicalSpec(spec);
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-001", "QA_ENGINEER_SERVER"));
+                .thenReturn(viewWithTestLayout("run-001", "QA_ENGINEER_SERVER",
+                        "src/test/java/com/example/AppTest.java"));
 
         when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"src/test/java/com/example/AppTest.java":"class AppTest { @Test void ok() {} }"}
+                ```java
+                class AppTest { @Test void ok() {} }
+                ```
                 """));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
@@ -104,10 +112,12 @@ class TestGenerationCoordinatorTest {
                 """);
         var ctx = MidasContext.start("Build extension", "run-client").withTechnicalSpec(spec);
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-client", "QA_ENGINEER_CLIENT"));
+                .thenReturn(viewWithTestLayout("run-client", "QA_ENGINEER_CLIENT", "src/popup.test.ts"));
 
         when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"src/popup.test.ts":"describe('popup', () => { it('works', () => expect(true).toBe(true)); });"}
+                ```typescript
+                describe('popup', () => { it('works', () => expect(true).toBe(true)); });
+                ```
                 """));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
@@ -128,10 +138,12 @@ class TestGenerationCoordinatorTest {
                 {"runtime_environment":{"execution_model":"CLI"}}
                 """);
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
-        stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER);
+        stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER, "cmd/main_test.go");
 
         when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                ```go
+                func TestMain(t *testing.T) {}
+                ```
                 """));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
@@ -159,14 +171,23 @@ class TestGenerationCoordinatorTest {
                 .withArchitectureDesign(arch);
 
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-hybrid", "QA_ENGINEER_CLIENT"));
+                .thenReturn(viewWithTestLayout("run-hybrid", "QA_ENGINEER_CLIENT", "src/popup.test.ts"));
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-hybrid", "QA_ENGINEER_SERVER"));
+                .thenReturn(viewWithTestLayout("run-hybrid", "QA_ENGINEER_SERVER",
+                        "src/test/java/com/example/AppTest.java"));
 
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText("{\"src/popup.test.ts\":\"describe('popup', () => { it('works', () => expect(true).toBe(true)); });\"}"));
+                .thenReturn(LlmCallResult.ofText("""
+                        ```typescript
+                        describe('popup', () => { it('works', () => expect(true).toBe(true)); });
+                        ```
+                        """));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn(LlmCallResult.ofText("{\"src/test/java/com/example/AppTest.java\":\"class AppTest { @Test void ok() {} }\"}"));
+                .thenReturn(LlmCallResult.ofText("""
+                        ```java
+                        class AppTest { @Test void ok() {} }
+                        ```
+                        """));
 
         AgentResult result = coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -186,13 +207,22 @@ class TestGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build hybrid app", "run-hybrid").withTechnicalSpec(spec);
 
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-hybrid", "QA_ENGINEER_CLIENT"));
+                .thenReturn(viewWithTestLayout("run-hybrid", "QA_ENGINEER_CLIENT", "src/popup.test.ts"));
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-hybrid", "QA_ENGINEER_SERVER"));
+                .thenReturn(viewWithTestLayout("run-hybrid", "QA_ENGINEER_SERVER",
+                        "src/test/java/com/example/AppTest.java"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText("{\"src/popup.test.ts\":\"describe('x', () => { it('y', () => expect(1).toBe(1)); });\"}"));
+                .thenReturn(LlmCallResult.ofText("""
+                        ```typescript
+                        describe('x', () => { it('y', () => expect(1).toBe(1)); });
+                        ```
+                        """));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
-                .thenReturn(LlmCallResult.ofText("{\"src/test/java/com/example/AppTest.java\":\"class AppTest { @Test void ok() {} }\"}"));
+                .thenReturn(LlmCallResult.ofText("""
+                        ```java
+                        class AppTest { @Test void ok() {} }
+                        ```
+                        """));
 
         coordinator.execute(ctx, "QaAutomationAgent");
 
@@ -214,11 +244,16 @@ class TestGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build hybrid app", "run-hybrid-fail").withTechnicalSpec(spec);
 
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.CLIENT)))
-                .thenReturn(view("run-hybrid-fail", "QA_ENGINEER_CLIENT"));
+                .thenReturn(viewWithTestLayout("run-hybrid-fail", "QA_ENGINEER_CLIENT", "src/popup.test.ts"));
         when(contextReducer.reduceTestGenerationPass(eq(ctx), eq(ImplementationSurface.SERVER)))
-                .thenReturn(view("run-hybrid-fail", "QA_ENGINEER_SERVER"));
+                .thenReturn(viewWithTestLayout("run-hybrid-fail", "QA_ENGINEER_SERVER",
+                        "src/test/java/com/example/AppTest.java"));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Client"))))
-                .thenReturn(LlmCallResult.ofText("{\"src/popup.test.ts\":\"describe('x', () => { it('y', () => expect(1).toBe(1)); });\"}"));
+                .thenReturn(LlmCallResult.ofText("""
+                        ```typescript
+                        describe('x', () => { it('y', () => expect(1).toBe(1)); });
+                        ```
+                        """));
         when(llmClient.call(argThat(req -> req != null && req.getAgentName().endsWith("Server"))))
                 .thenThrow(LlmCallException.emptyResponse("QaAutomationAgentServer"));
 
@@ -238,10 +273,12 @@ class TestGenerationCoordinatorTest {
         var ctx = MidasContext.start("Build CLI tool", "run-remediate")
                 .withTechnicalSpec(spec)
                 .withRemediationDirective(directive);
-        stubQaView("run-remediate", ContextReducer.AgentRole.QA_ENGINEER);
+        stubQaView("run-remediate", ContextReducer.AgentRole.QA_ENGINEER, "cmd/main_test.go");
 
         when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                ```go
+                func TestMain(t *testing.T) {}
+                ```
                 """));
 
         coordinator.execute(ctx, "QaAutomationAgent");
@@ -262,10 +299,12 @@ class TestGenerationCoordinatorTest {
                 {"runtime_environment":{"execution_model":"CLI"}}
                 """);
         var ctx = MidasContext.start("Build CLI tool", "run-cli").withTechnicalSpec(spec);
-        stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER);
+        stubQaView("run-cli", ContextReducer.AgentRole.QA_ENGINEER, "cmd/main_test.go");
 
         when(llmClient.call(any())).thenReturn(LlmCallResult.ofText("""
-                {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                ```go
+                func TestMain(t *testing.T) {}
+                ```
                 """));
 
         coordinator.execute(ctx, "QaAutomationAgent");
@@ -321,9 +360,27 @@ class TestGenerationCoordinatorTest {
         assertThat(result.attemptsUsed()).isEqualTo(1);
     }
 
-    private void stubQaView(String runId, ContextReducer.AgentRole role) {
+    private void stubQaView(String runId, ContextReducer.AgentRole role, String... testPaths) {
         when(contextReducer.reduce(any(), eq(role)))
-                .thenReturn(view(runId, role.name()));
+                .thenReturn(viewWithTestLayout(runId, role.name(), testPaths));
+    }
+
+    private AgentContextView viewWithTestLayout(String runId, String agentName, String... testPaths) {
+        var layout = objectMapper.createArrayNode();
+        for (String path : testPaths) {
+            layout.add(path);
+        }
+        ObjectNode arch = objectMapper.createObjectNode();
+        arch.set("file_layout", layout);
+        return AgentContextView.builder()
+                .agentName(agentName)
+                .pipelineRunId(runId)
+                .rawUserIdea("idea")
+                .requiredArtifacts(Map.of(
+                        "architectureDesign", arch,
+                        "generatedSourceCode", objectMapper.createObjectNode()))
+                .estimatedTokenBudget(10)
+                .build();
     }
 
     private AgentContextView view(String runId, String agentName) {

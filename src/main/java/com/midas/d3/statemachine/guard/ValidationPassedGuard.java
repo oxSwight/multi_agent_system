@@ -6,7 +6,9 @@ import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
 import com.midas.d3.statemachine.PipelineContextKeys;
 import com.midas.d3.statemachine.ValidatorRegistry;
+import com.midas.d3.validation.ControllerValidator;
 import com.midas.d3.validation.GoalKeeperValidator;
+import com.midas.d3.validation.SoftwareArchitectValidator;
 import com.midas.d3.validation.ValidationHookException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -68,7 +70,7 @@ public class ValidationPassedGuard implements Guard<MidasState, MidasEvent> {
         }
 
         try {
-            JsonNode validated = validatorOpt.get().validate(llmOutput);
+            JsonNode validated = validateWithContext(sourceState, llmOutput, validatorOpt.get(), context);
             storeValidated(context, validated);
             log.debug("[ValidationPassedGuard][{}] Validation PASSED.", sourceState);
             return true;
@@ -114,5 +116,24 @@ public class ValidationPassedGuard implements Guard<MidasState, MidasEvent> {
     private void storeError(StateContext<MidasState, MidasEvent> context, String message) {
         context.getExtendedState().getVariables()
                 .put(PipelineContextKeys.LAST_VALIDATION_ERROR, message);
+    }
+
+    private JsonNode validateWithContext(MidasState sourceState,
+                                         String llmOutput,
+                                         GoalKeeperValidator validator,
+                                         StateContext<MidasState, MidasEvent> context) throws ValidationHookException {
+        if (sourceState == MidasState.PRODUCT_REVIEW && validator instanceof ControllerValidator controllerValidator) {
+            MidasContext midasContext = (MidasContext) context.getExtendedState().getVariables()
+                    .get(PipelineContextKeys.MIDAS_CONTEXT);
+            JsonNode featureManifest = midasContext != null ? midasContext.getFeatureManifest() : null;
+            return controllerValidator.validateWithFeatureManifest(llmOutput, featureManifest);
+        }
+        if (sourceState == MidasState.ARCHITECTURE_DESIGN && validator instanceof SoftwareArchitectValidator architectValidator) {
+            MidasContext midasContext = (MidasContext) context.getExtendedState().getVariables()
+                    .get(PipelineContextKeys.MIDAS_CONTEXT);
+            JsonNode technicalSpec = midasContext != null ? midasContext.getTechnicalSpec() : null;
+            return architectValidator.validateWithTechnicalSpec(llmOutput, technicalSpec);
+        }
+        return validator.validate(llmOutput);
     }
 }

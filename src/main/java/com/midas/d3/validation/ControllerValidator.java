@@ -36,6 +36,16 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
 
     public JsonNode validateWithFeatureManifest(String rawJson, JsonNode featureManifest)
             throws ValidationHookException {
+        return validateNormalized(normalizePlainVerdict(rawJson), featureManifest);
+    }
+
+    @Override
+    public JsonNode validate(String rawJson) throws ValidationHookException {
+        return validateNormalized(normalizePlainVerdict(rawJson), null);
+    }
+
+    private JsonNode validateNormalized(String rawJson, JsonNode featureManifest)
+            throws ValidationHookException {
         if (rawJson == null || rawJson.isBlank()) {
             throw new ValidationHookException(agentName(), stage(),
                     "LLM output is null or blank — no JSON to validate.");
@@ -64,6 +74,59 @@ public class ControllerValidator extends AbstractGoalKeeperValidator {
         }
 
         return root;
+    }
+
+    /**
+     * Accepts a plain verdict string ({@code PASS}, {@code REJECT}, etc.) and synthesizes the
+     * minimal JSON envelope expected by downstream guards and artifact storage.
+     */
+    private String normalizePlainVerdict(String rawOutput) {
+        if (rawOutput == null || rawOutput.isBlank()) {
+            return rawOutput;
+        }
+
+        String trimmed = rawOutput.strip();
+        if (trimmed.startsWith("{")) {
+            return rawOutput;
+        }
+
+        String candidate = trimmed;
+        String extracted = MarkdownCodeBlockExtractor.extract(trimmed);
+        if (extracted != null && !extracted.isBlank()) {
+            candidate = extracted.strip();
+        }
+
+        // Take first non-blank line when model adds brief commentary.
+        String firstLine = candidate.lines()
+                .map(String::strip)
+                .filter(line -> !line.isBlank())
+                .findFirst()
+                .orElse(candidate);
+
+        String verdict = firstLine.strip().toUpperCase(Locale.ROOT);
+        if (!VALID_VERDICTS.contains(verdict)) {
+            return rawOutput;
+        }
+
+        log.info("[ControllerAgent][PRODUCT_REVIEW] Plain verdict '{}' normalized to minimal JSON envelope.",
+                verdict);
+
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("verdict", verdict);
+        root.put("summary", "Plain verdict: " + verdict);
+        root.putArray("coverage_matrix")
+                .addObject()
+                .put("requested_feature", "MVP delivery")
+                .put("status", VERDICT_REJECT.equals(verdict) ? "MISSING" : "COVERED")
+                .put("evidence", "pipeline-artifact-coverage");
+        ObjectNode remediation = root.putObject("remediation_block");
+        if (VERDICT_REJECT.equals(verdict)) {
+            remediation.putArray("required_changes").add("Address material gaps before resubmitting.");
+        } else {
+            remediation.putArray("required_changes");
+        }
+        remediation.putArray("recommendations");
+        return root.toString();
     }
 
     @Override

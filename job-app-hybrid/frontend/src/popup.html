@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Job Application Assistant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body class="bg-slate-900 text-slate-100">
+  <div class="w-80 p-4 space-y-5">
+    <header class="border-b border-slate-700 pb-3">
+      <h1 class="text-lg font-semibold tracking-tight text-white">Job Application Assistant</h1>
+      <p class="text-xs text-slate-400 mt-1">Manage your profile and upload resumes</p>
+    </header>
+
+    <section class="space-y-3" aria-labelledby="profile-heading">
+      <h2 id="profile-heading" class="text-sm font-medium text-slate-300 uppercase tracking-wide">Profile Management</h2>
+      <div class="space-y-2">
+        <label for="profile-name" class="block text-xs text-slate-400">Full name</label>
+        <input id="profile-name" type="text" autocomplete="name"
+               class="w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+               placeholder="Jane Doe">
+      </div>
+      <div class="space-y-2">
+        <label for="profile-email" class="block text-xs text-slate-400">Email</label>
+        <input id="profile-email" type="email" autocomplete="email"
+               class="w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+               placeholder="jane@example.com">
+      </div>
+      <div class="space-y-2">
+        <label for="profile-phone" class="block text-xs text-slate-400">Phone</label>
+        <input id="profile-phone" type="tel" autocomplete="tel"
+               class="w-full rounded-md border border-slate-600 bg-slate-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+               placeholder="+1 555 0100">
+      </div>
+      <button id="save-profile-btn" type="button"
+              class="w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium hover:bg-indigo-500 transition-colors">
+        Save Profile
+      </button>
+    </section>
+
+    <section class="space-y-3 border-t border-slate-700 pt-4" aria-labelledby="resume-heading">
+      <h2 id="resume-heading" class="text-sm font-medium text-slate-300 uppercase tracking-wide">Resume Upload</h2>
+      <input id="resume-upload" type="file" accept=".pdf,.docx"
+             class="block w-full text-xs text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-2 file:text-sm file:text-slate-100 hover:file:bg-slate-600">
+      <button id="upload-btn" type="button"
+              class="w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium hover:bg-emerald-500 transition-colors">
+        Upload Resume
+      </button>
+    </section>
+
+    <div id="status-toast" role="status" aria-live="polite"
+         class="hidden rounded-md border px-3 py-2 text-xs"></div>
+  </div>
+
+  <script src="profile_manager.js"></script>
+  <script src="file_uploader.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

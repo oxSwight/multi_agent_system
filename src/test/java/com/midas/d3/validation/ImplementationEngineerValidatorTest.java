@@ -155,7 +155,7 @@ class ImplementationEngineerValidatorTest {
     }
 
     @Test
-    void validateWithTechnicalSpec_missingCoreFeature_throwsValidationHookException() throws Exception {
+    void validateWithTechnicalSpec_missingCoreFeature_logsWarningButPasses() throws Exception {
         String json = """
                 {
                   "source_files": {
@@ -175,13 +175,13 @@ class ImplementationEngineerValidatorTest {
                 {"core_features":["Create task","Delete task"]}
                 """);
 
-        assertThatThrownBy(() -> validator.validateWithTechnicalSpec(json, spec))
-                .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("Delete task");
+        JsonNode result = validator.validateWithTechnicalSpec(json, spec);
+
+        assertThat(result.get("feature_manifest")).hasSize(1);
     }
 
     @Test
-    void validateWithTechnicalSpec_orphanManifestId_throwsValidationHookException() throws Exception {
+    void validateWithTechnicalSpec_orphanManifestId_logsWarningButPasses() throws Exception {
         String json = """
                 {
                   "source_files": {
@@ -208,9 +208,9 @@ class ImplementationEngineerValidatorTest {
                 {"core_features":["Create task"]}
                 """);
 
-        assertThatThrownBy(() -> validator.validateWithTechnicalSpec(json, spec))
-                .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("extra-feature");
+        JsonNode result = validator.validateWithTechnicalSpec(json, spec);
+
+        assertThat(result.get("feature_manifest")).hasSize(2);
     }
 
     @Test
@@ -266,30 +266,68 @@ class ImplementationEngineerValidatorTest {
     }
 
     @Test
-    void validateSingleFileOutput_validResponse_returnsParsed() throws Exception {
-        var parsed = validator.validateSingleFileOutput("""
-                {"path":"src/App.java","content":"public class App {}"}
+    void validateSingleFileOutput_validMarkdownBlock_returnsContent() throws Exception {
+        String content = validator.validateSingleFileOutput("""
+                ```javascript
+                public class App {}
+                ```
                 """, "src/App.java");
 
-        assertThat(parsed.path()).isEqualTo("src/App.java");
-        assertThat(parsed.content()).contains("class App");
+        assertThat(content).contains("class App");
     }
 
     @Test
-    void validateSingleFileOutput_wrongPath_throws() {
-        assertThatThrownBy(() -> validator.validateSingleFileOutput("""
-                {"path":"other.java","content":"class X {}"}
-                """, "src/App.java"))
+    void validateSingleFileOutput_missingCodeBlock_throws() {
+        assertThatThrownBy(() -> validator.validateSingleFileOutput(
+                "public class App {}", "src/App.java"))
                 .isInstanceOf(ValidationHookException.class)
-                .hasMessageContaining("does not match");
+                .hasMessageContaining("markdown code block");
     }
 
     @Test
     void validateSingleFileOutput_placeholderContent_throws() {
         assertThatThrownBy(() -> validator.validateSingleFileOutput("""
-                {"path":"src/App.java","content":"// TODO implement"}
+                ```javascript
+                // TODO implement
+                ```
                 """, "src/App.java"))
                 .isInstanceOf(ValidationHookException.class)
                 .hasMessageContaining("placeholder");
+    }
+
+    @Test
+    void validateSingleFileOutput_jsonEnvelope_throws() {
+        assertThatThrownBy(() -> validator.validateSingleFileOutput("""
+                {"path":"src/App.java","content":"class App {}"}
+                """, "src/App.java"))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("JSON envelope forbidden");
+    }
+
+    @Test
+    void validateWithTechnicalSpec_orphanPopupJs_throws() throws Exception {
+        String json = """
+                {
+                  "source_files": {
+                    "frontend/src/popup.html": "<html><body><script src=\\"popup.js\\"></script></body></html>",
+                    "frontend/src/file_uploader.js": "document.getElementById('x');"
+                  },
+                  "feature_manifest": [
+                    {
+                      "feature_id": "upload",
+                      "feature_name": "Upload",
+                      "files": ["frontend/src/file_uploader.js"],
+                      "entry_points": ["upload"]
+                    }
+                  ]
+                }
+                """;
+        JsonNode architecture = objectMapper.readTree("""
+                {"api_contracts":[{"method":"POST","path":"/api/files"}]}
+                """);
+
+        assertThatThrownBy(() -> validator.validateWithTechnicalSpec(json, null, architecture))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("Orphan JavaScript");
     }
 }

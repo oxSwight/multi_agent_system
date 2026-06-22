@@ -35,7 +35,11 @@ midas:
     max-artifact-size-kb: 512
   validation:
     max-retries: 3
+  agent-retry:
+    parse-max-attempts: 2
+    validation-max-attempts: 3
   llm:
+    client-type: GEMINI
     timeout-seconds: 5
     base-url: http://localhost:11434
     api-key: ''
@@ -49,6 +53,10 @@ midas:
     model: test-model
     timeout-seconds: 5
     http-max-retries: 1
+    routing:
+      enabled: false
+      default-model: test-model
+      agents: {}
   telegram:
     enabled: false
     bot-username: test_bot

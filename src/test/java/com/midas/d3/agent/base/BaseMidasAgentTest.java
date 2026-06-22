@@ -233,6 +233,22 @@ class BaseMidasAgentTest {
         }
 
         @Test
+        @DisplayName("JSON parse error allows at most one retry (2 total attempts)")
+        void execute_parseError_maxOneRetry() throws Exception {
+            ValidationHookException parseError = new ValidationHookException(
+                    "SystemAnalyst", "SYSTEM_ANALYSIS",
+                    List.of("JSON parse error: Unexpected character"));
+
+            when(llmClient.call(any())).thenReturn(LlmCallResult.ofText(INVALID_JSON));
+            when(goalKeeperValidator.validate(anyString())).thenThrow(parseError);
+
+            assertThatThrownBy(() -> agent.execute(context))
+                    .isInstanceOf(AgentExecutionException.class);
+
+            verify(llmClient, times(2)).call(any());
+        }
+
+        @Test
         @DisplayName("Throws AgentExecutionException after 3 consecutive validation failures")
         void execute_threeValidationFailures_throwsAgentExecutionException() {
             ValidationHookException ve = new ValidationHookException(

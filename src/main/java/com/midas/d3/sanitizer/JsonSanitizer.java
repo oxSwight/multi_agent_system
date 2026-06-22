@@ -39,6 +39,11 @@ public final class JsonSanitizer {
             "```([a-zA-Z0-9_-]+)?\\s*\\r?\\n?(.*?)\\r?\\n?```",
             Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
+    /** DeepSeek-R1 and similar reasoning models wrap chain-of-thought in these tags. */
+    private static final Pattern REASONING_BLOCK = Pattern.compile(
+            "<" + "think" + ">.*?</" + "think" + ">",
+            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     /**
@@ -53,7 +58,7 @@ public final class JsonSanitizer {
             return rawLlmOutput;
         }
 
-        String trimmed = stripPreamble(rawLlmOutput.strip());
+        String trimmed = stripPreamble(stripReasoningBlocks(rawLlmOutput.strip()));
 
         String fromFence = extractBestJsonFromFences(trimmed);
         if (fromFence != null) {
@@ -78,6 +83,11 @@ public final class JsonSanitizer {
         // Fallback: return trimmed; downstream validator will explain the failure
         log.warn("[JsonSanitizer] No JSON object found in input (len={}). Returning trimmed.", trimmed.length());
         return trimmed;
+    }
+
+    static String stripReasoningBlocks(String text) {
+        String stripped = REASONING_BLOCK.matcher(text).replaceAll("").strip();
+        return stripped.isEmpty() ? text.strip() : stripped;
     }
 
     static String stripPreamble(String trimmed) {

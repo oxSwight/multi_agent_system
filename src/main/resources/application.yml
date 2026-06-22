@@ -54,32 +54,49 @@ midas:
   validation:
     max-retries: 3
 
+  agent-retry:
+    parse-max-attempts: ${MIDAS_AGENT_RETRY_PARSE_MAX:2}
+    validation-max-attempts: ${MIDAS_AGENT_RETRY_VALIDATION_MAX:3}
+
   finops:
     # Approximate Gemini 2.5 Flash list prices (USD per 1M tokens) for dashboard estimates.
     usd-per-million-prompt-tokens: ${MIDAS_FINOPS_USD_PER_M_PROMPT:0.075}
     usd-per-million-completion-tokens: ${MIDAS_FINOPS_USD_PER_M_COMPLETION:0.30}
 
-  # ── Gemini LLM (GeminiLlmClient — used by pipeline agents & Evolution Agent) ─
+  # ── LLM client selection ───────────────────────────────────────────────────
+  # client-type: GEMINI → GeminiLlmClient (Google AI Studio)
+  # client-type: NOUS   → NousRestClient (OpenAI-compatible: Ollama, OpenRouter, LM Studio)
   llm:
+    client-type: ${MIDAS_LLM_CLIENT_TYPE:NOUS}
     timeout-seconds: ${MIDAS_LLM_TIMEOUT_SECONDS:180}
     http-max-retries: ${MIDAS_LLM_HTTP_MAX_RETRIES:5}
     base-url: ${MIDAS_LLM_BASE_URL:https://generativelanguage.googleapis.com}
     api-key: ${MIDAS_LLM_API_KEY:}
-    model: ${MIDAS_LLM_MODEL:gemini-2.5-flash}
+    model: ${MIDAS_LLM_MODEL:qwen2.5-coder:14b}
     stage-models:
-      CODE_GENERATION: ${MIDAS_LLM_MODEL_CODE:gemini-3.5-flash}
-      TEST_GENERATION: ${MIDAS_LLM_MODEL_TEST:gemini-2.5-flash}
+      CODE_GENERATION: ${MIDAS_LLM_MODEL_CODE:qwen2.5-coder:14b}
+      TEST_GENERATION: ${MIDAS_LLM_MODEL_TEST:qwen2.5-coder:14b}
 
-  # ── Nous / OpenAI-compatible LLM (NousRestClient — optional alternate provider) ─
-  # Switch between providers by changing base-url and api-key:
-  #   OpenRouter (cloud):  base-url=https://openrouter.ai/api  api-key=sk-or-...
-  #   LM Studio (local):   base-url=http://localhost:1234       api-key=  (leave empty)
+  # ── Nous / OpenAI-compatible LLM (NousRestClient — active when client-type: NOUS) ─
+  # Ollama (Docker → host): base-url=http://host.docker.internal:11434  (NousRestClient appends /v1/chat/completions)
+  # OpenRouter (cloud):     base-url=https://openrouter.ai/api           api-key=sk-or-...
+  # LM Studio (local):      base-url=http://localhost:1234               api-key=  (leave empty)
   nous:
-    base-url: ${MIDAS_NOUS_BASE_URL:http://localhost:1234}
-    api-key: ${MIDAS_NOUS_API_KEY:}
-    model: ${MIDAS_NOUS_MODEL:nous-hermes-2-mistral-7b-dpo}
-    timeout-seconds: ${MIDAS_NOUS_TIMEOUT_SECONDS:120}
+    base-url: ${MIDAS_NOUS_BASE_URL:http://host.docker.internal:11434}
+    api-key: ${MIDAS_NOUS_API_KEY:ollama-local-dev}
+    model: ${MIDAS_NOUS_MODEL:qwen2.5-coder:14b}
+    timeout-seconds: ${MIDAS_NOUS_TIMEOUT_SECONDS:300}
     http-max-retries: ${MIDAS_NOUS_MAX_RETRIES:2}
+    routing:
+      enabled: ${MIDAS_NOUS_ROUTING_ENABLED:true}
+      default-model: ${MIDAS_NOUS_ROUTING_DEFAULT_MODEL:qwen2.5-coder:14b}
+      agents:
+        SystemAnalystAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:14b}
+        SoftwareArchitectAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:14b}
+        ImplementationEngineerAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:14b}
+        QaAutomationAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:14b}
+        SecOpsAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:14b}
+        ControllerAgent: ${MIDAS_NOUS_MODEL_ENGINEERING:qwen2.5-coder:14b}
 
   # ── Evolution Agent (ContinuousImprovementService) ────────────────────────
   # cron: every hour on the hour; override for faster test cycles with fixedDelay

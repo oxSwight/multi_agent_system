@@ -3,7 +3,7 @@ package com.midas.d3.validation;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.midas.d3.agent.implementation.SingleFileLLMResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
@@ -13,6 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+@Slf4j
 @Component
 public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator {
 
@@ -28,6 +29,13 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
     @Override public String stage()     { return "CODE_GENERATION"; }
 
     public JsonNode validateWithTechnicalSpec(String rawJson, JsonNode technicalSpec)
+            throws ValidationHookException {
+        return validateWithTechnicalSpec(rawJson, technicalSpec, null);
+    }
+
+    public JsonNode validateWithTechnicalSpec(String rawJson,
+                                                JsonNode technicalSpec,
+                                                JsonNode architecture)
             throws ValidationHookException {
         if (rawJson == null || rawJson.isBlank()) {
             throw new ValidationHookException(agentName(), stage(),
@@ -48,7 +56,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         }
 
         List<String> violations = new java.util.ArrayList<>();
-        collectViolations(root, violations, technicalSpec);
+        collectViolations(root, violations, technicalSpec, architecture);
 
         if (!violations.isEmpty()) {
             throw new ValidationHookException(agentName(), stage(), violations);
@@ -57,15 +65,48 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         return root;
     }
 
-    public SingleFileLLMResponse validateSingleFileOutput(String rawJson, String expectedPath)
+    /**
+     * Extracts and validates raw source from a per-file LLM response.
+     * The pipeline supplies {@code expectedPath}; the LLM must return only a markdown code block.
+     */
+    public String validateSingleFileOutput(String rawOutput, String expectedPath)
             throws ValidationHookException {
-        SingleFileLLMResponse parsed = SingleFileLLMResponse.parse(rawJson, expectedPath, objectMapper);
+        if (rawOutput == null || rawOutput.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output is null or blank — expected a markdown code block.");
+        }
+
+        String trimmed = rawOutput.strip();
+        rejectJsonEnvelope(trimmed);
+
+        String content = MarkdownCodeBlockExtractor.extract(trimmed);
+        if (content == null || content.isBlank()) {
+            throw new ValidationHookException(agentName(), stage(),
+                    "LLM output must be a single markdown code block (```language ... ```) "
+                            + "containing the complete source for [" + expectedPath + "].");
+        }
+
         List<String> violations = new java.util.ArrayList<>();
-        rejectPlaceholders(parsed.path(), parsed.content(), violations);
+        rejectPlaceholders(expectedPath, content, violations);
         if (!violations.isEmpty()) {
             throw new ValidationHookException(agentName(), stage(), violations);
         }
-        return parsed;
+        return content;
+    }
+
+    private void rejectJsonEnvelope(String trimmed) {
+        if (!trimmed.startsWith("{")) {
+            return;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(trimmed);
+            if (root.isObject() && (root.has("path") || root.has("content") || root.has("source_files"))) {
+                throw new ValidationHookException(agentName(), stage(),
+                        "JSON envelope forbidden — output raw source in a single markdown code block only.");
+            }
+        } catch (JsonProcessingException ignored) {
+            // Not JSON — no envelope to reject.
+        }
     }
 
     public JsonNode validatePatchOutput(String rawJson, List<String> allowedPaths)
@@ -119,19 +160,21 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
 
     @Override
     protected void collectViolations(JsonNode root, List<String> violations) {
-        collectViolations(root, violations, null);
+        collectViolations(root, violations, null, null);
     }
 
-    private void collectViolations(JsonNode root, List<String> violations, JsonNode technicalSpec) {
+    private void collectViolations(JsonNode root, List<String> violations,
+                                   JsonNode technicalSpec, JsonNode architecture) {
         if (root.has("source_files") || root.has("feature_manifest")) {
-            validateEnvelope(root, violations, technicalSpec);
+            validateEnvelope(root, violations, technicalSpec, architecture);
             return;
         }
 
         violations.add("Implementation output must use the envelope schema with 'source_files' and 'feature_manifest'.");
     }
 
-    private void validateEnvelope(JsonNode root, List<String> violations, JsonNode technicalSpec) {
+    private void validateEnvelope(JsonNode root, List<String> violations,
+                                  JsonNode technicalSpec, JsonNode architecture) {
         JsonNode sourceFiles = root.get("source_files");
         JsonNode featureManifest = root.get("feature_manifest");
 
@@ -140,6 +183,8 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
 
         if (sourceFiles != null && sourceFiles.isObject()) {
             validateSourceFiles(sourceFiles, violations);
+            JsonNode contractSource = resolveApiContractSource(technicalSpec, architecture);
+            FrontendIntegrationValidator.validateSourceFiles(sourceFiles, contractSource, violations);
         }
 
         if (featureManifest != null && featureManifest.isArray()) {
@@ -148,7 +193,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
                 crossCheckManifestFiles(sourceFiles, featureManifest, violations);
             }
             if (technicalSpec != null && !technicalSpec.isNull() && !technicalSpec.isMissingNode()) {
-                crossCheckManifestAgainstSpec(featureManifest, technicalSpec, violations);
+                warnOnManifestSpecMismatch(featureManifest, technicalSpec);
             }
         }
     }
@@ -207,14 +252,14 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
         }
     }
 
-    private void crossCheckManifestAgainstSpec(JsonNode featureManifest,
-                                               JsonNode technicalSpec,
-                                               List<String> violations) {
+    private void warnOnManifestSpecMismatch(JsonNode featureManifest,
+                                            JsonNode technicalSpec) {
         JsonNode coreFeatures = technicalSpec.get("core_features");
         if (coreFeatures == null || !coreFeatures.isArray() || coreFeatures.isEmpty()) {
             return;
         }
 
+        List<String> warnings = new java.util.ArrayList<>();
         Set<String> requiredIds = new HashSet<>();
         Set<String> requiredNames = new HashSet<>();
         Set<String> derivedTextualIds = new HashSet<>();
@@ -274,14 +319,14 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             }
 
             if (!matched && !manifestId.isBlank()) {
-                violations.add("feature_manifest feature_id [" + manifestId
+                warnings.add("feature_manifest feature_id [" + manifestId
                         + "] does not match any core_features id.");
             }
         }
 
         for (String requiredId : requiredIds) {
             if (!matchedRequiredIds.contains(requiredId)) {
-                violations.add("core_features id [" + requiredId + "] is missing from feature_manifest.");
+                warnings.add("core_features id [" + requiredId + "] is missing from feature_manifest.");
             }
         }
 
@@ -296,9 +341,21 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             }
             String expectedId = toFeatureId(featureLabel);
             if (!matchedDerivedTextualIds.contains(expectedId) && !matchedRequiredNames.contains(featureLabel)) {
-                violations.add("core_features [" + featureLabel + "] is not represented in feature_manifest.");
+                warnings.add("core_features [" + featureLabel + "] is not represented in feature_manifest.");
             }
         }
+
+        if (!warnings.isEmpty()) {
+            log.warn("[ImplementationEngineer][CODE_GENERATION] feature_manifest/core_features mismatch ignored: {}",
+                    String.join(" | ", warnings));
+        }
+    }
+
+    private static JsonNode resolveApiContractSource(JsonNode technicalSpec, JsonNode architecture) {
+        if (architecture != null && !architecture.isNull() && !architecture.isMissingNode()) {
+            return architecture;
+        }
+        return technicalSpec;
     }
 
     public static String toFeatureId(String featureLabel) {

@@ -84,7 +84,10 @@ class ArchitectureSurfaceSlicerTest {
     void pathHeuristics_classifyClientAndServerPaths() {
         assertThat(ArchitectureSurfaceSlicer.isClientPath("src/popup.ts")).isTrue();
         assertThat(ArchitectureSurfaceSlicer.isClientPath("manifest.json")).isTrue();
+        assertThat(ArchitectureSurfaceSlicer.isClientPath("frontend/manifest.json")).isTrue();
         assertThat(ArchitectureSurfaceSlicer.isServerPath("src/main/java/com/example/App.java")).isTrue();
+        assertThat(ArchitectureSurfaceSlicer.isServerPath("backend/pom.xml")).isTrue();
+        assertThat(ArchitectureSurfaceSlicer.isServerPath("backend/src/main/java/com/example/App.java")).isTrue();
         assertThat(ArchitectureSurfaceSlicer.isClientPath("src/main/java/com/example/App.java")).isFalse();
     }
 }

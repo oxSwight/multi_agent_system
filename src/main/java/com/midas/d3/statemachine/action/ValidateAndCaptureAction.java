@@ -9,6 +9,7 @@ import com.midas.d3.statemachine.PipelineContextKeys;
 import com.midas.d3.statemachine.ValidatorRegistry;
 import com.midas.d3.validation.ControllerValidator;
 import com.midas.d3.validation.GoalKeeperValidator;
+import com.midas.d3.validation.SoftwareArchitectValidator;
 import com.midas.d3.validation.ValidationHookException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -97,6 +98,11 @@ public class ValidateAndCaptureAction implements Action<MidasState, MidasEvent> 
             MidasContext midasContext = (MidasContext) vars.get(PipelineContextKeys.MIDAS_CONTEXT);
             JsonNode featureManifest = midasContext != null ? midasContext.getFeatureManifest() : null;
             return controllerValidator.validateWithFeatureManifest(llmOutput, featureManifest);
+        }
+        if (sourceStage == MidasState.ARCHITECTURE_DESIGN && validator instanceof SoftwareArchitectValidator architectValidator) {
+            MidasContext midasContext = (MidasContext) vars.get(PipelineContextKeys.MIDAS_CONTEXT);
+            JsonNode technicalSpec = midasContext != null ? midasContext.getTechnicalSpec() : null;
+            return architectValidator.validateWithTechnicalSpec(llmOutput, technicalSpec);
         }
         return validator.validate(llmOutput);
     }
