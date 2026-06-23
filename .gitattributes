@@ -1,0 +1,35 @@
+# Normalize line endings across platforms so checkouts are byte-stable
+# regardless of the contributor's OS. Critical for shell scripts that run
+# in Linux CI — a CRLF here yields "/bin/sh^M: bad interpreter".
+
+# Default: let Git decide, normalizing text to LF in the repository.
+* text=auto
+
+# ── Scripts that MUST stay LF (executed by POSIX shells) ─────────────
+*.sh        text eol=lf
+mvnw        text eol=lf
+*.bash      text eol=lf
+
+# ── Windows-only scripts: keep CRLF ─────────────────────────────────
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# ── Source & config: normalized LF in repo ──────────────────────────
+*.java      text eol=lf
+*.xml       text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sql       text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+*.properties text eol=lf
+Dockerfile  text eol=lf
+
+# ── Binary assets: never touch ──────────────────────────────────────
+*.jar       binary
+*.zip       binary
+*.png       binary
+*.jpg       binary
+*.gif       binary
+*.ico       binary
