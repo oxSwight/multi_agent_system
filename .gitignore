@@ -42,10 +42,24 @@ tmp/
 temp/
 .tmp-*
 
-Internal project specifications
+# Internal project specifications / scratch notes
 /.internal/
 
-# ── Markdown (track README only) ─────────────────────────────
+# ── Build & tooling noise ────────────────────────────────────
+midas_hybrid.zip
+.cursor_run_id.txt
+
+# ── Markdown ─────────────────────────────────────────────────
+# Ignore ad-hoc scratch notes by default, but always track the
+# canonical project docs so a contributor's CONTRIBUTING/SECURITY/
+# CHANGELOG can't silently vanish from version control.
 *.md
 !README.md
 !**/README.md
+!CONTRIBUTING.md
+!CODE_OF_CONDUCT.md
+!SECURITY.md
+!CHANGELOG.md
+!LICENSE.md
+!MIDAS_DX_TODO.md
+!docs/**/*.md
