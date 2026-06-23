@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.Iterator;
@@ -18,12 +19,22 @@ import java.util.Objects;
  * used to give a {@link BuildExecutor} a real project tree to compile.
  *
  * <p>Created under the system temp directory and deleted in full on {@link #close()} — so
- * it is safe to use in a try-with-resources block. Path entries are confined to the
- * workspace root (a {@code ../} traversal attempt is rejected) so a malformed or hostile
- * generated path can never write outside the sandbox.
+ * it is safe to use in a try-with-resources block.
+ *
+ * <h2>Containment</h2>
+ * Every entry is confined to the workspace root: a {@code ../} traversal, an absolute path, or a
+ * syntactically invalid path is <b>skipped</b> (logged, not written) so a hostile or malformed
+ * generated path can never write outside the sandbox — and one bad entry never wedges the whole
+ * materialization. Disk-DoS is bounded by {@link #MAX_FILES} and {@link #MAX_TOTAL_BYTES}.
  */
 @Slf4j
 public final class SandboxWorkspace implements AutoCloseable {
+
+    /** Cap on the number of files materialized — bounds an inode/file-count DoS. */
+    public static final int MAX_FILES = 5_000;
+
+    /** Cap on total bytes materialized — bounds a disk-fill DoS. */
+    public static final long MAX_TOTAL_BYTES = 64L * 1024 * 1024;
 
     private final Path root;
 
@@ -44,10 +55,12 @@ public final class SandboxWorkspace implements AutoCloseable {
     }
 
     /**
-     * Writes every {@code path → textual contents} entry of {@code sourceMap} into the
-     * workspace, creating parent directories as needed.
+     * Writes every {@code path → textual contents} entry of {@code sourceMap} into the workspace,
+     * creating parent directories as needed. Entries that would escape the root, are absolute, are
+     * syntactically invalid, or would breach {@link #MAX_FILES} / {@link #MAX_TOTAL_BYTES} are
+     * skipped (and logged) rather than aborting the materialization.
      *
-     * @return the number of files written
+     * @return the number of files actually written
      */
     public int materialize(JsonNode sourceMap) {
         Objects.requireNonNull(sourceMap, "sourceMap must not be null");
@@ -55,28 +68,54 @@ public final class SandboxWorkspace implements AutoCloseable {
             return 0;
         }
         int written = 0;
+        long totalBytes = 0;
         for (Iterator<Map.Entry<String, JsonNode>> it = sourceMap.fields(); it.hasNext(); ) {
             Map.Entry<String, JsonNode> entry = it.next();
             JsonNode value = entry.getValue();
             if (value == null || !value.isTextual()) {
                 continue;
             }
-            writeFile(entry.getKey(), value.asText());
-            written++;
+            if (written >= MAX_FILES) {
+                log.warn("[SandboxWorkspace] File cap ({}) reached — refusing further files.", MAX_FILES);
+                break;
+            }
+            String contents = value.asText();
+            long size = contents.getBytes(StandardCharsets.UTF_8).length;
+            if (totalBytes + size > MAX_TOTAL_BYTES) {
+                log.warn("[SandboxWorkspace] Total-size cap ({} bytes) would be exceeded — stopping.", MAX_TOTAL_BYTES);
+                break;
+            }
+            if (writeFile(entry.getKey(), contents)) {
+                written++;
+                totalBytes += size;
+            }
         }
-        log.debug("[SandboxWorkspace] Materialized {} file(s) into {}", written, root);
+        log.debug("[SandboxWorkspace] Materialized {} file(s) ({} bytes) into {}", written, totalBytes, root);
         return written;
     }
 
-    private void writeFile(String relativePath, String contents) {
-        Path target = root.resolve(relativePath).normalize();
-        if (!target.startsWith(root)) {
-            throw new IllegalArgumentException(
-                    "Refusing to write outside sandbox root: [" + relativePath + "]");
+    /** @return true if the file was written; false if the path was rejected for containment. */
+    private boolean writeFile(String relativePath, String contents) {
+        Path target;
+        try {
+            target = root.resolve(relativePath).normalize();
+        } catch (InvalidPathException e) {
+            log.warn("[SandboxWorkspace] Skipping syntactically invalid path [{}]: {}", relativePath, e.getMessage());
+            return false;
+        }
+        // Confinement: an absolute path or a `../` traversal normalizes to somewhere outside root
+        // (Path.startsWith is component-wise, so a sibling like `root-evil` does not match).
+        if (target.equals(root) || !target.startsWith(root)) {
+            log.warn("[SandboxWorkspace] Refusing path outside sandbox — skipping hostile path [{}]", relativePath);
+            return false;
         }
         try {
-            Files.createDirectories(target.getParent());
+            Path parent = target.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
             Files.writeString(target, contents, StandardCharsets.UTF_8);
+            return true;
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to materialize file [" + relativePath + "]", e);
         }
