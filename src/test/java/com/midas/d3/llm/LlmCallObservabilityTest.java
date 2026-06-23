@@ -1,5 +1,6 @@
 package com.midas.d3.llm;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -15,10 +16,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LlmCallObservabilityTest {
 
     private ListAppender<ILoggingEvent> appender;
+    private Level originalLevel;
 
     @BeforeEach
     void attachAppender() {
         Logger logger = (Logger) LoggerFactory.getLogger(LlmCallObservability.class);
+        // Pin the level to INFO for the duration of the test. The telemetry is logged at
+        // INFO; without this, a prior @SpringBootTest in the same fork can leave the
+        // com.midas.d3 logger at WARN (from the test application.yml), which would filter
+        // the telemetry events before they reach the appender and make this test order-dependent.
+        originalLevel = logger.getLevel();
+        logger.setLevel(Level.INFO);
         appender = new ListAppender<>();
         appender.start();
         logger.addAppender(appender);
@@ -28,6 +36,7 @@ class LlmCallObservabilityTest {
     void detachAppender() {
         Logger logger = (Logger) LoggerFactory.getLogger(LlmCallObservability.class);
         logger.detachAppender(appender);
+        logger.setLevel(originalLevel);
     }
 
     @Test
