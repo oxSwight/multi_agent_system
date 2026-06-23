@@ -63,3 +63,4 @@ midas_hybrid.zip
 !LICENSE.md
 !MIDAS_DX_TODO.md
 !docs/**/*.md
+!.github/**/*.md
