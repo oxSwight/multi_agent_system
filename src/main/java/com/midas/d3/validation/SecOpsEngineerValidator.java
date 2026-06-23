@@ -65,15 +65,15 @@ public class SecOpsEngineerValidator extends AbstractGoalKeeperValidator {
                         && (probe.has("security_audit_report")
                         || probe.has("release_artifacts")
                         || probe.has("Dockerfile"))) {
-                    try {
-                        return super.validate(normalizeLegacyJson(trimmed));
-                    } catch (ValidationHookException e) {
-                        log.warn("[{}][{}] JSON validation failed ({}), falling back to markdown assembly.",
-                                agentName(), stage(), e.getMessage());
-                    }
+                    // Recognized legacy envelope: validate it and surface any domain violation
+                    // (missing Dockerfile, no FROM, missing extension artifacts, …) directly.
+                    // Previously a failed legacy validation was swallowed here and the input fell
+                    // through to the markdown path, which re-reported it as the misleading generic
+                    // "JSON envelope forbidden" message — masking the real, actionable reason.
+                    return super.validate(normalizeLegacyJson(trimmed));
                 }
             } catch (JsonProcessingException ignored) {
-                // Fall through to markdown parsing.
+                // Not parseable JSON — fall through to markdown parsing.
             }
         }
 
