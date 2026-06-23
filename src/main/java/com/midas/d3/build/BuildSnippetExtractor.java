@@ -66,8 +66,8 @@ public final class BuildSnippetExtractor {
         if (!changed) {
             return report;
         }
-        return BuildReport.failure(report.tool(), report.exitCode(), enriched,
-                report.summary(), report.rawOutputTail());
+        // Only the diagnostics change — preserve the failure phase and every other field.
+        return report.withDiagnostics(enriched);
     }
 
     private static String snippetFor(BuildDiagnostic d, JsonNode sourceMap) {
