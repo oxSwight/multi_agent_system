@@ -72,7 +72,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
     public String validateSingleFileOutput(String rawOutput, String expectedPath)
             throws ValidationHookException {
         if (rawOutput == null || rawOutput.isBlank()) {
-            throw new ValidationHookException(agentName(), stage(),
+            throw ValidationHookException.parseFailure(agentName(), stage(),
                     "LLM output is null or blank — expected a markdown code block.");
         }
 
@@ -81,7 +81,7 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
 
         String content = MarkdownCodeBlockExtractor.extract(trimmed);
         if (content == null || content.isBlank()) {
-            throw new ValidationHookException(agentName(), stage(),
+            throw ValidationHookException.parseFailure(agentName(), stage(),
                     "LLM output must be a single markdown code block (```language ... ```) "
                             + "containing the complete source for [" + expectedPath + "].");
         }

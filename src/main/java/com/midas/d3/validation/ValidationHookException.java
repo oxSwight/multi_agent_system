@@ -14,14 +14,10 @@ public final class ValidationHookException extends RuntimeException {
     private final String agentName;
     private final String stage;
     private final List<String> violations;
+    private final boolean parseError;
 
     public ValidationHookException(String agentName, String stage, List<String> violations) {
-        super(buildMessage(agentName, stage, violations));
-        this.agentName  = Objects.requireNonNull(agentName, "agentName must not be null");
-        this.stage      = Objects.requireNonNull(stage, "stage must not be null");
-        this.violations = violations == null
-                ? Collections.emptyList()
-                : Collections.unmodifiableList(violations);
+        this(agentName, stage, violations, detectLegacyParseError(violations));
     }
 
     public ValidationHookException(String agentName, String stage, String singleViolation) {
@@ -30,13 +26,39 @@ public final class ValidationHookException extends RuntimeException {
                 : List.of(singleViolation));
     }
 
+    private ValidationHookException(String agentName, String stage,
+                                    List<String> violations, boolean parseError) {
+        super(buildMessage(agentName, stage, violations));
+        this.agentName  = Objects.requireNonNull(agentName, "agentName must not be null");
+        this.stage      = Objects.requireNonNull(stage, "stage must not be null");
+        this.violations = violations == null
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(violations);
+        this.parseError = parseError;
+    }
+
+    /**
+     * Factory for an unparseable / structurally-unreadable LLM response (e.g. no JSON, or no
+     * markdown code block where one is required). Parse failures get the capped fail-fast retry
+     * budget ({@link com.midas.d3.agent.AgentRetryPolicy#maxParseAttempts()}) rather than the full
+     * schema-correction budget — retrying garbage output rarely helps and only burns calls.
+     */
+    public static ValidationHookException parseFailure(String agentName, String stage, String message) {
+        return new ValidationHookException(agentName, stage,
+                message == null ? Collections.emptyList() : List.of(message), true);
+    }
+
     public String getAgentName()       { return agentName; }
     public String getStage()           { return stage; }
     public List<String> getViolations(){ return violations; }
 
-    /** {@code true} when Jackson failed to parse the LLM output as JSON. */
+    /** {@code true} when the LLM output could not be parsed into the expected structure. */
     public boolean isParseError() {
-        return violations.size() == 1
+        return parseError;
+    }
+
+    private static boolean detectLegacyParseError(List<String> violations) {
+        return violations != null && violations.size() == 1
                 && violations.get(0).startsWith("JSON parse error:");
     }
 
