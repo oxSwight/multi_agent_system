@@ -73,6 +73,12 @@ midas:
     base-url: ${MIDAS_LLM_BASE_URL:https://generativelanguage.googleapis.com}
     api-key: ${MIDAS_LLM_API_KEY:}
     model: ${MIDAS_LLM_MODEL:qwen2.5-coder:14b}
+    # Two-tier model policy. Heavy reasoning + critical gates stay on `model`; stages listed in
+    # `fast-stages` drop to `fast-model` when it is set. Leave `fast-model` blank to disable
+    # tier-down entirely (every stage uses `model`). Explicit `stage-models` pins always win.
+    fast-model: ${MIDAS_LLM_FAST_MODEL:}
+    fast-stages:
+      - INTEGRATION_STRATEGY        # thin, skip-eligible, non-gate → safe to run on the cheap tier
     stage-models:
       CODE_GENERATION: ${MIDAS_LLM_MODEL_CODE:qwen2.5-coder:14b}
       TEST_GENERATION: ${MIDAS_LLM_MODEL_TEST:qwen2.5-coder:14b}

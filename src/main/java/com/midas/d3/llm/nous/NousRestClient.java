@@ -199,6 +199,13 @@ public class NousRestClient implements LlmClient {
             if (mapped != null && !mapped.isBlank()) {
                 return mapped.trim();
             }
+            // Honor an explicit per-call override (e.g. the LlmModelPolicy tier-down decision) for
+            // agents that are not explicitly pinned in routing.agents, before the generic default.
+            // This is what lets stage-level model tiering take effect on the routed NOUS path.
+            String override = request.getModelOverride();
+            if (override != null && !override.isBlank()) {
+                return override.trim();
+            }
             if (routing.getDefaultModel() != null && !routing.getDefaultModel().isBlank()) {
                 return routing.getDefaultModel().trim();
             }

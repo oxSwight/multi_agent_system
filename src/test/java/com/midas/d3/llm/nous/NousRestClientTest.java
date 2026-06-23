@@ -117,6 +117,28 @@ class NousRestClientTest {
     }
 
     @Test
+    @DisplayName("Routing enabled: an unmapped agent honors the per-call model override before the default")
+    void call_routingEnabled_unmappedAgent_honorsOverride() {
+        // ControllerAgent is the only pinned agent; IntegrationEngineerAgent is unmapped, so the
+        // LlmModelPolicy tier decision carried as modelOverride must win over routing.default-model.
+        NousRestClient client = newClient(okExchange(), routingProperties(true, Map.of(
+                "ControllerAgent", "qwen2.5-coder:14b"
+        )));
+
+        LlmCallRequest request = LlmCallRequest.of(
+                MidasState.INTEGRATION_STRATEGY,
+                "IntegrationEngineerAgent",
+                "system",
+                "user",
+                "run-routing-override",
+                "fast-tier-1b");
+
+        LlmCallResult result = client.call(request);
+
+        assertThat(result.modelUsed()).isEqualTo("fast-tier-1b");
+    }
+
+    @Test
     @DisplayName("Uses modelOverride when routing is disabled")
     void call_routingDisabled_usesModelOverride() {
         NousRestClient client = newClient(okExchange(), routingProperties(false, Map.of()));
