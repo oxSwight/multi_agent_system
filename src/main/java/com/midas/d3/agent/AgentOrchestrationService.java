@@ -2,7 +2,6 @@ package com.midas.d3.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.implementation.CodeGenerationCoordinator;
 import com.midas.d3.agent.implementation.TestGenerationCoordinator;
 import com.midas.d3.context.AgentContextView;
@@ -115,43 +114,55 @@ public class AgentOrchestrationService {
         MidasContext context = pipelineOrchestrator.getContext(runId)
                 .orElseThrow(() -> new IllegalStateException("MidasContext not found for run: " + runId));
 
-        if (currentState == MidasState.CODE_GENERATION) {
-            AgentResult result = codeGenerationCoordinator.execute(context, "ImplementationEngineer");
-            pipelineOrchestrator.submitResult(runId, result.rawLlmOutput());
-            MidasState newState = pipelineOrchestrator.getState(runId);
-            log.info("[AgentOrchestrationService] Run [{}] — CODE_GENERATION done. New state: [{}].",
-                    runId, newState);
-            return newState;
-        }
+        // Produce the payload for this stage. Code/test generation delegate to their
+        // dedicated per-file coordinators; every other stage runs the generic
+        // reduce → prompt → call → sanitize path. Both feed the same submit tail.
+        String payload = switch (currentState) {
+            case CODE_GENERATION ->
+                    codeGenerationCoordinator.execute(context, "ImplementationEngineer").rawLlmOutput();
+            case TEST_GENERATION ->
+                    testGenerationCoordinator.execute(context, "QaEngineer").rawLlmOutput();
+            default ->
+                    runGenericLlmStage(runId, context, currentState);
+        };
 
-        if (currentState == MidasState.TEST_GENERATION) {
-            AgentResult result = testGenerationCoordinator.execute(context, "QaEngineer");
-            pipelineOrchestrator.submitResult(runId, result.rawLlmOutput());
-            MidasState newState = pipelineOrchestrator.getState(runId);
-            log.info("[AgentOrchestrationService] Run [{}] — TEST_GENERATION done. New state: [{}].",
-                    runId, newState);
-            return newState;
-        }
+        // Submit to state machine — validation + state transition happen inside.
+        pipelineOrchestrator.submitResult(runId, payload);
 
+        MidasState newState = pipelineOrchestrator.getState(runId);
+        log.info("[AgentOrchestrationService] Run [{}] — stage [{}] done. New state: [{}].",
+                runId, currentState, newState);
+        return newState;
+    }
+
+    /**
+     * Runs the generic single-call LLM stage: reduce context → build user message →
+     * resolve system prompt → enforce the prompt budget → call the LLM → sanitize.
+     *
+     * @return the sanitized payload ready to submit to the state machine
+     * @throws LlmCallException if the LLM call fails (callers handle retries)
+     */
+    private String runGenericLlmStage(String runId, MidasContext context, MidasState stage)
+            throws LlmCallException {
         // 1. Reduce context to minimal required artifacts
-        ContextReducer.AgentRole role = STAGE_TO_ROLE.get(currentState);
+        ContextReducer.AgentRole role = STAGE_TO_ROLE.get(stage);
         AgentContextView view         = contextReducer.reduce(context, role);
 
         // 2. Build user message
-        String userMessage = buildUserMessage(view, currentState);
+        String userMessage = buildUserMessage(view, stage);
 
         // 3. Get system prompt
-        String systemPrompt = agentSystemPrompts.getPrompt(currentState)
+        String systemPrompt = agentSystemPrompts.getPrompt(stage)
                 .orElseThrow(() -> new IllegalStateException(
-                        "No system prompt registered for state: " + currentState));
+                        "No system prompt registered for state: " + stage));
 
-        String agentName = STAGE_TO_AGENT_NAME.get(currentState);
+        String agentName = STAGE_TO_AGENT_NAME.get(stage);
 
         // 4. Fail-closed prompt-budget guard, then call LLM (may throw LlmCallException — callers handle retries)
         contextReducer.enforcePromptBudget(agentName, systemPrompt, userMessage);
         LlmCallResult llmResult = llmClient.call(
-                LlmCallRequest.of(currentState, agentName, systemPrompt, userMessage, runId,
-                        llmModelPolicy.resolve(currentState)));
+                LlmCallRequest.of(stage, agentName, systemPrompt, userMessage, runId,
+                        llmModelPolicy.resolve(stage)));
         String rawOutput = llmResult.text();
 
         log.debug("[AgentOrchestrationService][{}] Raw LLM output ({} chars): {}…",
@@ -164,13 +175,7 @@ public class AgentOrchestrationService {
         log.debug("[AgentOrchestrationService][{}] Sanitized output ({} chars).",
                 agentName, sanitized == null ? 0 : sanitized.length());
 
-        // 6. Submit to state machine — validation + state transition happen inside
-        pipelineOrchestrator.submitResult(runId, sanitized);
-
-        MidasState newState = pipelineOrchestrator.getState(runId);
-        log.info("[AgentOrchestrationService] Run [{}] — stage [{}] done. New state: [{}].",
-                runId, currentState, newState);
-        return newState;
+        return sanitized;
     }
 
     /**
