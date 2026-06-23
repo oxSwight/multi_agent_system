@@ -362,7 +362,7 @@ class PipelineStateMachineTest {
                 "type": "RELATIONAL",
                 "schema": [{"table_name": "tasks", "columns": [{"name": "id", "type": "BIGINT", "is_primary": true, "is_nullable": false}]}]
               },
-              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_payload": {}, "expected_response": {}}]
+              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_params": [], "response_format": {"type": "json", "fields": ["id", "title"]}}]
             }
             """);
         assertState(MidasState.INTEGRATION_STRATEGY);
@@ -465,7 +465,7 @@ class PipelineStateMachineTest {
                 "type": "RELATIONAL",
                 "schema": [{"table_name": "tasks", "columns": [{"name": "id", "type": "BIGINT", "is_primary": true, "is_nullable": false}]}]
               },
-              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_payload": {}, "expected_response": {}}]
+              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_params": [], "response_format": {"type": "json", "fields": ["id", "title"]}}]
             }
             """);
 
@@ -490,7 +490,7 @@ class PipelineStateMachineTest {
                 "type": "RELATIONAL",
                 "schema": [{"table_name": "tasks", "columns": [{"name": "id", "type": "BIGINT", "is_primary": true, "is_nullable": false}]}]
               },
-              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_payload": {}, "expected_response": {}}]
+              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_params": [], "response_format": {"type": "json", "fields": ["id", "title"]}}]
             }
             """);
 
@@ -834,7 +834,7 @@ class PipelineStateMachineTest {
                 "type": "RELATIONAL",
                 "schema": [{"table_name": "tasks", "columns": [{"name": "id", "type": "BIGINT", "is_primary": true, "is_nullable": false}]}]
               },
-              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_payload": {}, "expected_response": {}}]
+              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_params": [], "response_format": {"type": "json", "fields": ["id", "title"]}}]
             }
             """);
         assertState(MidasState.INTEGRATION_STRATEGY);
