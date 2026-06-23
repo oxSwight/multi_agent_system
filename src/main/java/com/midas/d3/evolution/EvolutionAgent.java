@@ -3,6 +3,7 @@ package com.midas.d3.evolution;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmModelPolicy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -116,6 +117,7 @@ public class EvolutionAgent {
             """;
 
     private final LlmClient llmClient;
+    private final LlmModelPolicy llmModelPolicy;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -137,6 +139,11 @@ public class EvolutionAgent {
         // Single-shot analysis (no validation-retry loop): the whole message is the cacheable
         // prefix with no volatile suffix. Both fields are set explicitly because this path uses the
         // raw builder (stage is deliberately null, which the of(...) factory forbids).
+        //
+        // FinOps: this is a non-critical, scheduled background review, not a correctness gate — so it
+        // runs on the fast/cheap tier (LlmModelPolicy.fastModel(), which falls back to the primary
+        // model when no fast model is configured). Carried as modelOverride; routed NOUS honors it
+        // because EvolutionAgent is not pinned in routing.agents.
         LlmCallRequest request = LlmCallRequest.builder()
                 .stage(null)
                 .agentName(AGENT_NAME)
@@ -145,7 +152,7 @@ public class EvolutionAgent {
                 .cacheableUserPrefix(truncated)
                 .volatileSuffix("")
                 .pipelineRunId(pipelineRunId)
-                .modelOverride(llmClient.defaultModelId())
+                .modelOverride(llmModelPolicy.fastModel())
                 .build();
 
         log.info("[EvolutionAgent] Starting analysis for run [{}] ({} chars of context).",
