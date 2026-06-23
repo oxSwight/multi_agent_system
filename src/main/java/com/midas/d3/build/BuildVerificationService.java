@@ -62,7 +62,11 @@ public class BuildVerificationService {
             }
             log.info("[BuildVerificationService] Run [{}] — verifying {} file(s) with {}.",
                     context.getPipelineRunId(), files, tool);
-            return buildExecutor.execute(workspace.root(), tool);
+            BuildReport report = buildExecutor.execute(workspace.root(), tool);
+            // On failure, attach the offending source snippet to each attributable diagnostic so the
+            // self-healing loop feeds the model the exact broken code (sliced from the very map we
+            // just compiled) rather than coordinates buried in a noisy raw-output tail.
+            return BuildSnippetExtractor.enrich(report, merged);
         } catch (BuildExecutionException e) {
             // Environmental gap (toolchain absent / timeout): fail-open so the pipeline is not
             // wedged by infrastructure, but record it prominently.

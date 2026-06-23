@@ -19,7 +19,8 @@ import java.util.Objects;
  *   "tool":         "MAVEN" | "GRADLE" | "NPM" | "NONE",
  *   "exit_code":    0,
  *   "summary":      "…",
- *   "diagnostics":  [ { "file": "…", "line": 12, "severity": "ERROR", "message": "…" } ],
+ *   "diagnostics":  [ { "file": "…", "line": 12, "severity": "ERROR", "message": "…",
+ *                       "code_snippet": "  11 | …\n> 12 | …\n  13 | …" } ],
  *   "raw_output_tail": "…"
  * }
  * </pre>
@@ -89,6 +90,12 @@ public record BuildReport(
             n.put("line", d.line());
             n.put("severity", d.severity().name());
             n.put("message", d.message());
+            // Emitted only when an offending snippet was resolved, so coordinate-only diagnostics
+            // serialize exactly as before — and the remediation agent gets the broken code inline
+            // instead of having to re-derive it from the raw output tail.
+            if (d.hasSnippet()) {
+                n.put("code_snippet", d.codeSnippet());
+            }
         }
         root.put("raw_output_tail", rawOutputTail);
         return root;
