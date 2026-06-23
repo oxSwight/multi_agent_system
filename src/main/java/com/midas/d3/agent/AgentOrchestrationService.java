@@ -147,7 +147,8 @@ public class AgentOrchestrationService {
 
         String agentName = STAGE_TO_AGENT_NAME.get(currentState);
 
-        // 4. Call LLM (may throw LlmCallException — callers handle retries)
+        // 4. Fail-closed prompt-budget guard, then call LLM (may throw LlmCallException — callers handle retries)
+        contextReducer.enforcePromptBudget(agentName, systemPrompt, userMessage);
         LlmCallResult llmResult = llmClient.call(
                 LlmCallRequest.of(currentState, agentName, systemPrompt, userMessage, runId,
                         llmModelPolicy.resolve(currentState)));

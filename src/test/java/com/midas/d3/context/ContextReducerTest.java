@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -358,6 +359,36 @@ class ContextReducerTest {
         var ctx = MidasContext.start("Build a todo app with authentication", "run-001");
         var view = reducer.reduce(ctx, ContextReducer.AgentRole.SYSTEM_ANALYST);
         assertThat(view.getEstimatedTokenBudget()).isGreaterThan(0);
+    }
+
+    // ── Prompt-budget guard (fail-closed overflow protection) ─────────────────
+
+    @Test
+    void enforcePromptBudget_withinLimit_doesNotThrow() {
+        ReflectionTestUtils.setField(reducer, "maxArtifactSizeKb", 8);
+        String userMessage = "x".repeat(1024); // ~1 KB, well under the 8 KB ceiling
+        assertThatCode(() -> reducer.enforcePromptBudget("SystemAnalystAgent", "system", userMessage))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void enforcePromptBudget_overLimit_throwsContextSizeExceeded() {
+        ReflectionTestUtils.setField(reducer, "maxArtifactSizeKb", 2);
+        String userMessage = "x".repeat(4 * 1024); // ~4 KB, over the 2 KB ceiling
+        assertThatThrownBy(() ->
+                reducer.enforcePromptBudget("SystemAnalystAgent", "system prompt", userMessage))
+                .isInstanceOf(ContextReducer.ContextSizeExceededException.class)
+                .hasMessageContaining("exceeds the configured limit")
+                .hasMessageContaining("SystemAnalystAgent");
+    }
+
+    @Test
+    void enforcePromptBudget_countsSystemAndUserTogether() {
+        ReflectionTestUtils.setField(reducer, "maxArtifactSizeKb", 4);
+        // Neither half exceeds 4 KB alone, but together they do — the guard must sum both.
+        String half = "x".repeat(3 * 1024);
+        assertThatThrownBy(() -> reducer.enforcePromptBudget("QaEngineerAgent", half, half))
+                .isInstanceOf(ContextReducer.ContextSizeExceededException.class);
     }
 
     // ── Patch reducer methods ────────────────────────────────────────────────

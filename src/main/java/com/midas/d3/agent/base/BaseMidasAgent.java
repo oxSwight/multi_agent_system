@@ -134,6 +134,7 @@ public abstract class BaseMidasAgent {
 
         AgentContextView view = reduceAgentContext(context);
         String baseUserMessage = buildUserMessage(view);
+        String systemPrompt = effectiveSystemPrompt(context);
 
         GoalKeeperValidator validator = validatorRegistry.getValidator(stage)
                 .orElseThrow(() -> new IllegalStateException(
@@ -155,9 +156,14 @@ public abstract class BaseMidasAgent {
             log.info("[{}] Attempt {}/{} — run=[{}]",
                     getAgentName(), attempt, effectiveMax, context.getPipelineRunId());
 
+            // Fail-closed: refuse to call the LLM with an over-budget payload rather than letting it
+            // silently overflow the model's context window. Fails fast (no retry — retrying the same
+            // oversized context cannot shrink it).
+            contextReducer.enforcePromptBudget(getAgentName(), systemPrompt, userMessage);
+
             try {
                 LlmCallResult llmResult = llmClient.call(
-                        LlmCallRequest.of(stage, getAgentName(), effectiveSystemPrompt(context),
+                        LlmCallRequest.of(stage, getAgentName(), systemPrompt,
                                 userMessage, context.getPipelineRunId(), llmModelPolicy.resolve(stage)));
                 LlmCallObservability.logTelemetry(
                         context.getPipelineRunId(), getAgentName(), attempt, effectiveMax, llmResult);

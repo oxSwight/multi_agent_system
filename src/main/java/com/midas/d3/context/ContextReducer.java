@@ -358,7 +358,39 @@ public class ContextReducer {
         }
     }
 
+    /**
+     * Fail-closed prompt-budget guard for the LLM-call path.
+     *
+     * <p>The agents assemble their own prompt text (rather than going through
+     * {@link #toCompactJson(AgentContextView)}), so the serialized-size ceiling enforced there was
+     * never applied to the payload actually sent to the model. This guard re-applies that ceiling to
+     * the assembled {@code systemPrompt + userMessage}: when the payload exceeds the configured
+     * {@code midas.context.max-artifact-size-kb} limit it throws {@link ContextSizeExceededException}
+     * <em>before</em> the network call, so an over-budget context fails loudly here instead of
+     * silently overflowing the model's context window (where the backend truncates the tail and the
+     * agent is left to hallucinate around the missing content).
+     *
+     * <p>This is the detection half of dynamic payload management; deterministic
+     * chunking/summarization of an over-budget context is a separate concern layered on top.
+     *
+     * @throws ContextSizeExceededException if the assembled prompt exceeds the configured ceiling
+     */
+    public void enforcePromptBudget(String agentName, String systemPrompt, String userMessage) {
+        Objects.requireNonNull(agentName, "agentName must not be null");
+        long sizeKb = (safeLength(systemPrompt) + safeLength(userMessage)) / 1024L;
+        if (sizeKb > maxArtifactSizeKb) {
+            throw new ContextSizeExceededException(
+                    ("Assembled prompt for agent [%s] is %d KB, exceeds the configured limit of %d KB"
+                            + " — refusing to call the LLM to avoid silent context-window overflow.")
+                            .formatted(agentName, sizeKb, maxArtifactSizeKb));
+        }
+    }
+
     // ── Private Helpers ──────────────────────────────────────────────────────
+
+    private static long safeLength(String value) {
+        return value == null ? 0L : value.length();
+    }
 
     private JsonNode resolveArtifact(MidasContext ctx, String key) {
         return switch (key) {
