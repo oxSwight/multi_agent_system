@@ -429,10 +429,16 @@ class CodeGenerationCoordinatorTest {
     }
 
     private LlmCallResult singleFile(String path, String content) {
-        String escaped = content.replace("\\", "\\\\").replace("\"", "\\\"");
-        return LlmCallResult.ofText("""
-                {"path":"%s","content":"%s"}
-                """.formatted(path, escaped));
+        // Per-file generation now expects raw source in a single markdown code block
+        // (the no-JSON contract enforced by ImplementationEngineerValidator#validateSingleFileOutput);
+        // a JSON envelope is explicitly rejected. The surgical-patch path is separate and still
+        // returns a {"source_files":...} JSON object (validated by validatePatchOutput).
+        return LlmCallResult.ofText("```" + languageHint(path) + "\n" + content + "\n```\n");
+    }
+
+    private static String languageHint(String path) {
+        int dot = path.lastIndexOf('.');
+        return dot >= 0 ? path.substring(dot + 1) : "";
     }
 
     private void stubImplementationView(String runId, ContextReducer.AgentRole role, JsonNode architecture) {
