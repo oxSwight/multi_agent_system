@@ -79,7 +79,7 @@ class PipelineControllerIT {
                   [{"name": "id", "type": "BIGINT", "is_primary": true, "is_nullable": false}]}]
               },
               "api_contracts": [{"method": "GET", "path": "/api/tasks",
-                "request_payload": {}, "expected_response": {}}]
+                "request_params": [], "response_format": {"type": "json", "fields": ["id", "title"]}}]
             }
             """;
 
