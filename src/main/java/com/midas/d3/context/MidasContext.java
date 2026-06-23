@@ -2,6 +2,7 @@ package com.midas.d3.context;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.build.BuildReport;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.With;
@@ -87,6 +88,16 @@ public final class MidasContext {
 
     @With private final int productReviewRemediationAttempts;
 
+    /**
+     * Build-verification gate output: the structured {@link BuildReport}-shaped JSON
+     * ({@code build_status}, {@code tool}, {@code diagnostics}, …). Stored on a passing build;
+     * a failing build is fed back as a {@link #remediationDirective}. Null until the gate runs.
+     */
+    @With private final JsonNode buildReport;
+
+    /** Number of build-failure remediation loops consumed (bounded by the topology cap). */
+    @With private final int buildRemediationAttempts;
+
     @With private final JsonNode remediationDirective;
 
     // ── Telegram Integration ─────────────────────────────────────────────────
@@ -133,6 +144,7 @@ public final class MidasContext {
                 .auditLog(Collections.emptyList())
                 .validationRetries(0)
                 .productReviewRemediationAttempts(0)
+                .buildRemediationAttempts(0)
                 .build();
     }
 
@@ -168,6 +180,10 @@ public final class MidasContext {
 
     public Optional<JsonNode> getProductReviewReportOpt() {
         return Optional.ofNullable(productReviewReport);
+    }
+
+    public Optional<JsonNode> getBuildReportOpt() {
+        return Optional.ofNullable(buildReport);
     }
 
     public Optional<JsonNode> getRemediationDirectiveOpt() {

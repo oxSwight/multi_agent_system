@@ -99,6 +99,7 @@ public class StoreArtifactAction implements Action<MidasState, MidasEvent> {
             case INTEGRATION_STRATEGY -> ctx.withIntegrationStrategy(node);
             case CODE_GENERATION      -> storeCodeGeneration(ctx, node);
             case TEST_GENERATION      -> ctx.withGeneratedTests(node);
+            case BUILD_VERIFICATION   -> ctx.withBuildReport(node);
             case SECOPS_AUDIT         -> ctx.withSecOpsArtifacts(node);
             case PRODUCT_REVIEW       -> ctx.withProductReviewReport(node);
             default -> {

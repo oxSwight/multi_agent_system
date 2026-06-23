@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.agent.implementation.CodeGenerationCoordinator;
 import com.midas.d3.agent.implementation.TestGenerationCoordinator;
+import com.midas.d3.build.BuildVerificationService;
 import com.midas.d3.context.AgentContextView;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
@@ -61,6 +62,7 @@ public class AgentOrchestrationService {
     private final ObjectMapper          objectMapper;
     private final CodeGenerationCoordinator codeGenerationCoordinator;
     private final TestGenerationCoordinator testGenerationCoordinator;
+    private final BuildVerificationService  buildVerificationService;
 
     /** Maps pipeline stages to their ContextReducer agent roles. */
     private static final Map<MidasState, ContextReducer.AgentRole> STAGE_TO_ROLE =
@@ -105,7 +107,7 @@ public class AgentOrchestrationService {
         MidasState currentState = pipelineOrchestrator.getState(runId);
         log.info("[AgentOrchestrationService] Run [{}] — executing stage [{}].", runId, currentState);
 
-        if (!STAGE_TO_ROLE.containsKey(currentState)) {
+        if (!isDrivableStage(currentState)) {
             throw new IllegalArgumentException(
                     "No agent configured for state [%s]. Is the pipeline in a valid processing stage?"
                             .formatted(currentState));
@@ -115,13 +117,16 @@ public class AgentOrchestrationService {
                 .orElseThrow(() -> new IllegalStateException("MidasContext not found for run: " + runId));
 
         // Produce the payload for this stage. Code/test generation delegate to their
-        // dedicated per-file coordinators; every other stage runs the generic
-        // reduce → prompt → call → sanitize path. Both feed the same submit tail.
+        // dedicated per-file coordinators; build verification runs a real sandboxed build
+        // (deterministic tooling, not an LLM); every other stage runs the generic
+        // reduce → prompt → call → sanitize path. All feed the same submit tail.
         String payload = switch (currentState) {
             case CODE_GENERATION ->
                     codeGenerationCoordinator.execute(context, "ImplementationEngineer").rawLlmOutput();
             case TEST_GENERATION ->
                     testGenerationCoordinator.execute(context, "QaEngineer").rawLlmOutput();
+            case BUILD_VERIFICATION ->
+                    buildVerificationService.verifyToReportJson(context);
             default ->
                     runGenericLlmStage(runId, context, currentState);
         };
@@ -189,10 +194,18 @@ public class AgentOrchestrationService {
      */
     public MidasState runFullPipeline(String runId) throws LlmCallException {
         MidasState state = pipelineOrchestrator.getState(runId);
-        while (STAGE_TO_ROLE.containsKey(state)) {
+        while (isDrivableStage(state)) {
             state = runCurrentStage(runId);
         }
         return state;
+    }
+
+    /**
+     * {@code true} if {@code state} is a stage this service knows how to execute — either an
+     * LLM agent stage or the deterministic {@link MidasState#BUILD_VERIFICATION} build gate.
+     */
+    private boolean isDrivableStage(MidasState state) {
+        return STAGE_TO_ROLE.containsKey(state) || state == MidasState.BUILD_VERIFICATION;
     }
 
     // ── User message builder ──────────────────────────────────────────────────

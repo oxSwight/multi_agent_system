@@ -48,6 +48,7 @@ public class ContextReducer {
         INTEGRATION_ENGINEER,
         IMPLEMENTATION_ENGINEER,
         QA_ENGINEER,
+        BUILD_VERIFIER,
         SECOPS_ENGINEER,
         CONTROLLER
     }
@@ -97,6 +98,15 @@ public class ContextReducer {
                 ArtifactDependency.required("architectureDesign"),
                 ArtifactDependency.required("generatedSourceCode"),
                 ArtifactDependency.optional("remediationDirective")));
+        // The build verifier compiles what was actually generated. It needs the runtime boundary
+        // (technicalSpec + architectureDesign) for context and both the source and test maps, which
+        // it materializes and builds. generatedTests is optional — a project may legitimately ship
+        // without a separate test map, and the source still compiles on its own.
+        ARTIFACT_DEPENDENCIES.put(AgentRole.BUILD_VERIFIER, List.of(
+                ArtifactDependency.required("technicalSpec"),
+                ArtifactDependency.required("architectureDesign"),
+                ArtifactDependency.required("generatedSourceCode"),
+                ArtifactDependency.optional("generatedTests")));
         ARTIFACT_DEPENDENCIES.put(AgentRole.SECOPS_ENGINEER, List.of(
                 ArtifactDependency.required("technicalSpec"),
                 ArtifactDependency.required("architectureDesign"),

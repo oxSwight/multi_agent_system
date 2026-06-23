@@ -43,6 +43,7 @@ class AgentOrchestrationServiceTest {
     @Mock private AgentSystemPrompts    agentSystemPrompts;
     @Mock private CodeGenerationCoordinator codeGenerationCoordinator;
     @Mock private TestGenerationCoordinator testGenerationCoordinator;
+    @Mock private com.midas.d3.build.BuildVerificationService buildVerificationService;
 
     private ObjectMapper objectMapper;
     private AgentOrchestrationService service;
@@ -64,7 +65,7 @@ class AgentOrchestrationServiceTest {
         objectMapper = new JacksonConfig().objectMapper();
         service = new AgentOrchestrationService(
                 pipelineOrchestrator, contextReducer, llmClient, llmModelPolicy, agentSystemPrompts,
-                objectMapper, codeGenerationCoordinator, testGenerationCoordinator);
+                objectMapper, codeGenerationCoordinator, testGenerationCoordinator, buildVerificationService);
         lenient().when(llmModelPolicy.resolve(MidasState.SYSTEM_ANALYSIS)).thenReturn("gemini-1.5-flash");
     }
 

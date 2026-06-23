@@ -110,6 +110,32 @@ class PipelineStateMachineTest {
 
     private static final String INVALID_JSON = "{ broken json";
 
+    /** A passing build report — drives BUILD_VERIFICATION → SECOPS_AUDIT. */
+    private static final String VALID_BUILD_SUCCESS = """
+            {
+              "build_status": "SUCCESS",
+              "tool": "MAVEN",
+              "exit_code": 0,
+              "summary": "MAVEN build succeeded.",
+              "diagnostics": []
+            }
+            """;
+
+    /** A failing build report — drives BUILD_VERIFICATION → CODE_GENERATION (remediation). */
+    private static final String FAILED_BUILD = """
+            {
+              "build_status": "FAILED",
+              "tool": "MAVEN",
+              "exit_code": 1,
+              "summary": "MAVEN build failed with exit code 1.",
+              "diagnostics": [
+                {"file": "src/main/java/com/example/TaskController.java", "line": 4,
+                 "severity": "ERROR", "message": "cannot find symbol: method assign()"}
+              ],
+              "raw_output_tail": "[ERROR] cannot find symbol"
+            }
+            """;
+
     private static final String CONTROLLER_PASS = """
             {
               "verdict": "PASS",
@@ -391,6 +417,8 @@ class PipelineStateMachineTest {
               "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void test() {} }"
             }
             """);
+        assertState(MidasState.BUILD_VERIFICATION);
+        sendSubmit(VALID_BUILD_SUCCESS);
         assertState(MidasState.SECOPS_AUDIT);
 
         // Stage 6
@@ -853,6 +881,8 @@ class PipelineStateMachineTest {
               "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void test() {} }"
             }
             """);
+        assertState(MidasState.BUILD_VERIFICATION);
+        sendSubmit(VALID_BUILD_SUCCESS);
         assertState(MidasState.SECOPS_AUDIT);
         sendSubmit("""
             {
@@ -871,6 +901,8 @@ class PipelineStateMachineTest {
               "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void assignWorks() {} }"
             }
             """);
+        assertState(MidasState.BUILD_VERIFICATION);
+        sendSubmit(VALID_BUILD_SUCCESS);
         assertState(MidasState.SECOPS_AUDIT);
         sendSubmit("""
             {
@@ -879,5 +911,119 @@ class PipelineStateMachineTest {
             }
             """);
         assertState(MidasState.PRODUCT_REVIEW);
+    }
+
+    // ── Self-healing build loop ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("BUILD_VERIFICATION failure → loops back to CODE_GENERATION with diagnostics directive")
+    void buildVerification_failure_initiatesRemediationLoop() {
+        drivePipelineToBuildVerification();
+
+        sendSubmit(FAILED_BUILD);
+
+        assertState(MidasState.CODE_GENERATION);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getBuildRemediationAttempts()).isEqualTo(1);
+        assertThat(ctx.getRemediationDirectiveOpt()).isPresent();
+        assertThat(ctx.getRemediationDirective().get("type").asText()).isEqualTo("BUILD_FAILURE");
+        assertThat(ctx.getRemediationDirective().get("diagnostics")).isNotEmpty();
+        assertThat(ctx.getRemediationDirective().get("diagnostics").get(0).get("message").asText())
+                .contains("cannot find symbol");
+        // SecOps artifacts cleared; validation retries reset for the fresh generation pass.
+        assertThat(ctx.getSecOpsArtifacts()).isNull();
+        assertThat(ctx.getValidationRetries()).isZero();
+        assertThat(ctx.safeAuditLog())
+                .anyMatch(e -> e.getSeverity() == com.midas.d3.context.AuditEntry.Severity.WARN);
+    }
+
+    @Test
+    @DisplayName("BUILD_VERIFICATION success after a failed-then-fixed loop → advances to SECOPS_AUDIT")
+    void buildVerification_failThenFix_advances() {
+        drivePipelineToBuildVerification();
+
+        sendSubmit(FAILED_BUILD);
+        assertState(MidasState.CODE_GENERATION);
+
+        // Regenerate, re-test, and this time the build passes.
+        sendSubmit(VALID_CODE_GEN_REMEDIATED);
+        assertState(MidasState.TEST_GENERATION);
+        sendSubmit("""
+            {
+              "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void assignWorks() {} }"
+            }
+            """);
+        assertState(MidasState.BUILD_VERIFICATION);
+        sendSubmit(VALID_BUILD_SUCCESS);
+
+        assertState(MidasState.SECOPS_AUDIT);
+        assertThat(extractContext().getBuildReport().get("build_status").asText()).isEqualTo("SUCCESS");
+    }
+
+    @Test
+    @DisplayName("BUILD_VERIFICATION exhausts its remediation budget → terminates in ERROR")
+    void buildVerification_exhausted_routesToError() {
+        drivePipelineToBuildVerification();
+
+        // Fail repeatedly. MAX_BUILD_REMEDIATIONS loops back to CODE_GENERATION before failing.
+        for (int i = 0; i < PipelineTopology.MAX_BUILD_REMEDIATIONS; i++) {
+            sendSubmit(FAILED_BUILD);
+            assertState(MidasState.CODE_GENERATION);
+            sendSubmit(VALID_CODE_GEN_REMEDIATED);
+            assertState(MidasState.TEST_GENERATION);
+            sendSubmit("""
+                {
+                  "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void t() {} }"
+                }
+                """);
+            assertState(MidasState.BUILD_VERIFICATION);
+        }
+
+        // Budget now exhausted — the next failure terminates the run.
+        sendSubmit(FAILED_BUILD);
+        assertState(MidasState.ERROR);
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getBuildReport()).isNotNull();
+        assertThat(ctx.getBuildReport().get("build_status").asText()).isEqualTo("FAILED");
+        assertThat(ctx.getLastErrorMessage()).contains("build");
+    }
+
+    /** Drives stages 1-5 so the next submission lands on BUILD_VERIFICATION. */
+    private void drivePipelineToBuildVerification() {
+        sendStart("Build a task management system");
+        sendSubmit(VALID_TECH_SPEC);
+        assertState(MidasState.ARCHITECTURE_DESIGN);
+        sendSubmit("""
+            {
+              "has_external_integrations": true,
+              "architecture_style": "CLIENT_SERVER",
+              "tech_stack": {"language": "Java", "framework": "Spring Boot",
+                             "platform_apis": [], "build_tool": "Maven"},
+              "components": [{"name": "TaskController", "type": "CONTROLLER", "responsibility": "Tasks API"}],
+              "file_layout": ["src/main/java/com/example/TaskController.java"],
+              "data_persistence": {
+                "type": "RELATIONAL",
+                "schema": [{"table_name": "tasks", "columns": [{"name": "id", "type": "BIGINT", "is_primary": true, "is_nullable": false}]}]
+              },
+              "api_contracts": [{"method": "GET", "path": "/api/tasks", "request_params": [], "response_format": {"type": "json", "fields": ["id", "title"]}}]
+            }
+            """);
+        assertState(MidasState.INTEGRATION_STRATEGY);
+        sendSubmit("""
+            {
+              "has_external_integrations": false,
+              "external_services": [],
+              "client_side_constraints": ["No external APIs required"]
+            }
+            """);
+        assertState(MidasState.CODE_GENERATION);
+        sendSubmit(VALID_CODE_GEN);
+        assertState(MidasState.TEST_GENERATION);
+        sendSubmit("""
+            {
+              "src/test/java/com/example/TaskControllerTest.java": "class TaskControllerTest { @Test void test() {} }"
+            }
+            """);
+        assertState(MidasState.BUILD_VERIFICATION);
     }
 }

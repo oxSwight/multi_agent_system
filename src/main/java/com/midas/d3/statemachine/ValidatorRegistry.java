@@ -26,6 +26,7 @@ public class ValidatorRegistry {
     private final IntegrationEngineerValidator  integrationValidator;
     private final ImplementationEngineerValidator implementationValidator;
     private final QaEngineerValidator           qaValidator;
+    private final BuildVerificationValidator    buildVerificationValidator;
     private final SecOpsEngineerValidator       secOpsValidator;
     private final ControllerValidator           controllerValidator;
 
@@ -35,6 +36,7 @@ public class ValidatorRegistry {
             IntegrationEngineerValidator  integrationValidator,
             ImplementationEngineerValidator implementationValidator,
             QaEngineerValidator           qaValidator,
+            BuildVerificationValidator    buildVerificationValidator,
             SecOpsEngineerValidator       secOpsValidator,
             ControllerValidator           controllerValidator) {
 
@@ -43,6 +45,7 @@ public class ValidatorRegistry {
         this.integrationValidator    = integrationValidator;
         this.implementationValidator = implementationValidator;
         this.qaValidator             = qaValidator;
+        this.buildVerificationValidator = buildVerificationValidator;
         this.secOpsValidator         = secOpsValidator;
         this.controllerValidator     = controllerValidator;
     }
@@ -54,6 +57,7 @@ public class ValidatorRegistry {
         registry.put(MidasState.INTEGRATION_STRATEGY, integrationValidator);
         registry.put(MidasState.CODE_GENERATION,      implementationValidator);
         registry.put(MidasState.TEST_GENERATION,      qaValidator);
+        registry.put(MidasState.BUILD_VERIFICATION,   buildVerificationValidator);
         registry.put(MidasState.SECOPS_AUDIT,         secOpsValidator);
         registry.put(MidasState.PRODUCT_REVIEW,       controllerValidator);
         log.debug("ValidatorRegistry initialized with {} entries.", registry.size());

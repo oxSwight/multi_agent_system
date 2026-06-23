@@ -1,6 +1,8 @@
 package com.midas.d3.statemachine;
 
 import com.midas.d3.statemachine.action.*;
+import com.midas.d3.statemachine.guard.BuildRemediationAvailableGuard;
+import com.midas.d3.statemachine.guard.BuildRemediationExhaustedGuard;
 import com.midas.d3.statemachine.guard.RemediationAvailableGuard;
 import com.midas.d3.statemachine.guard.RemediationExhaustedGuard;
 import com.midas.d3.statemachine.guard.RetriesExhaustedGuard;
@@ -71,6 +73,8 @@ public class PipelineStateMachineConfig
     private final RetriesExhaustedGuard      retriesExhaustedGuard;
     private final RemediationAvailableGuard  remediationAvailableGuard;
     private final RemediationExhaustedGuard  remediationExhaustedGuard;
+    private final BuildRemediationAvailableGuard buildRemediationAvailableGuard;
+    private final BuildRemediationExhaustedGuard buildRemediationExhaustedGuard;
     private final InitContextAction          initContextAction;
     private final ValidateAndCaptureAction   validateAndCaptureAction;
     private final StoreArtifactAction        storeArtifactAction;
@@ -78,6 +82,8 @@ public class PipelineStateMachineConfig
     private final PipelineErrorAction        pipelineErrorAction;
     private final ProductReviewRejectionAction productReviewRejectionAction;
     private final RemediationInitAction      remediationInitAction;
+    private final BuildRemediationInitAction buildRemediationInitAction;
+    private final BuildFailureErrorAction    buildFailureErrorAction;
     private final AgentEntryAction           agentEntryAction;
     private final CriticalFailureAction      criticalFailureAction;
     private final PipelineCompletionAction   completionAction;
@@ -148,6 +154,21 @@ public class PipelineStateMachineConfig
                         .source(choice)
                         .first(MidasState.CODE_GENERATION, remediationAvailableGuard, remediationInitAction)
                         .then(MidasState.ERROR, remediationExhaustedGuard, productReviewRejectionAction)
+                        .then(next, validationSucceededGuard, storeArtifactAction)
+                        .then(MidasState.ERROR, retriesExhaustedGuard, pipelineErrorAction)
+                        .last(stage, incrementRetryAction)
+                        .and();
+            } else if (stage == MidasState.BUILD_VERIFICATION) {
+                // Self-healing build gate. A structurally-valid report is always captured by
+                // ValidateAndCaptureAction; the build OUTCOME then routes:
+                //   FAILED + budget    → CODE_GENERATION (inject diagnostics, regenerate)
+                //   FAILED + exhausted → ERROR
+                //   SUCCESS            → next stage (SecOps audit)
+                //   malformed report   → standard retry / ERROR
+                t = t.withChoice()
+                        .source(choice)
+                        .first(MidasState.CODE_GENERATION, buildRemediationAvailableGuard, buildRemediationInitAction)
+                        .then(MidasState.ERROR, buildRemediationExhaustedGuard, buildFailureErrorAction)
                         .then(next, validationSucceededGuard, storeArtifactAction)
                         .then(MidasState.ERROR, retriesExhaustedGuard, pipelineErrorAction)
                         .last(stage, incrementRetryAction)

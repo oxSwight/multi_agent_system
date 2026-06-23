@@ -33,6 +33,7 @@ class PipelineTopologyTest {
                 MidasState.INTEGRATION_STRATEGY,
                 MidasState.CODE_GENERATION,
                 MidasState.TEST_GENERATION,
+                MidasState.BUILD_VERIFICATION,
                 MidasState.SECOPS_AUDIT,
                 MidasState.PRODUCT_REVIEW);
     }
@@ -46,6 +47,7 @@ class PipelineTopologyTest {
                 MidasState.INTEGRATION_CHOICE,
                 MidasState.CODE_CHOICE,
                 MidasState.TEST_CHOICE,
+                MidasState.BUILD_CHOICE,
                 MidasState.SECOPS_CHOICE,
                 MidasState.PRODUCT_CHOICE);
     }
@@ -58,6 +60,7 @@ class PipelineTopologyTest {
         assertThat(topology.choiceFor(MidasState.INTEGRATION_STRATEGY)).isEqualTo(MidasState.INTEGRATION_CHOICE);
         assertThat(topology.choiceFor(MidasState.CODE_GENERATION)).isEqualTo(MidasState.CODE_CHOICE);
         assertThat(topology.choiceFor(MidasState.TEST_GENERATION)).isEqualTo(MidasState.TEST_CHOICE);
+        assertThat(topology.choiceFor(MidasState.BUILD_VERIFICATION)).isEqualTo(MidasState.BUILD_CHOICE);
         assertThat(topology.choiceFor(MidasState.SECOPS_AUDIT)).isEqualTo(MidasState.SECOPS_CHOICE);
         assertThat(topology.choiceFor(MidasState.PRODUCT_REVIEW)).isEqualTo(MidasState.PRODUCT_CHOICE);
     }
@@ -69,7 +72,8 @@ class PipelineTopologyTest {
         assertThat(topology.nextStage(MidasState.ARCHITECTURE_DESIGN)).isEqualTo(MidasState.INTEGRATION_STRATEGY);
         assertThat(topology.nextStage(MidasState.INTEGRATION_STRATEGY)).isEqualTo(MidasState.CODE_GENERATION);
         assertThat(topology.nextStage(MidasState.CODE_GENERATION)).isEqualTo(MidasState.TEST_GENERATION);
-        assertThat(topology.nextStage(MidasState.TEST_GENERATION)).isEqualTo(MidasState.SECOPS_AUDIT);
+        assertThat(topology.nextStage(MidasState.TEST_GENERATION)).isEqualTo(MidasState.BUILD_VERIFICATION);
+        assertThat(topology.nextStage(MidasState.BUILD_VERIFICATION)).isEqualTo(MidasState.SECOPS_AUDIT);
         assertThat(topology.nextStage(MidasState.SECOPS_AUDIT)).isEqualTo(MidasState.PRODUCT_REVIEW);
         assertThat(topology.nextStage(MidasState.PRODUCT_REVIEW)).isEqualTo(MidasState.COMPLETED);
     }

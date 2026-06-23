@@ -53,6 +53,10 @@ public class PipelineTopology {
             MidasState.INTEGRATION_STRATEGY,
             MidasState.CODE_GENERATION,
             MidasState.TEST_GENERATION,
+            // Self-healing build gate: compiles the generated code+tests before any further
+            // review. A build failure loops back to CODE_GENERATION (see config); a pass
+            // advances to the SecOps audit (derived successor).
+            MidasState.BUILD_VERIFICATION,
             MidasState.SECOPS_AUDIT,
             // Phase 3: blocking Product-Owner quality gate, inserted immediately after the
             // SecOps audit and flowing to COMPLETED on a passing verdict (derived successor).
@@ -69,6 +73,13 @@ public class PipelineTopology {
 
     public static final int MAX_PRODUCT_REVIEW_REMEDIATIONS = 1;
 
+    /**
+     * How many times a failed build may bounce the pipeline back to {@link MidasState#CODE_GENERATION}
+     * before the run is failed outright. Bounded so a persistently-broken generation can never loop
+     * forever; 2 gives the implementation agent two corrective passes on real compiler diagnostics.
+     */
+    public static final int MAX_BUILD_REMEDIATIONS = 2;
+
     private final List<MidasState> processingStages;
     private final List<MidasState> choiceStates;
     private final EnumMap<MidasState, MidasState> choiceByStage;
@@ -84,6 +95,7 @@ public class PipelineTopology {
         choiceByStage.put(MidasState.INTEGRATION_STRATEGY, MidasState.INTEGRATION_CHOICE);
         choiceByStage.put(MidasState.CODE_GENERATION,      MidasState.CODE_CHOICE);
         choiceByStage.put(MidasState.TEST_GENERATION,      MidasState.TEST_CHOICE);
+        choiceByStage.put(MidasState.BUILD_VERIFICATION,   MidasState.BUILD_CHOICE);
         choiceByStage.put(MidasState.SECOPS_AUDIT,         MidasState.SECOPS_CHOICE);
         choiceByStage.put(MidasState.PRODUCT_REVIEW,       MidasState.PRODUCT_CHOICE);
 
@@ -224,6 +236,20 @@ public class PipelineTopology {
     public boolean isProductReviewRemediationExhausted(MidasContext ctx) {
         Objects.requireNonNull(ctx, "ctx must not be null");
         return ctx.getProductReviewRemediationAttempts() >= MAX_PRODUCT_REVIEW_REMEDIATIONS;
+    }
+
+    public int maxBuildRemediations() {
+        return MAX_BUILD_REMEDIATIONS;
+    }
+
+    public boolean isBuildRemediationAvailable(MidasContext ctx) {
+        Objects.requireNonNull(ctx, "ctx must not be null");
+        return ctx.getBuildRemediationAttempts() < MAX_BUILD_REMEDIATIONS;
+    }
+
+    public boolean isBuildRemediationExhausted(MidasContext ctx) {
+        Objects.requireNonNull(ctx, "ctx must not be null");
+        return ctx.getBuildRemediationAttempts() >= MAX_BUILD_REMEDIATIONS;
     }
 
     // ── Internals ──────────────────────────────────────────────────────────────

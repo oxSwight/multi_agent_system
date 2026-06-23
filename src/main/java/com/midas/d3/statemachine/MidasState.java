@@ -36,6 +36,15 @@ public enum MidasState {
     /** Agent 5 — QA Engineer generates automated test suites. */
     TEST_GENERATION,
 
+    /**
+     * Self-healing build gate — materializes the generated source + tests into a sandbox and
+     * runs a real compile/build. A {@code SUCCESS} report advances to {@link #SECOPS_AUDIT};
+     * a {@code FAILED} report routes back to {@link #CODE_GENERATION} with the compiler
+     * diagnostics attached as a remediation directive (bounded by a remediation budget).
+     * Unlike the other stages this is deterministic tooling, not an LLM agent.
+     */
+    BUILD_VERIFICATION,
+
     /** Agent 6 — SecOps Engineer audits code and produces deployment artifacts. */
     SECOPS_AUDIT,
 
@@ -69,6 +78,7 @@ public enum MidasState {
     INTEGRATION_CHOICE,
     CODE_CHOICE,
     TEST_CHOICE,
+    BUILD_CHOICE,
     SECOPS_CHOICE,
     PRODUCT_CHOICE
 }

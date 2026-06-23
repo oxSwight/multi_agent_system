@@ -127,6 +127,16 @@ class PipelineControllerIT {
             }
             """;
 
+    private static final String VALID_BUILD_REPORT = """
+            {
+              "build_status": "SUCCESS",
+              "tool": "MAVEN",
+              "exit_code": 0,
+              "summary": "MAVEN build succeeded.",
+              "diagnostics": []
+            }
+            """;
+
     private static final String VALID_SECOPS = """
             {
               "security_audit_report": ["No hardcoded credentials found."],
@@ -543,7 +553,8 @@ class PipelineControllerIT {
             submit(runId, VALID_ARCHITECTURE, "INTEGRATION_STRATEGY");
             submit(runId, VALID_INTEGRATION,  "CODE_GENERATION");
             submit(runId, VALID_CODE_GEN,     "TEST_GENERATION");
-            submit(runId, VALID_TESTS,        "SECOPS_AUDIT");
+            submit(runId, VALID_TESTS,        "BUILD_VERIFICATION");
+            submit(runId, VALID_BUILD_REPORT, "SECOPS_AUDIT");
             submit(runId, VALID_SECOPS,       "PRODUCT_REVIEW");
             submit(runId, VALID_CONTROLLER,   "COMPLETED");
 
@@ -567,7 +578,7 @@ class PipelineControllerIT {
     }
 
     @Test
-    @DisplayName("Happy path: start + 7 valid submissions → COMPLETED, all artifacts present")
+    @DisplayName("Happy path: start + 8 valid submissions (incl. build verification) → COMPLETED, all artifacts present")
     void happyPath_fullPipeline_completesWithAllArtifacts() {
         String runId = startRun("Build a full-stack task management system");
         try {
@@ -575,7 +586,8 @@ class PipelineControllerIT {
             submit(runId, VALID_ARCHITECTURE, "INTEGRATION_STRATEGY");
             submit(runId, VALID_INTEGRATION,  "CODE_GENERATION");
             submit(runId, VALID_CODE_GEN,     "TEST_GENERATION");
-            submit(runId, VALID_TESTS,        "SECOPS_AUDIT");
+            submit(runId, VALID_TESTS,        "BUILD_VERIFICATION");
+            submit(runId, VALID_BUILD_REPORT, "SECOPS_AUDIT");
             submit(runId, VALID_SECOPS,       "PRODUCT_REVIEW");
             submit(runId, VALID_CONTROLLER,   "COMPLETED");
 
@@ -609,12 +621,14 @@ class PipelineControllerIT {
             submit(runId, VALID_ARCHITECTURE, "INTEGRATION_STRATEGY");
             submit(runId, VALID_INTEGRATION,  "CODE_GENERATION");
             submit(runId, VALID_CODE_GEN,     "TEST_GENERATION");
-            submit(runId, VALID_TESTS,        "SECOPS_AUDIT");
+            submit(runId, VALID_TESTS,        "BUILD_VERIFICATION");
+            submit(runId, VALID_BUILD_REPORT, "SECOPS_AUDIT");
             submit(runId, VALID_SECOPS,       "PRODUCT_REVIEW");
             submit(runId, REJECT_CONTROLLER,  "CODE_GENERATION");
 
             submit(runId, VALID_CODE_GEN,     "TEST_GENERATION");
-            submit(runId, VALID_TESTS,        "SECOPS_AUDIT");
+            submit(runId, VALID_TESTS,        "BUILD_VERIFICATION");
+            submit(runId, VALID_BUILD_REPORT, "SECOPS_AUDIT");
             submit(runId, VALID_SECOPS,       "PRODUCT_REVIEW");
             submit(runId, REJECT_CONTROLLER,  "ERROR");
 
