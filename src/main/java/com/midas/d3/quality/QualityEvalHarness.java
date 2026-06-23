@@ -1,0 +1,73 @@
+package com.midas.d3.quality;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.midas.d3.build.BuildReport;
+
+import java.util.List;
+import java.util.Objects;
+
+/**
+ * Scores a generated artifact set <b>deterministically</b> — no LLM in the loop — by gating a
+ * {@link BuildReport} build signal against a {@link Rubric} of static checks.
+ *
+ * <p>This is the measurement substrate of Phase 4 (Closed-Loop Quality / P4-A1). It gives MIDAS the
+ * feedback loop it has been missing: a reproducible, regression-guardable quality number for the
+ * software the pipeline produces, so a later change (model swap, tier-down, prompt edit) can be
+ * proven not to have degraded output — not just that the engine's own unit tests still pass.
+ *
+ * <p>Live execution of golden cases through the real pipeline is a later increment (P4-A2); this
+ * class is intentionally pure so the scoring logic itself is CI-stable and free.
+ */
+public final class QualityEvalHarness {
+
+    private QualityEvalHarness() {
+    }
+
+    /**
+     * @param artifacts generated path→contents object (a merged source/test map); may be null
+     * @param build     the build outcome for {@code artifacts}; null is treated as a failed build
+     * @param rubric    the deterministic checks to apply
+     * @return the quality verdict
+     */
+    public static QualityScore score(JsonNode artifacts, BuildReport build, Rubric rubric) {
+        Objects.requireNonNull(rubric, "rubric");
+        boolean buildPassed = build != null && build.success();
+        Rubric.Result result = rubric.evaluate(artifacts);
+        return new QualityScore(buildPassed, result.score(), result.violations());
+    }
+
+    /**
+     * A reference case for regression-gating: a rubric plus the minimum {@link QualityScore#overall()}
+     * a passing pipeline run must achieve for this idea. Running golden cases through the real
+     * pipeline and asserting the threshold in CI is P4-A2.
+     */
+    public record GoldenCase(String id, String description, Rubric rubric, double minOverall) {
+        public GoldenCase {
+            Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(rubric, "rubric");
+        }
+
+        /** True when {@code score} meets this case's regression threshold. */
+        public boolean isSatisfiedBy(QualityScore score) {
+            return score.overall() >= minOverall;
+        }
+    }
+
+    /**
+     * The built-in golden corpus. Deliberately small and conservative — it grows as P4-A2 wires live
+     * pipeline runs through the harness. The single seed case asserts a buildable REST service with a
+     * controller and no hardcoded credentials.
+     */
+    public static List<GoldenCase> defaultGoldenCases() {
+        Rubric restCrudApi = new Rubric("rest-crud-api", List.of(
+                RubricRule.requirePath("pom.xml"),
+                RubricRule.requireContent(".java", "rest-controller", "(?i)@RestController|@Controller"),
+                RubricRule.forbidContent("hardcoded-password", "(?i)password\\s*[:=]\\s*[\"'][^\"']+[\"']")
+        ));
+        return List.of(new GoldenCase(
+                "rest-crud-api",
+                "A buildable REST CRUD service exposing a controller, with no hardcoded credentials.",
+                restCrudApi,
+                1.0));
+    }
+}
