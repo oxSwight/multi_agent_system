@@ -136,6 +136,14 @@ public abstract class BaseMidasAgent {
         String baseUserMessage = buildUserMessage(view);
         String systemPrompt = effectiveSystemPrompt(context);
 
+        // Assemble the stable, cacheable request once: systemPrompt + baseUserMessage form the
+        // prompt-cache prefix that is identical on every attempt. Retries only graft a volatile
+        // correction suffix onto this via withCorrectionFeedback (see the prompt-cache contract on
+        // LlmCallRequest), so a caching backend reuses the prefix instead of re-billing it.
+        LlmCallRequest baseRequest = LlmCallRequest.of(
+                stage, getAgentName(), systemPrompt, baseUserMessage,
+                context.getPipelineRunId(), llmModelPolicy.resolve(stage));
+
         GoalKeeperValidator validator = validatorRegistry.getValidator(stage)
                 .orElseThrow(() -> new IllegalStateException(
                         "No GoalKeeperValidator registered for stage [%s] — check ValidatorRegistry."
@@ -149,9 +157,11 @@ public abstract class BaseMidasAgent {
         int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
 
         for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
-            String userMessage = (attempt == 1)
-                    ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
+            // Attempt 1 reuses the cacheable base request verbatim; retries graft only the volatile
+            // correction suffix, leaving systemPrompt + cacheableUserPrefix byte-identical.
+            LlmCallRequest request = (attempt == 1)
+                    ? baseRequest
+                    : baseRequest.withCorrectionFeedback(buildCorrectionFeedback(lastError, attempt, effectiveMax));
 
             log.info("[{}] Attempt {}/{} — run=[{}]",
                     getAgentName(), attempt, effectiveMax, context.getPipelineRunId());
@@ -159,12 +169,10 @@ public abstract class BaseMidasAgent {
             // Fail-closed: refuse to call the LLM with an over-budget payload rather than letting it
             // silently overflow the model's context window. Fails fast (no retry — retrying the same
             // oversized context cannot shrink it).
-            contextReducer.enforcePromptBudget(getAgentName(), systemPrompt, userMessage);
+            contextReducer.enforcePromptBudget(getAgentName(), systemPrompt, request.getUserMessage());
 
             try {
-                LlmCallResult llmResult = llmClient.call(
-                        LlmCallRequest.of(stage, getAgentName(), systemPrompt,
-                                userMessage, context.getPipelineRunId(), llmModelPolicy.resolve(stage)));
+                LlmCallResult llmResult = llmClient.call(request);
                 LlmCallObservability.logTelemetry(
                         context.getPipelineRunId(), getAgentName(), attempt, effectiveMax, llmResult);
                 AgentRetryPolicy.failFastIfTruncated(llmResult, getAgentName(), context.getPipelineRunId());
@@ -320,12 +328,12 @@ public abstract class BaseMidasAgent {
     }
 
     /**
-     * Appends GoalKeeper error feedback to the user message so the LLM can self-correct.
+     * Builds the GoalKeeper correction-feedback block for a retry. Returned <em>standalone</em> (no
+     * base message) so it can be carried as the request's volatile suffix, keeping the cacheable
+     * prefix untouched — see {@link LlmCallRequest#withCorrectionFeedback(String)}.
      */
-    private String injectCorrectionFeedback(String baseUserMessage, String error, int attempt, int maxAttempts) {
-        return baseUserMessage
-                + "\n\n"
-                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
+    private String buildCorrectionFeedback(String error, int attempt, int maxAttempts) {
+        return "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
                 + "Your previous response was rejected by the schema validator.\n"
                 + "Violations found:\n"
                 + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"

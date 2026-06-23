@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 import lombok.Getter;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -24,9 +25,28 @@ public class NousRequest {
     // ── Factory ─────────────────────────────────────────────────────────────
 
     public static NousRequest of(String model, String systemPrompt, String userContent) {
+        return of(model, systemPrompt, userContent, "");
+    }
+
+    /**
+     * Builds the chat payload with the prompt-cache split honored at message boundaries:
+     * {@code [system, user(cacheableUserPrefix)]} is the stable, cacheable prefix; a non-blank
+     * {@code volatileSuffix} (per-attempt correction feedback) is carried as its own trailing user
+     * message. This keeps the first two messages byte-identical across retries, so a caching backend
+     * (OpenRouter/OpenAI-compatible prefix cache, or a local Ollama KV cache) reuses them instead of
+     * re-billing the whole context on every correction round.
+     */
+    public static NousRequest of(String model, String systemPrompt,
+                                 String cacheableUserPrefix, String volatileSuffix) {
+        List<Message> messages = new ArrayList<>(3);
+        messages.add(Message.system(systemPrompt));
+        messages.add(Message.user(cacheableUserPrefix));
+        if (volatileSuffix != null && !volatileSuffix.isBlank()) {
+            messages.add(Message.user(volatileSuffix));
+        }
         return NousRequest.builder()
                 .model(model)
-                .messages(List.of(Message.system(systemPrompt), Message.user(userContent)))
+                .messages(List.copyOf(messages))
                 .temperature(0.1)
                 .maxTokens(resolveMaxTokens(model))
                 .build();

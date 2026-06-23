@@ -8,6 +8,21 @@ import java.util.Objects;
 
 /**
  * Immutable request descriptor for a single LLM agent invocation.
+ *
+ * <h2>Prompt-cache contract</h2>
+ * The payload is split into a <b>stable cacheable prefix</b> and a <b>volatile suffix</b>:
+ * <ul>
+ *   <li>{@code systemPrompt} + {@code cacheableUserPrefix} are byte-identical across every retry
+ *       attempt within one agent execution (the system prompt is static per agent; the base user
+ *       message — user idea + upstream artifacts — does not change between attempts).</li>
+ *   <li>{@code volatileSuffix} carries only the per-attempt correction feedback.</li>
+ * </ul>
+ * Keeping the correction in its <em>own</em> segment (rather than concatenated into the user
+ * message) lets a caching-capable backend place a cache breakpoint at a clean boundary: token-prefix
+ * cachers (OpenRouter/OpenAI-compatible, Gemini implicit) and block-level cachers (Anthropic
+ * {@code cache_control}) both reuse the prefix, and a local llama.cpp/Ollama KV cache stays warm.
+ * {@link #getUserMessage()} still returns the fully-assembled message for transports that don't
+ * model the split.
  */
 @Getter
 @Builder
@@ -19,11 +34,23 @@ public final class LlmCallRequest {
     /** Human-readable agent name for logging. */
     private final String agentName;
 
-    /** Full system prompt text for this agent. */
+    /** Full system prompt text for this agent. Part of the stable cacheable prefix. */
     private final String systemPrompt;
 
-    /** Compact JSON user message built from {@link com.midas.d3.context.AgentContextView}. */
+    /** Fully-assembled user message ({@code cacheableUserPrefix} + any {@code volatileSuffix}). */
     private final String userMessage;
+
+    /**
+     * The stable, cacheable portion of the user message (user idea + upstream artifacts).
+     * Invariant across retry attempts for a given agent execution.
+     */
+    private final String cacheableUserPrefix;
+
+    /**
+     * The volatile portion appended on retries (validation-correction feedback). Empty on the
+     * first attempt. Never part of the cache key.
+     */
+    private final String volatileSuffix;
 
     /** Pipeline run ID for distributed tracing. */
     private final String pipelineRunId;
@@ -44,18 +71,53 @@ public final class LlmCallRequest {
                                     String userMessage,
                                     String pipelineRunId,
                                     String modelOverride) {
-        Objects.requireNonNull(stage,        "stage must not be null");
-        Objects.requireNonNull(agentName,    "agentName must not be null");
-        Objects.requireNonNull(systemPrompt, "systemPrompt must not be null");
-        Objects.requireNonNull(userMessage,  "userMessage must not be null");
-        Objects.requireNonNull(pipelineRunId,"pipelineRunId must not be null");
+        // The whole user message is the cacheable prefix; no volatile suffix yet.
+        return build(stage, agentName, systemPrompt, userMessage, "", pipelineRunId, modelOverride);
+    }
 
-        if (systemPrompt.isBlank()) throw new IllegalArgumentException("systemPrompt must not be blank");
-        if (userMessage.isBlank())  throw new IllegalArgumentException("userMessage must not be blank");
+    /**
+     * Returns a copy of this request carrying the given per-attempt correction feedback as the
+     * volatile suffix. The cacheable prefix ({@code systemPrompt} + {@code cacheableUserPrefix}) is
+     * preserved verbatim, so a cache-capable backend reuses it across attempts. A blank correction
+     * yields a request with no volatile suffix.
+     */
+    public LlmCallRequest withCorrectionFeedback(String correctionFeedback) {
+        return build(stage, agentName, systemPrompt, cacheableUserPrefix,
+                correctionFeedback == null ? "" : correctionFeedback, pipelineRunId, modelOverride);
+    }
+
+    /** True when this request carries per-attempt correction feedback after the cacheable prefix. */
+    public boolean hasVolatileSuffix() {
+        return volatileSuffix != null && !volatileSuffix.isBlank();
+    }
+
+    private static LlmCallRequest build(MidasState stage,
+                                        String agentName,
+                                        String systemPrompt,
+                                        String cacheableUserPrefix,
+                                        String volatileSuffix,
+                                        String pipelineRunId,
+                                        String modelOverride) {
+        Objects.requireNonNull(stage,               "stage must not be null");
+        Objects.requireNonNull(agentName,           "agentName must not be null");
+        Objects.requireNonNull(systemPrompt,        "systemPrompt must not be null");
+        Objects.requireNonNull(cacheableUserPrefix, "userMessage must not be null");
+        Objects.requireNonNull(pipelineRunId,       "pipelineRunId must not be null");
+
+        if (systemPrompt.isBlank())        throw new IllegalArgumentException("systemPrompt must not be blank");
+        if (cacheableUserPrefix.isBlank()) throw new IllegalArgumentException("userMessage must not be blank");
+
+        String suffix = volatileSuffix == null ? "" : volatileSuffix;
+        String fullUserMessage = suffix.isBlank()
+                ? cacheableUserPrefix
+                : cacheableUserPrefix + "\n\n" + suffix;
 
         return LlmCallRequest.builder()
                 .stage(stage).agentName(agentName)
-                .systemPrompt(systemPrompt).userMessage(userMessage)
+                .systemPrompt(systemPrompt)
+                .userMessage(fullUserMessage)
+                .cacheableUserPrefix(cacheableUserPrefix)
+                .volatileSuffix(suffix)
                 .pipelineRunId(pipelineRunId)
                 .modelOverride(modelOverride)
                 .build();

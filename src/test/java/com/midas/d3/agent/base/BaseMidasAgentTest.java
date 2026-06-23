@@ -230,6 +230,14 @@ class BaseMidasAgentTest {
             assertThat(calls.get(1).getUserMessage())
                     .contains("CORRECTION REQUIRED")
                     .contains(violation);
+
+            // Prompt-cache contract: the stable prefix (systemPrompt + cacheableUserPrefix) is
+            // byte-identical across attempts; only the volatile suffix carries the correction.
+            assertThat(calls.get(1).getSystemPrompt()).isEqualTo(calls.get(0).getSystemPrompt());
+            assertThat(calls.get(1).getCacheableUserPrefix()).isEqualTo(calls.get(0).getCacheableUserPrefix());
+            assertThat(calls.get(0).hasVolatileSuffix()).isFalse();
+            assertThat(calls.get(1).getVolatileSuffix()).contains("CORRECTION REQUIRED").contains(violation);
+            assertThat(calls.get(1).getCacheableUserPrefix()).doesNotContain("CORRECTION REQUIRED");
         }
 
         @Test

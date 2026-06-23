@@ -63,7 +63,9 @@ public class NousRestClient implements LlmClient {
     @Override
     public LlmCallResult call(LlmCallRequest request) throws LlmCallException {
         String effectiveModel = resolveModel(request);
-        NousRequest body = NousRequest.of(effectiveModel, request.getSystemPrompt(), request.getUserMessage());
+        // Honor the prompt-cache split: stable [system, prefix] + optional volatile correction message.
+        NousRequest body = NousRequest.of(effectiveModel, request.getSystemPrompt(),
+                request.getCacheableUserPrefix(), request.getVolatileSuffix());
 
         log.info("[NousRestClient] Calling agent=[{}] run=[{}] model={}",
                 request.getAgentName(), request.getPipelineRunId(), effectiveModel);

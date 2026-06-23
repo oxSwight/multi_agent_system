@@ -134,11 +134,16 @@ public class EvolutionAgent {
                 ? codeContext.substring(0, MAX_CODE_CONTEXT_CHARS) + "\n\n[...truncated for token budget]"
                 : codeContext;
 
+        // Single-shot analysis (no validation-retry loop): the whole message is the cacheable
+        // prefix with no volatile suffix. Both fields are set explicitly because this path uses the
+        // raw builder (stage is deliberately null, which the of(...) factory forbids).
         LlmCallRequest request = LlmCallRequest.builder()
                 .stage(null)
                 .agentName(AGENT_NAME)
                 .systemPrompt(SYSTEM_PROMPT)
                 .userMessage(truncated)
+                .cacheableUserPrefix(truncated)
+                .volatileSuffix("")
                 .pipelineRunId(pipelineRunId)
                 .modelOverride(llmClient.defaultModelId())
                 .build();
