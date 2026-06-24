@@ -2,6 +2,7 @@ package com.midas.d3.quality;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.build.BuildPhase;
 import com.midas.d3.build.BuildReport;
 import com.midas.d3.build.BuildTool;
 import org.junit.jupiter.api.DisplayName;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 @DisplayName("QualityEvalHarness")
 class QualityEvalHarnessTest {
@@ -30,6 +32,11 @@ class QualityEvalHarnessTest {
 
     private BuildReport fail() {
         return BuildReport.failure(BuildTool.MAVEN, 1, List.of(), "compile failed", "");
+    }
+
+    /** Compiles, but the test phase fails — the middle tier of the build signal. */
+    private BuildReport testFail() {
+        return BuildReport.failure(BuildTool.MAVEN, 1, List.of(), "tests failed", "", BuildPhase.TEST);
     }
 
     private Rubric requirePom() {
@@ -74,12 +81,58 @@ class QualityEvalHarnessTest {
     }
 
     @Test
-    @DisplayName("toJson exposes the verdict shape")
+    @DisplayName("compiles but tests fail → partial build credit (0.5), distinct from a compile failure")
+    void compiledButTestsFail_earnsPartialCredit() {
+        QualityScore s = QualityEvalHarness.score(artifacts("{\"pom.xml\":\"x\"}"), testFail(), requirePom());
+
+        assertThat(s.compiled()).isTrue();          // it DID compile
+        assertThat(s.testsPassed()).isFalse();      // but its tests failed
+        assertThat(s.buildPassed()).isFalse();      // so the strict build gate is not satisfied
+        assertThat(s.testsPassScore()).isEqualTo(0.5);
+        // overall = 0.5 build credit × 1.0 rubric — above a compile failure (0.0), below a green build (1.0).
+        assertThat(s.overall()).isEqualTo(0.5);
+    }
+
+    @Test
+    @DisplayName("the three build tiers are strictly ordered: won't-compile < tests-fail < green")
+    void buildTiersAreStrictlyOrdered() {
+        JsonNode a = artifacts("{\"pom.xml\":\"x\"}");
+        double wontCompile = QualityEvalHarness.score(a, fail(), requirePom()).overall();
+        double testsFail   = QualityEvalHarness.score(a, testFail(), requirePom()).overall();
+        double green       = QualityEvalHarness.score(a, pass(), requirePom()).overall();
+
+        assertThat(wontCompile).isEqualTo(0.0);
+        assertThat(testsFail).isCloseTo(0.5, within(1e-9));
+        assertThat(green).isEqualTo(1.0);
+        assertThat(wontCompile).isLessThan(testsFail);
+        assertThat(testsFail).isLessThan(green);
+    }
+
+    @Test
+    @DisplayName("testsPassed implies compiled even if constructed inconsistently")
+    void testsPassedNormalizesCompiled() {
+        QualityScore inconsistent = new QualityScore(false, true, 1.0, List.of());
+        assertThat(inconsistent.compiled()).isTrue();
+        assertThat(inconsistent.testsPassScore()).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("toJson exposes the verdict shape, including the two-phase sub-score fields")
     void json() {
         JsonNode j = QualityEvalHarness.score(artifacts("{\"pom.xml\":\"x\"}"), pass(), requirePom()).toJson(mapper);
         assertThat(j.get("build_passed").asBoolean()).isTrue();
         assertThat(j.get("overall").asDouble()).isEqualTo(1.0);
         assertThat(j.has("rubric_violations")).isTrue();
+        // New two-phase sub-score fields.
+        assertThat(j.get("compiled").asBoolean()).isTrue();
+        assertThat(j.get("tests_passed").asBoolean()).isTrue();
+        assertThat(j.get("tests_pass_score").asDouble()).isEqualTo(1.0);
+
+        JsonNode tf = QualityEvalHarness.score(artifacts("{\"pom.xml\":\"x\"}"), testFail(), requirePom()).toJson(mapper);
+        assertThat(tf.get("compiled").asBoolean()).isTrue();
+        assertThat(tf.get("tests_passed").asBoolean()).isFalse();
+        assertThat(tf.get("tests_pass_score").asDouble()).isEqualTo(0.5);
+        assertThat(tf.get("build_passed").asBoolean()).isFalse();
     }
 
     @Test

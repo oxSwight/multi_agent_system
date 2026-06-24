@@ -31,9 +31,12 @@ public final class QualityEvalHarness {
      */
     public static QualityScore score(JsonNode artifacts, BuildReport build, Rubric rubric) {
         Objects.requireNonNull(rubric, "rubric");
-        boolean buildPassed = build != null && build.success();
+        // Two-phase signal: compiled() is true for a green build OR a TEST-only failure; testsPassed()
+        // only for a fully green build. A null build (verification never ran) reads as the worst tier.
+        boolean compiled = build != null && build.compiled();
+        boolean testsPassed = build != null && build.testsPassed();
         Rubric.Result result = rubric.evaluate(artifacts);
-        return new QualityScore(buildPassed, result.score(), result.violations());
+        return new QualityScore(compiled, testsPassed, result.score(), result.violations());
     }
 
     /**
