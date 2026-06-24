@@ -120,4 +120,79 @@ class FrontendIntegrationValidatorTest {
 
         assertThat(violations).anyMatch(v -> v.contains("/upload") || v.contains("hallucinated"));
     }
+
+    @Test
+    void validateSourceFiles_parameterizedContractPath_isAccepted() throws Exception {
+        // The exact shape that wedged the first live run: a correct ${...} template fill of a
+        // brace-placeholder contract path must NOT be flagged as an invented endpoint.
+        ObjectNode sourceFiles = objectMapper.createObjectNode();
+        sourceFiles.put("frontend/src/popup.html", """
+                <!DOCTYPE html><html><body>
+                <div id="status"></div>
+                <script src="popup.js"></script>
+                </body></html>
+                """);
+        sourceFiles.put("frontend/src/popup.js", """
+                const API_BASE_URL = 'http://localhost:8080';
+                const selectedProfileId = '1';
+                fetch(`${API_BASE_URL}/api/resumes/${selectedProfileId}`);
+                fetch(`${API_BASE_URL}/api/match`);
+                """);
+        sourceFiles.put("frontend/src/popup.css", "* { box-sizing: border-box; } body { width: 360px; }");
+
+        ObjectNode architecture = objectMapper.createObjectNode();
+        var contracts = architecture.putArray("api_contracts");
+        contracts.addObject().put("method", "GET").put("path", "/api/resumes/{profileId}");
+        contracts.addObject().put("method", "POST").put("path", "/api/match");
+
+        FrontendIntegrationValidator.validateSourceFiles(sourceFiles, architecture, violations);
+
+        assertThat(violations).noneMatch(v -> v.contains("do not invent endpoints"));
+    }
+
+    @Test
+    void validateSourceFiles_invitedEndpoint_stillRejectedDespiteParamContract() throws Exception {
+        // The fix must not become a rubber stamp: a path with different literal segments is still
+        // an invented endpoint even though the contract is parameterized.
+        ObjectNode sourceFiles = objectMapper.createObjectNode();
+        sourceFiles.put("frontend/src/popup.html", """
+                <!DOCTYPE html><html><body>
+                <div id="status"></div>
+                <script src="popup.js"></script>
+                </body></html>
+                """);
+        sourceFiles.put("frontend/src/popup.js", """
+                const API_BASE_URL = 'http://localhost:8080';
+                fetch(`${API_BASE_URL}/api/users/${userId}`);
+                """);
+        sourceFiles.put("frontend/src/popup.css", "* { box-sizing: border-box; }");
+
+        ObjectNode architecture = objectMapper.createObjectNode();
+        architecture.putArray("api_contracts").addObject()
+                .put("method", "GET").put("path", "/api/resumes/{profileId}");
+
+        FrontendIntegrationValidator.validateSourceFiles(sourceFiles, architecture, violations);
+
+        assertThat(violations).anyMatch(v -> v.contains("/api/users/") && v.contains("do not invent endpoints"));
+    }
+
+    @Test
+    void validateTestAgainstSource_parameterizedContractPath_isAccepted() throws Exception {
+        ObjectNode generatedSource = objectMapper.createObjectNode();
+        generatedSource.put("frontend/src/profile_manager.js", "export function load() {}");
+
+        ObjectNode architecture = objectMapper.createObjectNode();
+        architecture.putArray("api_contracts").addObject()
+                .put("method", "GET").put("path", "/api/resumes/{profileId}");
+
+        String testContent = """
+                const profile_manager = require('profile_manager');
+                fetch(`${API_BASE_URL}/api/resumes/${id}`);
+                """;
+
+        FrontendIntegrationValidator.validateTestAgainstSource(
+                "frontend/__tests__/profile_manager.test.js", testContent, generatedSource, architecture, violations);
+
+        assertThat(violations).noneMatch(v -> v.contains("hallucinated endpoint"));
+    }
 }

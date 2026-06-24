@@ -28,6 +28,8 @@ final class FrontendIntegrationValidator {
             "querySelector(?:All)?\\(\\s*['\"]#([^'\"\\s]+)");
     private static final Pattern FETCH_URL = Pattern.compile(
             "fetch\\(\\s*['\"`]([^'\"`]+)['\"`]");
+    /** An OpenAPI-style path parameter, e.g. the {@code {profileId}} in {@code /api/resumes/{profileId}}. */
+    private static final Pattern PATH_PARAM = Pattern.compile("\\{[^/{}]+}");
 
     private FrontendIntegrationValidator() {}
 
@@ -250,11 +252,42 @@ final class FrontendIntegrationValidator {
 
     private static boolean urlContainsContractPath(String url, Set<String> contractPaths) {
         for (String path : contractPaths) {
-            if (url.contains(path)) {
+            if (contractPathPattern(path).matcher(url).find()) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Compiles an OpenAPI-style contract path into a regex that matches the same endpoint as written
+     * in client code. A naive {@code url.contains(path)} produced a systematic false positive: a
+     * contract path declares a parameter with a brace placeholder ({@code /api/resumes/{profileId}}),
+     * but correct client code fills it with a JS template literal
+     * ({@code `${API_BASE_URL}/api/resumes/${selectedProfileId}`}), an Express param ({@code :profileId}),
+     * or a concrete value — the literal substring {@code {profileId}} is never present, so every
+     * correctly-parameterized endpoint read as an "invented" one and wedged CODE_GENERATION.
+     *
+     * <p>Each {@code {param}} placeholder becomes a single-path-segment wildcard ({@code [^/?#]+}),
+     * while literal text is matched verbatim. The pattern is searched as a substring ({@code find()}),
+     * so a base-URL prefix and a query/hash suffix are tolerated, yet a genuinely different path
+     * (different literal segments) still fails to match.
+     */
+    private static Pattern contractPathPattern(String contractPath) {
+        Matcher params = PATH_PARAM.matcher(contractPath);
+        StringBuilder regex = new StringBuilder();
+        int last = 0;
+        while (params.find()) {
+            if (params.start() > last) {
+                regex.append(Pattern.quote(contractPath.substring(last, params.start())));
+            }
+            regex.append("[^/?#]+");
+            last = params.end();
+        }
+        if (last < contractPath.length()) {
+            regex.append(Pattern.quote(contractPath.substring(last)));
+        }
+        return Pattern.compile(regex.toString());
     }
 
     private static boolean sourceUsesCrossOriginFetch(JsonNode sourceFiles) {
