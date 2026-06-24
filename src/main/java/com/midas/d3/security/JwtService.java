@@ -28,8 +28,8 @@ import java.util.Set;
  * </pre>
  *
  * <h2>Key configuration</h2>
- * The signing key is read from {@code midas.security.jwt.secret} as a
- * Base64-encoded byte sequence (≥ 256 bits / 32 bytes for HS256).
+ * The signing key is read from {@code midas.security.jwt.secret} as a Base64-encoded byte
+ * sequence (≥ 256 bits / 32 bytes for HS256), in either the standard or the URL-safe alphabet.
  * Override via {@code MIDAS_JWT_SECRET} environment variable in production.
  */
 @Slf4j
@@ -112,11 +112,11 @@ public class JwtService {
 
         byte[] decoded;
         try {
-            decoded = Decoders.BASE64.decode(secret);
+            decoded = decodeSecret(secret);
         } catch (RuntimeException e) {
             throw new IllegalStateException(
-                    "midas.security.jwt.secret is not valid Base64. Provide a Base64-encoded key "
-                    + "of at least " + MIN_KEY_BYTES + " bytes via MIDAS_JWT_SECRET.", e);
+                    "midas.security.jwt.secret is not valid Base64. Provide a standard or URL-safe "
+                    + "Base64-encoded key of at least " + MIN_KEY_BYTES + " bytes via MIDAS_JWT_SECRET.", e);
         }
 
         if (decoded.length < MIN_KEY_BYTES) {
@@ -203,6 +203,22 @@ public class JwtService {
     }
 
     private SecretKey signingKey() {
-        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(base64Secret));
+        return Keys.hmacShaKeyFor(decodeSecret(base64Secret));
+    }
+
+    /**
+     * Decodes the configured secret as Base64, accepting either the standard alphabet
+     * ({@code +} / {@code /}) or the URL-safe alphabet ({@code -} / {@code _}). A randomly
+     * generated 256-bit key is just as valid in either encoding, and key generators commonly
+     * emit URL-safe output; rejecting it would force a needless secret rotation. Standard is
+     * tried first and the URL-safe alphabet is the fallback, so the same input always decodes
+     * to the same bytes — signing and verification stay consistent.
+     */
+    private static byte[] decodeSecret(String secret) {
+        try {
+            return Decoders.BASE64.decode(secret);
+        } catch (RuntimeException standardFailed) {
+            return Decoders.BASE64URL.decode(secret);
+        }
     }
 }
