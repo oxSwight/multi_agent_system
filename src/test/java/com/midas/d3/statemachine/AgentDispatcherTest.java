@@ -3,8 +3,10 @@ package com.midas.d3.statemachine;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.base.BaseMidasAgent;
+import com.midas.d3.build.BuildVerificationService;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.persistence.PersistenceService;
+import org.springframework.messaging.Message;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,7 @@ class AgentDispatcherTest {
 
     @Mock private BaseMidasAgent agent;
     @Mock private PersistenceService persistenceService;
+    @Mock private BuildVerificationService buildVerificationService;
     @Mock private StateMachine<MidasState, MidasEvent> machine;
 
     private AgentDispatcher dispatcher;
@@ -43,7 +46,8 @@ class AgentDispatcherTest {
         when(agent.resolveStage()).thenReturn(MidasState.SECOPS_AUDIT);
         when(agent.getAgentName()).thenReturn("SecOpsAgent");
 
-        dispatcher = new AgentDispatcher(List.of(agent), syncExecutor, persistenceService);
+        dispatcher = new AgentDispatcher(
+                List.of(agent), syncExecutor, persistenceService, buildVerificationService);
 
         context = MidasContext.start("Build API", "run-dispatch-001");
         Map<Object, Object> variables = new HashMap<>();
@@ -83,5 +87,32 @@ class AgentDispatcherTest {
                 eq(""));
         assertThat(modelIdCaptor.getValue()).isEqualTo("gemini-1.5-flash");
         verify(machine).sendEvent(any(Mono.class));
+    }
+
+    @Test
+    @DisplayName("Auto-mode BUILD_VERIFICATION runs the build and submits its report (no LLM agent, no stall)")
+    @SuppressWarnings("unchecked")
+    void dispatch_buildVerification_runsBuildAndSubmitsReport() {
+        String reportJson = "{\"build_status\":\"SUCCESS\",\"tool\":\"MAVEN\"}";
+        when(buildVerificationService.verifyToReportJson(context)).thenReturn(reportJson);
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+
+        // No BaseMidasAgent is registered for BUILD_VERIFICATION — the dispatcher must drive it itself.
+        dispatcher.dispatchIfAutoMode(machine, MidasState.BUILD_VERIFICATION);
+
+        verify(buildVerificationService).verifyToReportJson(context);
+        verify(persistenceService).updateRunStatus("run-dispatch-001", "BUILD_VERIFICATION");
+        verify(persistenceService).logAgentExecution(
+                eq("run-dispatch-001"), eq("BuildVerification"), eq(reportJson),
+                isNull(), eq(0), eq(0), anyLong(), eq(false));
+
+        // The report is fed back as SUBMIT_RESULT so BUILD_CHOICE can route — this is the un-wedge.
+        ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
+        verify(machine).sendEvent(eventCaptor.capture());
+        Message<MidasEvent> submitted = eventCaptor.getValue().block();
+        assertThat(submitted).isNotNull();
+        assertThat(submitted.getPayload()).isEqualTo(MidasEvent.SUBMIT_RESULT);
+        assertThat(submitted.getHeaders().get(PipelineContextKeys.LLM_OUTPUT_HEADER))
+                .isEqualTo(reportJson);
     }
 }

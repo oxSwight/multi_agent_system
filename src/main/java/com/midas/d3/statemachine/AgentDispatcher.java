@@ -3,6 +3,7 @@ package com.midas.d3.statemachine;
 import com.midas.d3.agent.base.AgentExecutionException;
 import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.base.BaseMidasAgent;
+import com.midas.d3.build.BuildVerificationService;
 import com.midas.d3.config.AsyncConfig;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
@@ -29,6 +30,14 @@ import java.util.concurrent.Executor;
  * {@link com.midas.d3.statemachine.action.StoreArtifactAction} and
  * {@link com.midas.d3.statemachine.action.IncrementRetryAction} in addition to the
  * {@link com.midas.d3.statemachine.action.AgentEntryAction} state-entry hook.
+ *
+ * <p><b>Deterministic (non-LLM) stages.</b> Not every pipeline stage is an
+ * {@link BaseMidasAgent}: {@link MidasState#BUILD_VERIFICATION} is a real sandboxed build, not an
+ * LLM call. In the synchronous REST path {@code AgentOrchestrationService} runs it inline, but in
+ * auto-drive mode the dispatcher is the only thing entering the stage — so it must run the build
+ * itself and emit {@link MidasEvent#SUBMIT_RESULT} with the report, exactly as it does for an LLM
+ * agent. Without this, an auto-mode (e.g. Telegram) run would reach {@code BUILD_VERIFICATION} and
+ * wedge there forever, waiting for a result that nothing produces.
  */
 @Slf4j
 @Component
@@ -37,15 +46,21 @@ public class AgentDispatcher {
     /** Mandatory pause between agent invocations to stay under Gemini free-tier RPM limits. */
     private static final long INTER_AGENT_DELAY_MS = 10_000L;
 
+    /** Pseudo-agent name under which the deterministic build gate is logged. */
+    private static final String BUILD_VERIFICATION_AGENT_NAME = "BuildVerification";
+
     private final Map<MidasState, BaseMidasAgent> agentMap;
     private final Executor agentTaskExecutor;
     private final PersistenceService persistenceService;
+    private final BuildVerificationService buildVerificationService;
 
     public AgentDispatcher(List<BaseMidasAgent> agents,
                            @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor,
-                           PersistenceService persistenceService) {
+                           PersistenceService persistenceService,
+                           BuildVerificationService buildVerificationService) {
         this.agentTaskExecutor  = agentTaskExecutor;
         this.persistenceService = persistenceService;
+        this.buildVerificationService = buildVerificationService;
         this.agentMap = new EnumMap<>(MidasState.class);
         for (BaseMidasAgent agent : agents) {
             MidasState state = agent.resolveStage();
@@ -72,10 +87,12 @@ public class AgentDispatcher {
         dispatch(machine, state);
     }
 
-    /** Unconditionally dispatches the agent mapped to {@code state}. */
+    /** Unconditionally dispatches the work mapped to {@code state} — an LLM agent or a deterministic stage. */
     public void dispatch(StateMachine<MidasState, MidasEvent> machine, MidasState state) {
         BaseMidasAgent agent = agentMap.get(state);
-        if (agent == null) {
+        // A stage is drivable here if it has an LLM agent or is a deterministic (non-LLM) stage the
+        // dispatcher runs itself. Anything else (terminal/CHOICE states) is a no-op, as before.
+        if (agent == null && !isDeterministicStage(state)) {
             log.debug("[AgentDispatcher] No agent registered for state [{}].", state);
             return;
         }
@@ -90,11 +107,59 @@ public class AgentDispatcher {
         String runId = context.getPipelineRunId();
         persistenceService.updateRunStatus(runId, state.name());
 
-        log.info("[AgentDispatcher] Dispatching [{}] async for run [{}].", agent.getAgentName(), runId);
+        if (agent != null) {
+            log.info("[AgentDispatcher] Dispatching [{}] async for run [{}].", agent.getAgentName(), runId);
+            CompletableFuture.runAsync(
+                    () -> runAgent(agent, context, runId, machine, state),
+                    agentTaskExecutor);
+        } else {
+            log.info("[AgentDispatcher] Running deterministic stage [{}] async for run [{}].", state, runId);
+            CompletableFuture.runAsync(
+                    () -> runBuildVerification(context, runId, machine),
+                    agentTaskExecutor);
+        }
+    }
 
-        CompletableFuture.runAsync(
-                () -> runAgent(agent, context, runId, machine, state),
-                agentTaskExecutor);
+    /** True for non-LLM stages the dispatcher executes itself rather than delegating to a {@link BaseMidasAgent}. */
+    private static boolean isDeterministicStage(MidasState state) {
+        return state == MidasState.BUILD_VERIFICATION;
+    }
+
+    /**
+     * Runs the deterministic {@link MidasState#BUILD_VERIFICATION} gate off the state-machine thread
+     * and feeds its report back as a {@link MidasEvent#SUBMIT_RESULT}, so the BUILD_CHOICE routing
+     * (success → SecOps, failure → self-healing remediation) advances exactly as in the REST path.
+     *
+     * <p>No inter-agent throttle and no token accounting — this is local tooling, not an LLM call.
+     * {@code BuildVerificationService} is itself fail-open (a missing toolchain yields a SUCCESS
+     * "skipped" report rather than a hang), so the only way here is an unexpected error, which is
+     * routed to {@code CRITICAL_FAILURE} rather than left to wedge the machine.
+     */
+    private void runBuildVerification(MidasContext context, String runId,
+                                      StateMachine<MidasState, MidasEvent> machine) {
+        long startMs = System.currentTimeMillis();
+        try {
+            String reportJson = buildVerificationService.verifyToReportJson(context);
+            long elapsedMs = System.currentTimeMillis() - startMs;
+
+            log.info("[AgentDispatcher] Build verification completed for run [{}] in {}ms.", runId, elapsedMs);
+            persistenceService.logAgentExecution(
+                    runId, BUILD_VERIFICATION_AGENT_NAME, reportJson, null, 0, 0, elapsedMs, false);
+
+            sendEvent(machine, MessageBuilder
+                    .withPayload(MidasEvent.SUBMIT_RESULT)
+                    .setHeader(PipelineContextKeys.LLM_OUTPUT_HEADER, reportJson)
+                    .build());
+
+        } catch (Exception e) {
+            long elapsedMs = System.currentTimeMillis() - startMs;
+            log.error("[AgentDispatcher] Build verification failed unexpectedly for run [{}] ({}ms): {}",
+                    runId, elapsedMs, e.getMessage(), e);
+            persistenceService.logAgentExecution(
+                    runId, BUILD_VERIFICATION_AGENT_NAME, "Build verification error: " + e.getMessage(),
+                    null, 0, 0, elapsedMs, true);
+            sendCriticalFailure(machine, "Build verification error: " + e.getMessage());
+        }
     }
 
     private void runAgent(BaseMidasAgent agent,
