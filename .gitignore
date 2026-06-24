@@ -49,18 +49,11 @@ temp/
 midas_hybrid.zip
 .cursor_run_id.txt
 
-# ── Markdown ─────────────────────────────────────────────────
-# Ignore ad-hoc scratch notes by default, but always track the
-# canonical project docs so a contributor's CONTRIBUTING/SECURITY/
-# CHANGELOG can't silently vanish from version control.
+# ── Markdown & AI assistant rules (local-only) ───────────────
+# Only README files reach the remote. Every other .md (internal docs,
+# the audit log, OSS templates) and the .cursorrules workflow file stay
+# local and never appear on GitHub.
 *.md
 !README.md
 !**/README.md
-!CONTRIBUTING.md
-!CODE_OF_CONDUCT.md
-!SECURITY.md
-!CHANGELOG.md
-!LICENSE.md
-!MIDAS_DX_TODO.md
-!docs/**/*.md
-!.github/**/*.md
+.cursorrules
