@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.midas.d3.build.BuildPhase;
 import com.midas.d3.context.AuditEntry;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.statemachine.AgentDispatcher;
@@ -82,18 +83,49 @@ public class BuildRemediationInitAction implements Action<MidasState, MidasEvent
 
     /** Builds the directive injected into the next implementation pass. */
     private JsonNode buildDirective(JsonNode report, int attempt) {
+        // The report names which phase failed (COMPILE | TEST), present only on failure. A
+        // TEST-phase failure means the code compiled but its tests don't pass — telling the agent
+        // to "fix the compile error" there would send it chasing a defect that doesn't exist, so
+        // the instruction is phase-specific.
+        BuildPhase phase = failurePhaseOf(report);
+
         ObjectNode directive = objectMapper.createObjectNode();
         directive.put("type", "BUILD_FAILURE");
         directive.put("remediation_attempt", attempt);
-        directive.put("instruction",
-                "The previous generation FAILED to build. Fix the exact compiler/build errors "
-                        + "below without changing the intended behavior. Return the corrected, "
-                        + "fully-compiling source.");
+        directive.put("failure_phase", phase.name());
+        directive.put("instruction", instructionFor(phase));
         directive.put("build_tool", report.path("tool").asText("UNKNOWN"));
         directive.set("diagnostics", copyDiagnostics(report));
         // A compact tail of raw build output as a fallback when diagnostics couldn't be parsed.
         directive.put("raw_build_output", report.path("raw_output_tail").asText(""));
         return directive;
+    }
+
+    /**
+     * Reads the report's {@code failure_phase}, defaulting to {@link BuildPhase#COMPILE} when it is
+     * absent or unrecognized — the same back-compatible default {@code BuildReport} applies, so an
+     * older report that predates phase attribution still reads as a compile failure.
+     */
+    private static BuildPhase failurePhaseOf(JsonNode report) {
+        String raw = report.path("failure_phase").asText("").strip();
+        try {
+            return raw.isEmpty() ? BuildPhase.COMPILE : BuildPhase.valueOf(raw);
+        } catch (IllegalArgumentException unknown) {
+            return BuildPhase.COMPILE;
+        }
+    }
+
+    /** The phase-appropriate remediation instruction the implementation agent sees. */
+    private static String instructionFor(BuildPhase phase) {
+        return switch (phase) {
+            case TEST -> "The previous generation COMPILED, but its automated tests FAILED. The code "
+                    + "is structurally valid — do NOT rewrite it to chase compiler errors that aren't "
+                    + "there. Fix the behavior so the failing tests below pass, without changing the "
+                    + "intended feature. Return the corrected source.";
+            case COMPILE -> "The previous generation FAILED to compile. Fix the exact compiler/build "
+                    + "errors below without changing the intended behavior. Return the corrected, "
+                    + "fully-compiling source.";
+        };
     }
 
     private ArrayNode copyDiagnostics(JsonNode report) {
