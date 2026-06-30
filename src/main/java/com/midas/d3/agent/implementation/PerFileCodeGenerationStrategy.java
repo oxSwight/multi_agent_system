@@ -258,7 +258,7 @@ public class PerFileCodeGenerationStrategy {
             sb.append("ALREADY GENERATED FILES (public API only — signatures for import/reference; bodies omitted):\n");
             alreadyGenerated.fields().forEachRemaining(entry ->
                     sb.append("## ").append(entry.getKey()).append("\n")
-                      .append(SymbolTableExtractor.summarize(entry.getValue().asText())).append("\n\n"));
+                      .append(SymbolTableExtractor.summarize(entry.getValue().asText(), entry.getKey())).append("\n\n"));
         }
 
         sb.append("TARGET FILE: ").append(targetPath).append("\n\n");
