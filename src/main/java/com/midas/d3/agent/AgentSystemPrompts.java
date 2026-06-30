@@ -129,7 +129,15 @@ public class AgentSystemPrompts {
             IF INPUT IS SUFFICIENT:
             Step 1: Reason about the goal and the LEAST infrastructure that fully satisfies it.
             Step 2: Explicitly forbid any infrastructure the idea does not need.
-            Step 3: Output ONLY a valid JSON object. No markdown, no prose outside the JSON.
+            Step 3: Decompose EVERY core_feature AND every described UX behavior into machine-checkable \
+                    acceptance_criteria. A criterion is a verifiable assertion about the future source: \
+                    a UI element with a specific id/class, an event handler, a fetch to a contract path, \
+                    a controller mapping, or a DB column/JOIN. A downstream deterministic gate compiles \
+                    these into checks against the generated code, so vague prose is worthless — write a \
+                    SHORT, tolerant, single-marker regex in must_contain (one id/class/annotation/call \
+                    token, case-insensitive), never a multi-line code shape. Cover the WHOLE request: \
+                    every feature and every UX detail the user described becomes at least one criterion.
+            Step 4: Output ONLY a valid JSON object. No markdown, no prose outside the JSON.
 
             REQUIRED JSON SCHEMA:
             {
@@ -143,11 +151,27 @@ public class AgentSystemPrompts {
                 "forbidden_infrastructure": ["String — tech explicitly NOT allowed; use [] when HYBRID/SERVER_SIDE or when user requests backends; populate only for CLIENT_SIDE builds the user asked to keep serverless"],
                 "justification": "String — one sentence on why this runtime is the minimal correct choice"
               },
-              "core_features": ["String — each a standalone, testable deliverable"],
+              "core_features": [
+                {
+                  "id": "String — stable kebab-case id, e.g. 'multi-profile-store'",
+                  "name": "String — a standalone, testable deliverable",
+                  "acceptance_criteria": [
+                    {
+                      "id": "String — short id unique within the feature",
+                      "description": "String — the capability in one line",
+                      "must_contain": "String — a SHORT single-marker regex (NOT a full code shape) the implementing source must contain: ONE token such as an element id/class (id=[\\"']capsule), an event-handler call (addEventListener\\\\(), a fetch (fetch\\\\(), a controller mapping (@PostMapping), or a column/JOIN keyword. Make it tolerant (case-insensitive, alternatives). DO NOT write multi-line code or chain many .* — regex '.' does not cross newlines and exact code shapes never match real source.",
+                      "in_file": "String — OPTIONAL path suffix scoping the check, e.g. 'popup.html', 'content_script.js', 'Controller.java'. Omit to scan all files."
+                    }
+                  ]
+                }
+              ],
               "edge_cases_and_handling": [
                 {"case": "String", "solution": "String"}
               ],
               "non_functional_requirements": ["String — measurable NFR/SLA or constraint such as 'must work offline'"],
+              "ux_acceptance_criteria": [
+                {"id": "String", "description": "String — a described UX behavior (sidebar slide-out, capsule trigger, confidence highlight, inline edit)", "must_contain": "String — a tolerant regex evidencing it in the source", "in_file": "String — OPTIONAL path suffix"}
+              ],
               "api_contract": [
                 {
                   "method": "GET|POST|PUT|DELETE|PATCH",
@@ -182,7 +206,15 @@ public class AgentSystemPrompts {
               precise field names (e.g. "file" not "resume"), and response_format (string vs JSON shape). \
               Downstream agents MUST NOT invent their own URLs or parameter names.
             - When requires_backend is false and execution_model is CLIENT_SIDE, api_contract MUST be [].
-            - core_features must have at least 1 item; every string value must be non-empty.
+            - core_features must have at least 1 item. PREFER the object form \
+              {id, name, acceptance_criteria[]}; a bare string is tolerated for trivial features but \
+              gives the pipeline no functional gate. Each acceptance_criteria entry needs a non-blank \
+              must_contain (a real regex) or must_exist (a required path suffix).
+            - ux_acceptance_criteria is an array (may be empty []); populate it whenever the user \
+              describes concrete UX (layout, controls, states, interactions) so the look-and-feel is \
+              enforced, not just the logic. A known product shape (e.g. a sidebar autofill extension) \
+              also gets a deterministic floor of mandatory criteria added downstream — your job is to \
+              add the product-specific rest.
             - edge_cases_and_handling is an array (may be empty []).
             - Output ONLY the JSON object, starting with { and ending with }.
             """;
@@ -303,6 +335,15 @@ public class AgentSystemPrompts {
             4. MESSAGE CONTRACT: when a content script and the background/service worker communicate, name \
                the exact runtime message action string(s) in the relevant components[].responsibility (e.g. \
                "sends/handles message action 'saveSemanticData'") so client and worker wire to the same action.
+
+            ACCEPTANCE-CRITERIA COVERAGE (MANDATORY — type-independent, a downstream gate enforces it):
+            The Technical Specification carries machine-checkable acceptance_criteria (per feature) and \
+            ux_acceptance_criteria. Your file_layout and components MUST give every criterion a home:
+            - Each criterion with an in_file hint MUST have that file (or an equivalent concrete path) in \
+              file_layout. Do not emit a minimal layout that has nowhere for a required capability to live.
+            - Each UX criterion (sidebar, capsule, profile dropdown, fill button, confidence highlighting, \
+              inline edit, semantic page scan) MUST map to a component and a file that will implement it.
+            - A criterion you cannot place is a design gap: add the component/file, do not drop the criterion.
             """;
 
     // ─────────────────────────────────────────────────────────────────────────

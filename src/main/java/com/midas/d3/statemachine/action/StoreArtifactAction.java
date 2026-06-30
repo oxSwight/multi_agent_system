@@ -1,8 +1,10 @@
 package com.midas.d3.statemachine.action;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.context.AuditEntry;
 import com.midas.d3.context.MidasContext;
+import com.midas.d3.quality.DomainCriteriaFloor;
 import com.midas.d3.statemachine.AgentDispatcher;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
@@ -40,6 +42,7 @@ public class StoreArtifactAction implements Action<MidasState, MidasEvent> {
     private final AgentDispatcher agentDispatcher;
     private final PipelineCompletionAction pipelineCompletionAction;
     private final PipelineTopology topology;
+    private final ObjectMapper objectMapper;
 
     @Override
     public void execute(StateContext<MidasState, MidasEvent> context) {
@@ -94,7 +97,10 @@ public class StoreArtifactAction implements Action<MidasState, MidasEvent> {
     private MidasContext applyArtifact(MidasContext ctx, MidasState state, JsonNode node) {
         if (state == null) return ctx;
         return switch (state) {
-            case SYSTEM_ANALYSIS      -> ctx.withTechnicalSpec(node);
+            // Deterministically fold the model-independent functional floor for the detected product
+            // shape into the stored spec, so the required acceptance criteria also reach the
+            // implementation prompt and DRIVE generation — not merely gate it after the fact.
+            case SYSTEM_ANALYSIS      -> ctx.withTechnicalSpec(DomainCriteriaFloor.enrich(node, objectMapper));
             case ARCHITECTURE_DESIGN  -> ctx.withArchitectureDesign(node);
             case INTEGRATION_STRATEGY -> ctx.withIntegrationStrategy(node);
             case CODE_GENERATION      -> storeCodeGeneration(ctx, node);

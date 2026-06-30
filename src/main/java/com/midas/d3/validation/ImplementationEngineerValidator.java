@@ -190,6 +190,13 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             // only on the assembled envelope (architecture present), never on a partial surface pass.
             ManifestReferenceValidator.validateSourceFiles(sourceFiles, objectMapper, violations);
             PathConformanceValidator.validate(sourceFiles, architecture, violations);
+            // Functional-fidelity gate (runs only on the fully assembled envelope — architecture
+            // present — never on a partial HYBRID surface pass): the spec's machine-checkable
+            // acceptance criteria plus the deterministic domain floor must be evidenced in the
+            // source, so a structurally-valid-but-hollow artifact is REJECTed, not passed.
+            if (architecture != null && !architecture.isNull() && !architecture.isMissingNode()) {
+                FunctionalCompletenessValidator.validate(sourceFiles, technicalSpec, violations);
+            }
         }
 
         if (featureManifest != null && featureManifest.isArray()) {

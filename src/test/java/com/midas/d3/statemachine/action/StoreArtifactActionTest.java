@@ -43,7 +43,7 @@ class StoreArtifactActionTest {
     @BeforeEach
     void setUp() {
         objectMapper = new JacksonConfig().objectMapper();
-        action = new StoreArtifactAction(agentDispatcher, pipelineCompletionAction, topology);
+        action = new StoreArtifactAction(agentDispatcher, pipelineCompletionAction, topology, objectMapper);
         vars = new HashMap<>();
         when(stateContext.getExtendedState()).thenReturn(extendedState);
         when(extendedState.getVariables()).thenReturn(vars);
