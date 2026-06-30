@@ -142,6 +142,9 @@ public final class DomainCriteriaFloor {
         floor.add(AcceptanceCriterion.content("ux-highlight-uncertain",
                 "uncertain-field highlight (yellow) with an interactive suggestion prompt",
                 "", "(?i)uncertain|low[-_]?confidence|highlight[-_]?yellow|needs[-_]?review|\\byellow\\b"));
+        floor.add(AcceptanceCriterion.content("ux-inline-edit",
+                "inline-editable filled field (correct a suggestion in place before submitting)",
+                "", "(?i)contenteditable|inline-?edit|editable"));
         floor.add(AcceptanceCriterion.content("cs-semantic-scan",
                 "content script builds a semantic field map of the page (querySelectorAll of inputs)",
                 "", "(?i)queryselectorall\\s*\\("));

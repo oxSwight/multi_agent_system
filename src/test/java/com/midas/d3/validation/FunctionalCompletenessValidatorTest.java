@@ -67,7 +67,7 @@ class FunctionalCompletenessValidatorTest {
         JsonNode rich = mapper.readTree("""
                 {
                   "sidebar.css": ".sidebar{position:fixed} .capsule{} .confident{color:green} .uncertain{color:yellow}",
-                  "sidebar.html": "<div class='sidebar'><div class='capsule'></div><select class='profile-select'></select><button class='fill-form-btn'>Fill form</button></div>",
+                  "sidebar.html": "<div class='sidebar'><div class='capsule'></div><select class='profile-select'></select><div class='field' contenteditable='true'></div><button class='fill-form-btn'>Fill form</button></div>",
                   "content_script.js": "const fields=document.querySelectorAll('input,textarea,select'); fields.forEach(f=>f.getAttribute('aria-label')||f.placeholder); fetch('/api/match');",
                   "popup.js": "document.addEventListener('click', () => {});"
                 }

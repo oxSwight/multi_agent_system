@@ -36,7 +36,7 @@ class DomainCriteriaFloorTest {
 
         assertThat(ids).contains(
                 "ext-event-handler", "ux-sidebar", "ux-capsule", "ux-profile-dropdown",
-                "ux-fill-button", "ux-highlight-confident", "ux-highlight-uncertain",
+                "ux-fill-button", "ux-highlight-confident", "ux-highlight-uncertain", "ux-inline-edit",
                 "cs-semantic-scan", "cs-semantic-signals", "api-matching-call");
     }
 
