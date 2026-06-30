@@ -140,9 +140,11 @@ public abstract class BaseMidasAgent {
         // prompt-cache prefix that is identical on every attempt. Retries only graft a volatile
         // correction suffix onto this via withCorrectionFeedback (see the prompt-cache contract on
         // LlmCallRequest), so a caching backend reuses the prefix instead of re-billing it.
+        String primaryModel = llmModelPolicy.resolve(stage);
+        int maxAttempts = AgentRetryPolicy.maxValidationAttempts();
         LlmCallRequest baseRequest = LlmCallRequest.of(
                 stage, getAgentName(), systemPrompt, baseUserMessage,
-                context.getPipelineRunId(), llmModelPolicy.resolve(stage));
+                context.getPipelineRunId(), primaryModel);
 
         GoalKeeperValidator validator = validatorRegistry.getValidator(stage)
                 .orElseThrow(() -> new IllegalStateException(
@@ -156,12 +158,18 @@ public abstract class BaseMidasAgent {
         String lastFinishReason = "";
         int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
 
-        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             // Attempt 1 reuses the cacheable base request verbatim; retries graft only the volatile
             // correction suffix, leaving systemPrompt + cacheableUserPrefix byte-identical.
             LlmCallRequest request = (attempt == 1)
                     ? baseRequest
                     : baseRequest.withCorrectionFeedback(buildCorrectionFeedback(lastError, attempt, effectiveMax));
+            // F5: deliberate model escalation — the final attempt of an eligible, non-pinned stage is
+            // re-issued on the stronger model (no-op unless an escalation model is configured).
+            String attemptModel = llmModelPolicy.resolveForAttempt(stage, attempt, maxAttempts);
+            if (attemptModel != null && !attemptModel.equals(primaryModel)) {
+                request = request.withModelOverride(attemptModel);
+            }
 
             log.info("[{}] Attempt {}/{} — run=[{}]",
                     getAgentName(), attempt, effectiveMax, context.getPipelineRunId());

@@ -287,10 +287,16 @@ public class PerFileTestGenerationStrategy {
                 systemPrompt, baseUserMessage,
                 context.getPipelineRunId(), modelOverride);
 
-        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
+        int maxAttempts = AgentRetryPolicy.maxValidationAttempts();
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             LlmCallRequest request = attempt == 1
                     ? baseRequest
                     : baseRequest.withCorrectionFeedback(buildCorrectionFeedback(lastError, attempt, effectiveMax));
+            // F5: deliberate escalation on the final attempt of TEST_GENERATION (no-op unless configured).
+            String attemptModel = llmModelPolicy.resolveForAttempt(MidasState.TEST_GENERATION, attempt, maxAttempts);
+            if (attemptModel != null && !attemptModel.equals(modelOverride)) {
+                request = request.withModelOverride(attemptModel);
+            }
 
             log.info("[PerFileTestGenerationStrategy] {} test [{}/{}] {} attempt {}/{} — run=[{}]",
                     surface != null ? surface.name() : "SINGLE",

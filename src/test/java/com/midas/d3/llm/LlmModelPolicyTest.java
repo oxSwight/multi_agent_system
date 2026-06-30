@@ -157,4 +157,76 @@ class LlmModelPolicyTest {
         assertThat(p.isFastStage(MidasState.INTEGRATION_STRATEGY)).isTrue();
         assertThat(p.isFastStage(MidasState.CODE_GENERATION)).isFalse();
     }
+
+    // ── Escalation tier (F5) ────────────────────────────────────────────────────
+
+    private static final String ESCALATION = "strong-gpt4o";
+
+    private LlmModelPolicy escalationPolicy(String escalationModel, Set<String> escalationStages,
+                                            Map<String, String> pins) {
+        LlmModelPolicyProperties p = new LlmModelPolicyProperties();
+        p.setModel(PRIMARY);
+        p.setEscalationModel(escalationModel);
+        p.setEscalationStages(escalationStages);
+        p.setStageModels(pins);
+        return new LlmModelPolicy(p);
+    }
+
+    @Test
+    @DisplayName("Escalation inactive (no escalation-model): every attempt stays on the resolved model")
+    void resolveForAttempt_escalationInactive_staysPrimary() {
+        LlmModelPolicy p = escalationPolicy("", Set.of(), Map.of());
+        assertThat(p.isEscalationTierActive()).isFalse();
+        assertThat(p.resolveForAttempt(MidasState.CODE_GENERATION, 1, 3)).isEqualTo(PRIMARY);
+        assertThat(p.resolveForAttempt(MidasState.CODE_GENERATION, 3, 3)).isEqualTo(PRIMARY);
+    }
+
+    @Test
+    @DisplayName("Escalation active: the final attempt of an eligible stage routes to the escalation model")
+    void resolveForAttempt_finalAttemptEligible_escalates() {
+        LlmModelPolicy p = escalationPolicy(ESCALATION, Set.of(), Map.of());
+        assertThat(p.resolveForAttempt(MidasState.CODE_GENERATION, 3, 3)).isEqualTo(ESCALATION);
+    }
+
+    @Test
+    @DisplayName("Escalation active: non-final attempts stay on the primary model")
+    void resolveForAttempt_nonFinalAttempt_staysPrimary() {
+        LlmModelPolicy p = escalationPolicy(ESCALATION, Set.of(), Map.of());
+        assertThat(p.resolveForAttempt(MidasState.CODE_GENERATION, 1, 3)).isEqualTo(PRIMARY);
+        assertThat(p.resolveForAttempt(MidasState.CODE_GENERATION, 2, 3)).isEqualTo(PRIMARY);
+    }
+
+    @Test
+    @DisplayName("Escalation active: a non-eligible stage is never escalated, even on the final attempt")
+    void resolveForAttempt_nonEligibleStage_staysPrimary() {
+        LlmModelPolicy p = escalationPolicy(ESCALATION, Set.of(), Map.of());
+        assertThat(p.resolveForAttempt(MidasState.INTEGRATION_STRATEGY, 3, 3)).isEqualTo(PRIMARY);
+    }
+
+    @Test
+    @DisplayName("An explicit pin wins over escalation on the final attempt")
+    void resolveForAttempt_pinnedStage_pinWins() {
+        LlmModelPolicy p = escalationPolicy(ESCALATION, Set.of(),
+                Map.of(MidasState.CODE_GENERATION.name(), "pinned-7b"));
+        assertThat(p.resolveForAttempt(MidasState.CODE_GENERATION, 3, 3)).isEqualTo("pinned-7b");
+    }
+
+    @Test
+    @DisplayName("Configured escalation-stages override the built-in default classification")
+    void resolveForAttempt_customEscalationStages_override() {
+        LlmModelPolicy p = escalationPolicy(ESCALATION, Set.of(MidasState.PRODUCT_REVIEW.name()), Map.of());
+        assertThat(p.resolveForAttempt(MidasState.PRODUCT_REVIEW, 3, 3)).isEqualTo(ESCALATION);
+        // Once an explicit set is configured, the default CODE_GENERATION is no longer eligible.
+        assertThat(p.resolveForAttempt(MidasState.CODE_GENERATION, 3, 3)).isEqualTo(PRIMARY);
+    }
+
+    @Test
+    @DisplayName("Escalation accessors expose the model and stage classification")
+    void accessors_exposeEscalationMetadata() {
+        LlmModelPolicy p = escalationPolicy(ESCALATION, Set.of(), Map.of());
+        assertThat(p.isEscalationTierActive()).isTrue();
+        assertThat(p.escalationModel()).isEqualTo(ESCALATION);
+        assertThat(p.isEscalationStage(MidasState.CODE_GENERATION)).isTrue();
+        assertThat(p.isEscalationStage(MidasState.INTEGRATION_STRATEGY)).isFalse();
+    }
 }

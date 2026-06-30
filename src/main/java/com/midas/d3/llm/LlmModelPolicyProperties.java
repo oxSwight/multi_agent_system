@@ -36,4 +36,19 @@ public class LlmModelPolicyProperties {
 
     /** Explicit per-stage model pins. Highest precedence — an operator override always wins. */
     private Map<String, String> stageModels = new LinkedHashMap<>();
+
+    /**
+     * Stronger "escalation" model used as a deliberate last resort on the FINAL retry of an
+     * escalation-eligible stage, after the primary tier has failed every prior attempt. Blank
+     * disables escalation entirely (every attempt stays on the resolved tier), so the feature is
+     * opt-in and the default deployment is unaffected until an operator configures it.
+     */
+    private String escalationModel = "";
+
+    /**
+     * Stages eligible for final-attempt escalation (by {@code MidasState} name). When empty the policy
+     * applies its conservative built-in default (the heavy generation stages). An operator-pinned stage
+     * is never escalated — the pin wins.
+     */
+    private Set<String> escalationStages = new LinkedHashSet<>();
 }

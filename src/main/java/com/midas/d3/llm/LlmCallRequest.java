@@ -86,6 +86,16 @@ public final class LlmCallRequest {
                 correctionFeedback == null ? "" : correctionFeedback, pipelineRunId, modelOverride);
     }
 
+    /**
+     * Returns a copy of this request routed to a different model, preserving the cacheable prefix and
+     * any volatile suffix verbatim. Used by deliberate model escalation (F5) to re-issue the final
+     * retry on a stronger model without disturbing the prompt-cache split.
+     */
+    public LlmCallRequest withModelOverride(String newModelOverride) {
+        return build(stage, agentName, systemPrompt, cacheableUserPrefix,
+                volatileSuffix, pipelineRunId, newModelOverride);
+    }
+
     /** True when this request carries per-attempt correction feedback after the cacheable prefix. */
     public boolean hasVolatileSuffix() {
         return volatileSuffix != null && !volatileSuffix.isBlank();

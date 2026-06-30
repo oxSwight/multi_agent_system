@@ -112,4 +112,83 @@ public class LlmModelPolicy {
         }
         return resolved.isEmpty() ? DEFAULT_FAST_STAGES : resolved;
     }
+
+    // ── Escalation tier (F5) ─────────────────────────────────────────────────
+
+    /** Conservative built-in escalation-eligible set: the heavy generation stages. */
+    static final Set<MidasState> DEFAULT_ESCALATION_STAGES = EnumSet.of(
+            MidasState.SYSTEM_ANALYSIS,
+            MidasState.ARCHITECTURE_DESIGN,
+            MidasState.CODE_GENERATION,
+            MidasState.TEST_GENERATION);
+
+    /** True when a non-blank escalation model is configured (i.e. escalation is enabled). */
+    public boolean isEscalationTierActive() {
+        String esc = properties.getEscalationModel();
+        return esc != null && !esc.isBlank();
+    }
+
+    /** The configured escalation model, or the primary model when escalation is not configured. */
+    public String escalationModel() {
+        return isEscalationTierActive() ? properties.getEscalationModel().trim() : properties.getModel();
+    }
+
+    /** Whether the given stage is classified as escalation-eligible (independent of activation). */
+    public boolean isEscalationStage(MidasState stage) {
+        return escalationStages().contains(Objects.requireNonNull(stage, "stage must not be null"));
+    }
+
+    /**
+     * Resolves the model for a specific retry attempt. Identical to {@link #resolve(MidasState)} except
+     * that the FINAL attempt of an escalation-eligible, non-pinned stage routes to the configured
+     * escalation (stronger) model — a deliberate, bounded last resort after the primary tier has failed
+     * every earlier attempt. An explicit operator pin always wins over escalation.
+     *
+     * @param stage       pipeline stage; must not be null
+     * @param attempt     1-based attempt index
+     * @param maxAttempts total attempts for this stage (escalation fires only when {@code attempt == maxAttempts})
+     */
+    public String resolveForAttempt(MidasState stage, int attempt, int maxAttempts) {
+        String base = resolve(stage);
+        boolean finalAttempt = attempt >= maxAttempts;
+        if (!finalAttempt || isPinned(stage) || !isEscalationTierActive() || !escalationStages().contains(stage)) {
+            return base;
+        }
+        String escalated = properties.getEscalationModel().trim();
+        if (!escalated.equals(base)) {
+            log.info("LlmModelPolicy → stage={} FINAL attempt {}/{} ESCALATED to model={}",
+                    stage, attempt, maxAttempts, escalated);
+        }
+        return escalated;
+    }
+
+    /** True when an operator has explicitly pinned a model for this stage. */
+    private boolean isPinned(MidasState stage) {
+        String pinned = properties.getStageModels().get(stage.name());
+        return pinned != null && !pinned.isBlank();
+    }
+
+    /**
+     * The active escalation-stage set: the operator-configured {@code escalation-stages} when present
+     * and parseable, otherwise the built-in {@link #DEFAULT_ESCALATION_STAGES}. Unknown stage names are
+     * skipped with a warning rather than failing startup.
+     */
+    private Set<MidasState> escalationStages() {
+        Set<String> configured = properties.getEscalationStages();
+        if (configured == null || configured.isEmpty()) {
+            return DEFAULT_ESCALATION_STAGES;
+        }
+        EnumSet<MidasState> resolved = EnumSet.noneOf(MidasState.class);
+        for (String name : configured) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            try {
+                resolved.add(MidasState.valueOf(name.trim()));
+            } catch (IllegalArgumentException e) {
+                log.warn("LlmModelPolicy → ignoring unknown escalation-stage [{}] in midas.llm.escalation-stages", name);
+            }
+        }
+        return resolved.isEmpty() ? DEFAULT_ESCALATION_STAGES : resolved;
+    }
 }

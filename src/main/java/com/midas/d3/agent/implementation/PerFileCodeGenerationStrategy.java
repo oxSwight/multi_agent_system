@@ -216,10 +216,16 @@ public class PerFileCodeGenerationStrategy {
                 systemPrompt, baseUserMessage,
                 context.getPipelineRunId(), modelOverride);
 
-        for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
+        int maxAttempts = AgentRetryPolicy.maxValidationAttempts();
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             LlmCallRequest request = attempt == 1
                     ? baseRequest
                     : baseRequest.withCorrectionFeedback(buildCorrectionFeedback(lastError, attempt, effectiveMax));
+            // F5: deliberate escalation on the final attempt of CODE_GENERATION (no-op unless configured).
+            String attemptModel = llmModelPolicy.resolveForAttempt(MidasState.CODE_GENERATION, attempt, maxAttempts);
+            if (attemptModel != null && !attemptModel.equals(modelOverride)) {
+                request = request.withModelOverride(attemptModel);
+            }
 
             log.info("[PerFileCodeGenerationStrategy] {} file [{}/{}] {} attempt {}/{} — run=[{}]",
                     surface != null ? surface.name() : "SINGLE",
