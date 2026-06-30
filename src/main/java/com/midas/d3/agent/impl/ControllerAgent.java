@@ -17,9 +17,11 @@ import org.springframework.stereotype.Component;
  * locked {@code business_goal}.
  *
  * <p>Runs at the {@link com.midas.d3.statemachine.MidasState#PRODUCT_REVIEW} stage. To stay well
- * under token limits it is fed only {@code technicalSpec} and {@code secOpsArtifacts} (which carry
- * the {@code release_artifacts} map of what was actually shipped) — never the full raw source code
- * (see {@link ContextReducer.AgentRole#CONTROLLER}).
+ * under token limits it is fed the {@code technicalSpec}, the {@code featureManifest}, the
+ * {@code secOpsArtifacts} (carrying the {@code release_artifacts} map of what shipped), and a
+ * deterministic, capability-level {@code implementationEvidence} digest (functional-coverage status
+ * per acceptance criterion) — never the raw source bodies (see
+ * {@link ContextReducer.AgentRole#CONTROLLER}).
  *
  * <p>Emits a {@code verdict} (PASS / PASS_WITH_NOTES / REJECT) plus a {@code coverage_matrix} and a
  * {@code remediation_block}. A passing verdict advances the pipeline to COMPLETED; a REJECT routes

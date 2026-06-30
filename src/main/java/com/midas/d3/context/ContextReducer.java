@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.midas.d3.agent.implementation.ArchitectureSurfaceSlicer;
+import com.midas.d3.agent.implementation.ControllerEvidenceBuilder;
 import com.midas.d3.agent.implementation.ImplementationSurface;
 import com.midas.d3.agent.implementation.SourceMapPathFilter;
 import com.midas.d3.agent.implementation.SourceMapSlicer;
@@ -158,6 +159,24 @@ public class ContextReducer {
                                 .formatted(role, dep.key()));
             }
             artifacts.put(dep.key(), node);
+        }
+
+        // F3 — Controller with proof: augment the (file-name-only) feature_manifest with a deterministic,
+        // capability-level implementationEvidence digest (functional-coverage status per acceptance
+        // criterion) so the blocking Product-Owner gate can confirm coverage from machine-checked
+        // evidence rather than inferring it from file names. Kept at capability altitude on purpose: a
+        // finer per-file digest pushed the LLM gate into nitpicking body/field details it could not see
+        // and false-rejecting sound products. Raw source bodies are never sent. Attached only when it
+        // carries a real signal, so a shape with no checkable criteria behaves exactly as before.
+        if (role == AgentRole.CONTROLLER) {
+            JsonNode source = context.getGeneratedSourceCode();
+            if (source != null && source.isObject() && !source.isEmpty()) {
+                JsonNode evidence = ControllerEvidenceBuilder.build(
+                        source, context.getTechnicalSpec(), objectMapper);
+                if (evidence.path("functional_coverage").size() > 0) {
+                    artifacts.put("implementationEvidence", evidence);
+                }
+            }
         }
 
         int estimatedTokens = estimateTokens(context.getRawUserIdea(), artifacts);

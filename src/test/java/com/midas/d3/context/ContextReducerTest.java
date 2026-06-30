@@ -121,6 +121,39 @@ class ContextReducerTest {
     }
 
     @Test
+    void reduce_controller_withCheckableCriteria_includesImplementationEvidence() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"business_goal":"task api",
+                 "runtime_environment":{"deployment_target":"CLOUD_SERVICE","execution_model":"SERVER_SIDE"},
+                 "core_features":[{"id":"task","name":"Task",
+                   "acceptance_criteria":[{"id":"ctrl","description":"controller exists","must_exist":"TaskController.java"}]}]}
+                """);
+        var secOps = objectMapper.readTree("{\"release_artifacts\":{\"app.jar\":\"binary\"}}");
+        var manifest = objectMapper.readTree("""
+                [{"feature_id":"task","feature_name":"Task",
+                  "files":["src/main/java/com/example/TaskController.java"],"entry_points":["TaskController"]}]
+                """);
+        var source = objectMapper.readTree("""
+                {"src/main/java/com/example/TaskController.java":"public class TaskController {}"}
+                """);
+        var ctx = MidasContext.start("Build a task API", "run-001")
+                .withTechnicalSpec(spec)
+                .withSecOpsArtifacts(secOps)
+                .withFeatureManifest(manifest)
+                .withGeneratedSourceCode(source);
+
+        var view = reducer.reduce(ctx, ContextReducer.AgentRole.CONTROLLER);
+
+        assertThat(view.safeArtifacts()).containsKey("implementationEvidence");
+        JsonNode evidence = view.safeArtifacts().get("implementationEvidence");
+        // Capability-level only — the gated criterion is confirmed SATISFIED; no per-file code digest.
+        assertThat(evidence.has("file_api")).isFalse();
+        JsonNode ctrl = evidence.path("functional_coverage").get(0);
+        assertThat(ctrl.path("id").asText()).isEqualTo("task:ctrl");
+        assertThat(ctrl.path("status").asText()).isEqualTo("SATISFIED");
+    }
+
+    @Test
     void reduce_controller_missingFeatureManifest_throwsIllegalArgument() throws Exception {
         var spec = objectMapper.readTree("{\"business_goal\":\"test\"}");
         var secOps = objectMapper.readTree("{\"release_artifacts\":{}}");

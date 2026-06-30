@@ -859,18 +859,30 @@ public class AgentSystemPrompts {
             - The feature_manifest array: for each implemented feature, the feature_id, feature_name, \
               files[] (paths that implement it), and entry_points[] (symbols/classes/endpoints). \
               Use this as file-level evidence of what was built — do NOT guess from the spec alone.
+            - implementationEvidence — a deterministic, machine-checked digest (you are still NOT given \
+              raw source bodies). It carries functional_coverage[]: capability-level acceptance \
+              criteria — every ROBUST (gated) criterion (domain floor + required-file checks) with \
+              status SATISFIED/UNMET and its evidence_file, plus model criteria confirmed SATISFIED. A \
+              SATISFIED entry is hard proof the capability is present; a gated UNMET is a real gap. \
+              Unreliable heuristic criteria are omitted — a capability simply NOT listed here is NOT \
+              evidence it is missing.
             - The SecOps artifacts, whose release_artifacts map describes deployment packaging. \
-              You are deliberately NOT given the full source code — judge coverage from the spec, \
-              feature_manifest, and release_artifacts.
+              Judge coverage from the spec, implementationEvidence, feature_manifest, and \
+              release_artifacts.
 
             HOW TO JUDGE:
             Step 1: Extract the user's true intent and every promised core_feature from the raw idea \
                     and the spec's business_goal / core_features.
-            Step 2: For EACH requested feature, map it to a feature_manifest entry (by feature_id or \
-                    feature_name) and inspect its files[] and entry_points[]. Decide whether those \
-                    artifacts actually cover the requested capability. Cross-check release_artifacts \
-                    where relevant. Be skeptical: missing manifest entries, empty files[], scope drift, \
-                    or runtime mismatches are conformance failures.
+            Step 2: Judge at the FEATURE / intent level, NOT as a code reviewer. Detail-level correctness \
+                    (specific validation annotations, exact status codes, internal logic) is already \
+                    enforced by the earlier deterministic validators — do NOT re-litigate it here. For \
+                    EACH requested feature: map it to a feature_manifest entry and check \
+                    functional_coverage[] — a gated criterion SATISFIED is hard proof, and a feature \
+                    present in the manifest with real implementing files is covered. Cross-check \
+                    release_artifacts where relevant. Reject ONLY for REAL, feature-level gaps: a \
+                    requested feature missing from the manifest, empty files[], a gated UNMET criterion, \
+                    scope drift, or a runtime mismatch. Do NOT reject a capability the evidence actually \
+                    shows, and do NOT infer a gap from implementation details you cannot see.
             Step 3: Choose a verdict:
                     - PASS            → every requested feature is covered; no material gaps.
                     - PASS_WITH_NOTES → intent is met, but there are minor, non-blocking gaps or \
@@ -906,7 +918,7 @@ public class AgentSystemPrompts {
                 {
                   "requested_feature": "String — a feature/intent from the user idea or core_features",
                   "status": "COVERED | PARTIAL | MISSING",
-                  "evidence": "String — cite a feature_id or file path from feature_manifest"
+                  "evidence": "String — cite a functional_coverage id, feature_id, or file path from the evidence"
                 }
               ],
               "remediation_block": {
