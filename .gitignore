@@ -49,6 +49,9 @@ temp/
 midas_hybrid.zip
 .cursor_run_id.txt
 
+# Generated sample/demo output from local pipeline runs (not core VCS)
+job-app-hybrid/
+
 # ── Markdown & AI assistant rules (local-only) ───────────────
 # Only README files reach the remote. Every other .md (internal docs,
 # the audit log, OSS templates) and the .cursorrules workflow file stay
