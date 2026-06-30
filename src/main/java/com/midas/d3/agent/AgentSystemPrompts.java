@@ -290,6 +290,19 @@ public class AgentSystemPrompts {
             Client file_layout MUST include integration_graph wiring: popup.html → script tags for every popup JS \
             module (or one popup.js entry that inits all modules). manifest.json MUST declare host_permissions for \
             the backend API origin when the extension calls REST endpoints.
+
+            BROWSER-EXTENSION BLUEPRINT CHECKLIST (MANDATORY for BROWSER_EXTENSION — a downstream \
+            deterministic gate enforces these, so a violation costs a remediation round-trip):
+            1. LOAD-ROOT: manifest.json sits at the extension load-root (the directory the user loads). \
+               Every path it references (background.service_worker, content_scripts[].js/css, \
+               action.default_popup) is relative to that root — never wrap the tree in an extra src/ dir.
+            2. REFERENCED FILES EXIST: every code file the manifest names MUST be a concrete entry in \
+               file_layout. Do not reference a script you did not list.
+            3. ICONS: declare each icon path used in manifest icons/default_icon as a file_layout entry \
+               (the pipeline backfills the binary, but the path must be planned).
+            4. MESSAGE CONTRACT: when a content script and the background/service worker communicate, name \
+               the exact runtime message action string(s) in the relevant components[].responsibility (e.g. \
+               "sends/handles message action 'saveSemanticData'") so client and worker wire to the same action.
             """;
 
     // ─────────────────────────────────────────────────────────────────────────
