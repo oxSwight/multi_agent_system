@@ -1,0 +1,76 @@
+# ── local-dev profile — frictionless NATIVE run (no Docker) ───────────────────
+#
+# Activate:  .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local-dev"
+#
+# What it wires:
+#   • Database : in-memory H2 (schema built by Hibernate; Flyway off — its migrations are
+#                PostgreSQL-specific and would fail on H2).
+#   • LLM      : local Ollama on the host (localhost:11434, NOT host.docker.internal).
+#   • Auth     : a dev JWT is minted and printed at startup by LocalDevTokenPrinter (this profile
+#                only). The secret below is a throwaway dev key (≥256-bit, and different from the
+#                shipped insecure default) so JwtService's production-grade secret check passes.
+#   • Schedulers (evolution / reaper) are disabled to keep a local session quiet.
+# ──────────────────────────────────────────────────────────────────────────────
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:midas;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    # Explicitly override the base PostgreSQL dialect so Hibernate targets H2 and builds the schema
+    # itself. Keep this line: a profile MERGES over application.yml, so removing it does NOT fall back
+    # to auto-detection — the base PostgreSQLDialect would apply to the H2 datasource and break DDL.
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    open-in-view: false
+
+  flyway:
+    enabled: false
+
+midas:
+  security:
+    jwt:
+      # Dev-only throwaway key — safe to commit, never use outside local-dev.
+      secret: 0JlGjjk5DeMXExuHpt0KQKMdYU8mtMu8EqpRnK4uS86A++su3bAlX6xnZg3b3izA
+
+  # Local Ollama (native host) — OpenAI-compatible NOUS client.
+  llm:
+    client-type: NOUS
+  nous:
+    base-url: http://localhost:11434
+    api-key: ollama-local-dev
+    model: qwen2.5-coder:14b
+    timeout-seconds: 300
+    http-max-retries: 2
+    routing:
+      enabled: true
+      default-model: qwen2.5-coder:14b
+      agents:
+        SystemAnalystAgent: qwen2.5-coder:14b
+        SoftwareArchitectAgent: qwen2.5-coder:14b
+        ImplementationEngineerAgent: qwen2.5-coder:14b
+        QaAutomationAgent: qwen2.5-coder:14b
+        SecOpsAgent: qwen2.5-coder:14b
+        ControllerAgent: qwen2.5-coder:14b
+
+  # Keep the local session focused — no background LLM spend from scheduled cycles.
+  evolution:
+    cron: '-'
+  reaper:
+    cron: '-'
+
+  telegram:
+    enabled: false
+
+logging:
+  level:
+    com.midas.d3: INFO
+    org.springframework.statemachine: INFO
+    # Silence Hibernate HHH90000025 ("H2Dialect need not be set explicitly"): the explicit dialect
+    # above is intentional (it overrides the base Postgres dialect), so the notice is just noise here.
+    org.hibernate.orm.deprecation: ERROR

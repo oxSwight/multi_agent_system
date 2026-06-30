@@ -163,11 +163,16 @@
             <version>${spring-statemachine.version}</version>
             <scope>test</scope>
         </dependency>
-        <!-- H2 in-memory database for repository slice tests and full-context tests -->
+        <!--
+            H2 in-memory database. Used by repository slice tests and full-context tests, and by the
+            `local-dev` profile (application-local-dev.yml) for a frictionless native run with no
+            external PostgreSQL. `runtime` scope keeps it off the compile classpath while making the
+            driver available to `mvnw spring-boot:run`.
+        -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <scope>runtime</scope>
         </dependency>
         <!-- Spring Security test utilities (@WithMockUser, SecurityMockMvcRequestPostProcessors) -->
         <dependency>
