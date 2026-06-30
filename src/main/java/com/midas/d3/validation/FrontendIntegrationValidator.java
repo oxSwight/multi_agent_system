@@ -222,10 +222,16 @@ final class FrontendIntegrationValidator {
 
         Set<String> htmlIds = collectHtmlIds(generatedSource);
         if (!htmlIds.isEmpty()) {
+            // A test may legitimately build its own mock DOM: a content script runs against arbitrary
+            // external pages, so its test creates synthetic inputs with realistic ids (firstName,
+            // email, …) that are NOT in the extension's own HTML. Accept any id the test itself
+            // defines; flag only an id present in neither the generated HTML nor the test's own setup —
+            // the real "asserts on a popup element that does not exist" drift.
+            Set<String> testDefinedIds = collectDefinedIds(testContent);
             for (String queriedId : collectQueriedIds(testContent)) {
-                if (!htmlIds.contains(queriedId)) {
+                if (!htmlIds.contains(queriedId) && !testDefinedIds.contains(queriedId)) {
                     violations.add("Test [" + testPath + "] queries element id ['" + queriedId
-                            + "'] which does not exist in any generated HTML file.");
+                            + "'] which exists in neither any generated HTML file nor the test's own DOM setup.");
                 }
             }
         }
@@ -274,6 +280,26 @@ final class FrontendIntegrationValidator {
                         + "by [" + htmlPath + "] — wire it via <script src> or a single entry script that "
                         + "imports/inits all popup modules.");
             }
+        }
+    }
+
+    /**
+     * The <b>file-local</b> content rules (no cross-file context needed): forbidden browser dialogs in
+     * a non-worker JS module, and the box-sizing reset in a popup stylesheet. Exposed so the per-file
+     * generation loop can enforce them at generation time — where a violation drives an immediate,
+     * targeted retry of that one file with feedback — instead of only at the assembled-envelope gate,
+     * where the same violation dead-ends the whole pass. Identical rules, applied earlier.
+     */
+    static void validateSingleFileContent(String path, String content, List<String> violations) {
+        if (path == null || content == null) {
+            return;
+        }
+        String lower = path.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".js") && !isServiceWorkerScript(lower)) {
+            validateExtensionJs(path, content, violations);
+        }
+        if (lower.endsWith(".css") && lower.contains("popup")) {
+            validatePopupCss(path, content, violations);
         }
     }
 
@@ -467,6 +493,20 @@ final class FrontendIntegrationValidator {
             while (matcher.find()) {
                 ids.add(matcher.group(1));
             }
+        }
+        return ids;
+    }
+
+    /** Ids the given source/test defines itself — via an {@code id="x"} literal or a JS id assignment. */
+    private static Set<String> collectDefinedIds(String content) {
+        Set<String> ids = new HashSet<>();
+        Matcher html = HTML_ID.matcher(content);
+        while (html.find()) {
+            ids.add(html.group(1));
+        }
+        Matcher js = JS_DEFINED_ID.matcher(content);
+        while (js.find()) {
+            ids.add(js.group(1));
         }
         return ids;
     }

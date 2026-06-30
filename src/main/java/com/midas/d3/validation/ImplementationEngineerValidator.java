@@ -88,6 +88,10 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
 
         List<String> violations = new java.util.ArrayList<>();
         rejectPlaceholders(expectedPath, content, violations);
+        // Enforce the file-local frontend content rules (no alert()/prompt(); popup CSS box-sizing
+        // reset) here, per file, so a violation drives a targeted regeneration of THIS file rather
+        // than surfacing only at the assembled gate, where it would dead-end the whole pass.
+        FrontendIntegrationValidator.validateSingleFileContent(expectedPath, content, violations);
         if (!violations.isEmpty()) {
             throw new ValidationHookException(agentName(), stage(), violations);
         }

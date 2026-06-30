@@ -196,6 +196,36 @@ class PerFileCodeGenerationStrategyTest {
     }
 
     @Test
+    @DisplayName("assembled-gate failure self-heals: regenerates the offending file and recovers")
+    void generatePass_assembledFailure_selfHeals() throws Exception {
+        stubModelPolicy();
+        JsonNode architecture = objectMapper.readTree("""
+                {"file_layout":["index.html","app.js"]}
+                """);
+        AgentContextView view = viewWithArchitecture(architecture);
+        MidasContext ctx = MidasContext.start("extension", "run-heal")
+                .withTechnicalSpec(objectMapper.readTree("""
+                        {"runtime_environment":{"execution_model":"HYBRID"}}
+                        """));
+
+        // app.js (round 0) queries an element id that no generated HTML defines -> assembled DOM-id
+        // gate fails; the regenerated app.js (heal round) queries the real id -> passes.
+        when(llmClient.call(any())).thenReturn(
+                LlmCallResult.ofText("```html\n<html><body><div id=\"a\"></div></body></html>\n```"),
+                LlmCallResult.ofText("```javascript\ndocument.getElementById('ghost');\n```"),
+                LlmCallResult.ofText("```javascript\ndocument.getElementById('a');\n```"));
+
+        PerFileCodeGenerationStrategy.PassResult result = strategy.generatePass(
+                ctx, view, ImplementationSurface.CLIENT,
+                AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT,
+                "ImplementationEngineerClient", validator, true);
+
+        // 2 initial files + 1 targeted regeneration of app.js.
+        verify(llmClient, times(3)).call(any(LlmCallRequest.class));
+        assertThat(result.sourceFiles().get("app.js").asText()).contains("getElementById('a')");
+    }
+
+    @Test
     @DisplayName("resolveFileLayout reads paths from architectureDesign artifact")
     void resolveFileLayout_readsArchitecture() throws Exception {
         JsonNode architecture = objectMapper.readTree("""

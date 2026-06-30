@@ -166,6 +166,29 @@ class FrontendIntegrationValidatorTest {
     }
 
     @Test
+    void validateTestAgainstSource_contentScriptMockDomIds_areAccepted() throws Exception {
+        // A content-script test builds its own synthetic page DOM with realistic field ids that do not
+        // (and should not) exist in the extension's own HTML — these must not be flagged.
+        ObjectNode generatedSource = objectMapper.createObjectNode();
+        generatedSource.put("frontend/src/content_script.js",
+                "export function scan(){ return document.querySelectorAll('input'); }");
+        generatedSource.put("frontend/src/popup.html", "<button id=\"fill-btn\"></button>");
+
+        String testContent = """
+                import { scan } from '../src/content_script.js';
+                document.body.innerHTML = '<form><input id="firstName"><input id="email"></form>';
+                const a = document.getElementById('firstName');
+                const b = document.getElementById('email');
+                expect(scan()).toBeTruthy();
+                """;
+
+        FrontendIntegrationValidator.validateTestAgainstSource(
+                "frontend/__tests__/content_script.test.js", testContent, generatedSource, null, violations);
+
+        assertThat(violations).noneMatch(v -> v.contains("firstName") || v.contains("email"));
+    }
+
+    @Test
     void validateTestAgainstSource_wrongApiPath_isRejected() throws Exception {
         ObjectNode generatedSource = objectMapper.createObjectNode();
         generatedSource.put("frontend/src/file_uploader.js", "export function upload() {}");

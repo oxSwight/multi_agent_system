@@ -22,8 +22,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Iterates {@code architectureDesign.file_layout} and generates one file per LLM call,
@@ -81,7 +83,7 @@ public class PerFileCodeGenerationStrategy {
             String path = filePaths.get(i);
             FileGenerationResult fileResult = generateSingleFile(
                     context, view, surface, path, sourceFiles, filePaths, i + 1, filePaths.size(),
-                    systemPrompt, llmAgentName, modelOverride, validator);
+                    systemPrompt, llmAgentName, modelOverride, validator, null);
 
             sourceFiles.put(path, fileResult.content());
             totalAttempts += fileResult.attemptsUsed();
@@ -91,36 +93,80 @@ public class PerFileCodeGenerationStrategy {
             lastFinishReason = fileResult.finishReason();
         }
 
-        JsonNode featureManifest = FeatureManifestBuilder.build(
-                context.getTechnicalSpec(), sourceFiles, objectMapper, hybridPartialPass, surface);
-        ObjectNode envelope = objectMapper.createObjectNode();
-        envelope.set("source_files", sourceFiles);
-        envelope.set("feature_manifest", featureManifest);
+        // Assembled-envelope gate with bounded self-healing. Each round first repairs mechanical
+        // reference wiring deterministically (ExtensionWiringNormalizer — a popup <script src> or a
+        // manifest code reference pointing a directory away, an unwired same-dir module). A remaining
+        // cross-file defect the normalizer cannot fix (a hallucinated message action, …) triggers a
+        // targeted regeneration of the file(s) the violations name — with the violations as feedback —
+        // instead of dead-ending the whole pass at a critical failure.
+        JsonNode architecture = view.safeArtifacts().get("architectureDesign");
+        JsonNode normalizedSource = null;
+        JsonNode featureManifest = null;
+        ValidationHookException lastFailure = null;
 
-        try {
-            String json = objectMapper.writeValueAsString(envelope);
-            JsonNode architecture = view.safeArtifacts().get("architectureDesign");
-            if (hybridPartialPass) {
-                validator.validate(json);
-            } else {
-                validator.validateWithTechnicalSpec(json, context.getTechnicalSpec(), architecture);
+        for (int healRound = 0; healRound <= AssembledHealingSupport.MAX_HEAL_ROUNDS; healRound++) {
+            normalizedSource = ExtensionWiringNormalizer.normalize(sourceFiles, objectMapper);
+            featureManifest = FeatureManifestBuilder.build(
+                    context.getTechnicalSpec(), normalizedSource, objectMapper, hybridPartialPass, surface);
+            ObjectNode envelope = objectMapper.createObjectNode();
+            envelope.set("source_files", normalizedSource);
+            envelope.set("feature_manifest", featureManifest);
+            try {
+                String json = objectMapper.writeValueAsString(envelope);
+                if (hybridPartialPass) {
+                    validator.validate(json);
+                } else {
+                    validator.validateWithTechnicalSpec(json, context.getTechnicalSpec(), architecture);
+                }
+                lastFailure = null;
+                break;
+            } catch (ValidationHookException e) {
+                lastFailure = e;
+                List<String> offending = AssembledHealingSupport.offendingPaths(e.getViolations(), keysOf(sourceFiles));
+                if (healRound == AssembledHealingSupport.MAX_HEAL_ROUNDS || offending.isEmpty()) {
+                    break;
+                }
+                String feedback = AssembledHealingSupport.healingFeedback(e.getViolations());
+                log.warn("[PerFileCodeGenerationStrategy] assembled gate failed (heal {}/{}) — regenerating {} for run [{}].",
+                        healRound + 1, AssembledHealingSupport.MAX_HEAL_ROUNDS, offending, context.getPipelineRunId());
+                for (String path : offending) {
+                    FileGenerationResult r = generateSingleFile(
+                            context, view, surface, path, sourceFiles, filePaths,
+                            Math.max(1, filePaths.indexOf(path) + 1), filePaths.size(),
+                            systemPrompt, llmAgentName, modelOverride, validator, feedback);
+                    sourceFiles.put(path, r.content());
+                    totalAttempts += r.attemptsUsed();
+                    totalPromptTokens += r.promptTokens();
+                    totalCompletionTokens += r.completionTokens();
+                    modelId = r.modelId();
+                    lastFinishReason = r.finishReason();
+                }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                throw new IllegalStateException("Failed to serialize assembled implementation envelope.", e);
             }
-        } catch (ValidationHookException e) {
+        }
+
+        if (lastFailure != null) {
             throw new AgentExecutionException(
                     llmAgentName,
                     ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
                     totalAttempts,
-                    "Assembled envelope rejected after per-file generation: "
-                            + AgentRetryPolicy.formatViolationsForFeedback(e));
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize assembled implementation envelope.", e);
+                    "Assembled envelope rejected after per-file generation and "
+                            + AssembledHealingSupport.MAX_HEAL_ROUNDS + " self-healing round(s): "
+                            + AgentRetryPolicy.formatViolationsForFeedback(lastFailure));
         }
 
         LlmCallObservability.logExecutionSummary(
                 context.getPipelineRunId(), llmAgentName,
                 totalPromptTokens, totalCompletionTokens, lastFinishReason);
-        return new PassResult(sourceFiles, featureManifest, totalAttempts,
+        return new PassResult(normalizedSource, featureManifest, totalAttempts,
                 totalPromptTokens, totalCompletionTokens, modelId);
+    }
+
+    private static Set<String> keysOf(ObjectNode node) {
+        Set<String> keys = new LinkedHashSet<>();
+        node.fieldNames().forEachRemaining(keys::add);
+        return keys;
     }
 
     static List<String> resolveFileLayout(AgentContextView view) {
@@ -153,9 +199,13 @@ public class PerFileCodeGenerationStrategy {
                                                     String systemPrompt,
                                                     String llmAgentName,
                                                     String modelOverride,
-                                                    ImplementationEngineerValidator validator) {
+                                                    ImplementationEngineerValidator validator,
+                                                    String healingFeedback) {
         String baseUserMessage = buildPerFileUserMessage(
                 view, surface, targetPath, alreadyGenerated, allPaths, fileIndex, totalFiles);
+        if (healingFeedback != null && !healingFeedback.isBlank()) {
+            baseUserMessage = baseUserMessage + "\n\n" + healingFeedback;
+        }
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;

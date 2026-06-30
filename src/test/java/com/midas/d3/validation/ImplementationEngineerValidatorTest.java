@@ -296,6 +296,29 @@ class ImplementationEngineerValidatorTest {
     }
 
     @Test
+    void validateSingleFileOutput_forbiddenBrowserDialog_throwsPerFile() {
+        // prompt()/alert() are a file-local rule — caught per file so the retry loop can fix this one
+        // file, rather than dead-ending the whole pass at the assembled gate.
+        assertThatThrownBy(() -> validator.validateSingleFileOutput("""
+                ```javascript
+                function ask() { return prompt('name?'); }
+                ```
+                """, "frontend/src/form.js"))
+                .isInstanceOf(ValidationHookException.class)
+                .hasMessageContaining("prompt()");
+    }
+
+    @Test
+    void validateSingleFileOutput_cleanJs_returnsContent() throws Exception {
+        String content = validator.validateSingleFileOutput("""
+                ```javascript
+                document.getElementById('fill').addEventListener('click', () => {});
+                ```
+                """, "frontend/src/form.js");
+        assertThat(content).contains("addEventListener");
+    }
+
+    @Test
     void validateSingleFileOutput_jsonEnvelope_throws() {
         assertThatThrownBy(() -> validator.validateSingleFileOutput("""
                 {"path":"src/App.java","content":"class App {}"}

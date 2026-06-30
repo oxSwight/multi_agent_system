@@ -23,9 +23,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Iterates test paths from {@code architectureDesign.file_layout} and generates one test file per LLM call,
@@ -82,7 +84,7 @@ public class PerFileTestGenerationStrategy {
             String path = testPaths.get(i);
             TestFileGenerationResult fileResult = generateSingleTestFile(
                     context, view, surface, path, testFiles, testPaths, i + 1, testPaths.size(),
-                    systemPrompt, llmAgentName, modelOverride, validator);
+                    systemPrompt, llmAgentName, modelOverride, validator, null);
 
             testFiles.put(path, fileResult.content());
             totalAttempts += fileResult.attemptsUsed();
@@ -92,26 +94,66 @@ public class PerFileTestGenerationStrategy {
             lastFinishReason = fileResult.finishReason();
         }
 
-        try {
-            JsonNode generatedSource = view.safeArtifacts().get("generatedSourceCode");
-            JsonNode architecture = view.safeArtifacts().get("architectureDesign");
-            validator.validateWithGeneratedSource(
-                    objectMapper.writeValueAsString(testFiles), generatedSource, architecture);
-        } catch (ValidationHookException e) {
+        // Assembled test-map gate with bounded self-healing: a test that exercises a phantom module or
+        // fabricated element ids is a defect confined to that one test file, so regenerate only the
+        // file(s) the violations name (with the violations as feedback) rather than dead-ending the
+        // whole pass at a critical failure.
+        JsonNode generatedSource = view.safeArtifacts().get("generatedSourceCode");
+        JsonNode architecture = view.safeArtifacts().get("architectureDesign");
+        ValidationHookException lastFailure = null;
+
+        for (int healRound = 0; healRound <= AssembledHealingSupport.MAX_HEAL_ROUNDS; healRound++) {
+            try {
+                validator.validateWithGeneratedSource(
+                        objectMapper.writeValueAsString(testFiles), generatedSource, architecture);
+                lastFailure = null;
+                break;
+            } catch (ValidationHookException e) {
+                lastFailure = e;
+                List<String> offending = AssembledHealingSupport.offendingPaths(e.getViolations(), keysOf(testFiles));
+                if (healRound == AssembledHealingSupport.MAX_HEAL_ROUNDS || offending.isEmpty()) {
+                    break;
+                }
+                String feedback = AssembledHealingSupport.healingFeedback(e.getViolations());
+                log.warn("[PerFileTestGenerationStrategy] assembled test map failed (heal {}/{}) — regenerating {} for run [{}].",
+                        healRound + 1, AssembledHealingSupport.MAX_HEAL_ROUNDS, offending, context.getPipelineRunId());
+                for (String path : offending) {
+                    TestFileGenerationResult r = generateSingleTestFile(
+                            context, view, surface, path, testFiles, testPaths,
+                            Math.max(1, testPaths.indexOf(path) + 1), testPaths.size(),
+                            systemPrompt, llmAgentName, modelOverride, validator, feedback);
+                    testFiles.put(path, r.content());
+                    totalAttempts += r.attemptsUsed();
+                    totalPromptTokens += r.promptTokens();
+                    totalCompletionTokens += r.completionTokens();
+                    modelId = r.modelId();
+                    lastFinishReason = r.finishReason();
+                }
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("Failed to serialize assembled test map.", e);
+            }
+        }
+
+        if (lastFailure != null) {
             throw new AgentExecutionException(
                     llmAgentName,
                     ContextReducer.AgentRole.QA_ENGINEER,
                     totalAttempts,
-                    "Assembled test map rejected after per-file generation: "
-                            + AgentRetryPolicy.formatViolationsForFeedback(e));
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize assembled test map.", e);
+                    "Assembled test map rejected after per-file generation and "
+                            + AssembledHealingSupport.MAX_HEAL_ROUNDS + " self-healing round(s): "
+                            + AgentRetryPolicy.formatViolationsForFeedback(lastFailure));
         }
 
         LlmCallObservability.logExecutionSummary(
                 context.getPipelineRunId(), llmAgentName,
                 totalPromptTokens, totalCompletionTokens, lastFinishReason);
         return new PassResult(testFiles, totalAttempts, totalPromptTokens, totalCompletionTokens, modelId);
+    }
+
+    private static Set<String> keysOf(ObjectNode node) {
+        Set<String> keys = new LinkedHashSet<>();
+        node.fieldNames().forEachRemaining(keys::add);
+        return keys;
     }
 
     static List<String> resolveTestFileLayout(AgentContextView view) {
@@ -228,9 +270,13 @@ public class PerFileTestGenerationStrategy {
                                                             String systemPrompt,
                                                             String llmAgentName,
                                                             String modelOverride,
-                                                            QaEngineerValidator validator) {
+                                                            QaEngineerValidator validator,
+                                                            String healingFeedback) {
         String baseUserMessage = buildPerTestFileUserMessage(
                 view, surface, targetPath, alreadyGenerated, allPaths, fileIndex, totalFiles);
+        if (healingFeedback != null && !healingFeedback.isBlank()) {
+            baseUserMessage = baseUserMessage + "\n\n" + healingFeedback;
+        }
         String lastError = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
