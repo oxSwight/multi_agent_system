@@ -312,7 +312,7 @@ public class PerFileTestGenerationStrategy {
             sb.append("UPSTREAM ARTIFACTS:\n");
             artifacts.forEach((key, node) ->
                     sb.append("## ").append(key).append("\n")
-                      .append(node.toPrettyString()).append("\n\n"));
+                      .append(node.toString()).append("\n\n"));
         }
 
         sb.append("TEST GENERATION PROGRESS: ").append(fileIndex).append(" of ").append(totalFiles).append("\n");
@@ -327,10 +327,12 @@ public class PerFileTestGenerationStrategy {
         sb.append("\n");
 
         if (!alreadyGenerated.isEmpty()) {
-            sb.append("ALREADY GENERATED TEST FILES (for import/reference consistency only):\n");
+            // FinOps: collapse already-generated sibling tests to their public API (signatures/exports)
+            // rather than re-sending full bodies — keeps per-file prompt growth linear, not O(N²).
+            sb.append("ALREADY GENERATED TEST FILES (public API only — signatures for import/reference; bodies omitted):\n");
             alreadyGenerated.fields().forEachRemaining(entry ->
                     sb.append("## ").append(entry.getKey()).append("\n")
-                      .append(entry.getValue().asText()).append("\n\n"));
+                      .append(SymbolTableExtractor.summarize(entry.getValue().asText())).append("\n\n"));
         }
 
         sb.append("TARGET TEST FILE: ").append(targetPath).append("\n\n");

@@ -237,7 +237,7 @@ public class PerFileCodeGenerationStrategy {
             sb.append("UPSTREAM ARTIFACTS:\n");
             artifacts.forEach((key, node) ->
                     sb.append("## ").append(key).append("\n")
-                      .append(node.toPrettyString()).append("\n\n"));
+                      .append(node.toString()).append("\n\n"));
         }
 
         sb.append("FILE GENERATION PROGRESS: ").append(fileIndex).append(" of ").append(totalFiles).append("\n");
@@ -252,10 +252,13 @@ public class PerFileCodeGenerationStrategy {
         sb.append("\n");
 
         if (!alreadyGenerated.isEmpty()) {
-            sb.append("ALREADY GENERATED FILES (for import/reference consistency only):\n");
+            // FinOps: send only the PUBLIC API (signatures/exports) of already-generated siblings,
+            // not their full bodies. Consumers need the interface to import/reference, not the
+            // implementation — this keeps per-file prompt growth linear instead of O(N²).
+            sb.append("ALREADY GENERATED FILES (public API only — signatures for import/reference; bodies omitted):\n");
             alreadyGenerated.fields().forEachRemaining(entry ->
                     sb.append("## ").append(entry.getKey()).append("\n")
-                      .append(entry.getValue().asText()).append("\n\n"));
+                      .append(SymbolTableExtractor.summarize(entry.getValue().asText())).append("\n\n"));
         }
 
         sb.append("TARGET FILE: ").append(targetPath).append("\n\n");

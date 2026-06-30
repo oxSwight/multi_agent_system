@@ -226,7 +226,7 @@ public class AgentOrchestrationService {
             sb.append("UPSTREAM CONTEXT:\n");
             artifacts.forEach((key, node) -> {
                 sb.append("## ").append(toLabel(key)).append("\n");
-                sb.append(prettyPrint(node)).append("\n\n");
+                sb.append(node.toString()).append("\n\n");
             });
         }
 
@@ -238,14 +238,6 @@ public class AgentOrchestrationService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private String prettyPrint(JsonNode node) {
-        try {
-            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(node);
-        } catch (Exception e) {
-            return node.toString();
-        }
-    }
 
     private String toLabel(String artifactKey) {
         return switch (artifactKey) {

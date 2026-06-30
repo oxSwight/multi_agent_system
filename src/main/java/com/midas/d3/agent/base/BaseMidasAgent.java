@@ -305,7 +305,7 @@ public abstract class BaseMidasAgent {
             sb.append("UPSTREAM ARTIFACTS:\n");
             artifacts.forEach((key, node) ->
                     sb.append("## ").append(key).append("\n")
-                      .append(node.toPrettyString()).append("\n\n"));
+                      .append(node.toString()).append("\n\n"));
         }
 
         sb.append("TASK: Produce the output for the [")
