@@ -35,6 +35,18 @@ public final class PipelineContextKeys {
      */
     public static final String PENDING_STAGE = "PENDING_STAGE";
 
+    /**
+     * ExtendedState key: {@code Boolean} latch set the first time
+     * {@link com.midas.d3.statemachine.action.PipelineCompletionAction} runs for a run. The
+     * COMPLETED state is reached via a choice transition whose action ({@code StoreArtifactAction})
+     * already invokes completion <em>and</em> the {@code stateEntry(COMPLETED, …)} action fires on
+     * entry — so completion executes twice. This latch makes delivery idempotent: the second
+     * invocation is a no-op, so the artifact ZIP is packaged and sent exactly once. Cleared by
+     * {@link com.midas.d3.statemachine.action.InitContextAction} on START so a reused machine can
+     * deliver again.
+     */
+    public static final String ARTIFACT_DELIVERY_INITIATED = "ARTIFACT_DELIVERY_INITIATED";
+
     // ── Message header keys ──────────────────────────────────────────────────
 
     /** Header: raw user idea string. Required on {@link MidasEvent#START} messages. */

@@ -57,6 +57,8 @@ public class InitContextAction implements Action<MidasState, MidasEvent> {
 
         var vars = context.getExtendedState().getVariables();
         vars.put(PipelineContextKeys.MIDAS_CONTEXT, midasContext);
+        // Clear the completion latch so a machine reused via RESET → START can deliver again.
+        vars.remove(PipelineContextKeys.ARTIFACT_DELIVERY_INITIATED);
         if (autoMode) {
             vars.put(PipelineContextKeys.AUTO_MODE_KEY, Boolean.TRUE);
         }

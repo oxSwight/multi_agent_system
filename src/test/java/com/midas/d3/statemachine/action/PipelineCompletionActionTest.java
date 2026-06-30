@@ -127,6 +127,32 @@ class PipelineCompletionActionTest {
         assertThat(fakeZip).doesNotExist();
     }
 
+    // ── Idempotency: double invocation delivers exactly once ─────────────────
+
+    @Test
+    @DisplayName("Idempotent: two execute() calls (choice action + COMPLETED entry) package and send once")
+    void execute_calledTwice_deliversExactlyOnce() throws IOException {
+        long chatId = 555000111L;
+        MidasContext ctx = MidasContext.start("Idempotent idea", "run-idem-001")
+                .withTelegramChatId(chatId);
+        stubContextVars(ctx);
+        when(telegramBotProvider.getIfAvailable()).thenReturn(telegramBot);
+
+        File fakeZip = File.createTempFile("idem_artifact", ".zip");
+        when(packagingService.packageResults(ctx)).thenReturn(fakeZip);
+        when(telegramBot.sendArtifactDocument(eq(chatId), any(), anyString())).thenReturn(true);
+
+        // Mirrors production: StoreArtifactAction invokes completion, then the COMPLETED
+        // stateEntry action invokes it again on the same ExtendedState.
+        action.execute(stateContext);
+        action.execute(stateContext);
+
+        verify(packagingService, times(1)).packageResults(ctx);
+        verify(telegramBot, times(1)).sendArtifactDocument(eq(chatId), any(), anyString());
+
+        fakeZip.delete();
+    }
+
     // ── Error path: packaging IOException ────────────────────────────────────
 
     @Test

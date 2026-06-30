@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -85,6 +86,20 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
         }
 
         String runId = ctx.getPipelineRunId();
+
+        // Idempotency latch: COMPLETED is entered via a choice transition whose action
+        // (StoreArtifactAction) already invokes this completion, AND this same action is
+        // registered as the COMPLETED stateEntry action — so execute() is called twice on a
+        // single completion. Without this guard the artifact ZIP is packaged and delivered twice
+        // (the user sees two identical archive messages). Map.put returns the previous value, so a
+        // non-null/true previous means delivery was already initiated → no-op. Both invocations run
+        // sequentially on the state-machine thread, so the check-and-set needs no extra locking.
+        Map<Object, Object> vars = context.getExtendedState().getVariables();
+        if (Boolean.TRUE.equals(vars.put(PipelineContextKeys.ARTIFACT_DELIVERY_INITIATED, Boolean.TRUE))) {
+            log.debug("[PipelineCompletionAction] Artifact delivery already initiated for run [{}] — "
+                    + "skipping duplicate completion.", runId);
+            return;
+        }
 
         if (ctx.getTelegramChatId() == null) {
             // REST-initiated run: package artifacts locally, persist path, skip Telegram delivery.
