@@ -128,4 +128,58 @@ class BuildVerificationServiceTest {
 
         assertThat(filesSeen.get()).isEqualTo(3);
     }
+
+    // ── MV3 extension surface (structural, toolchain-free) ────────────────────
+
+    @Test
+    @DisplayName("Pure-JS MV3 extension with a dangling code reference → FAILED structurally (no executor)")
+    void extensionOnly_danglingReference_failsStructurally() throws Exception {
+        AtomicReference<Boolean> called = new AtomicReference<>(false);
+        BuildExecutor fake = (dir, tool) -> { called.set(true); return BuildReport.success(tool, "x"); };
+        var service = new BuildVerificationService(fake, mapper);
+
+        // background.js is referenced by the manifest but never generated.
+        BuildReport report = service.verify(contextWithSource("""
+                {"manifest.json": "{\\"manifest_version\\": 3, \\"background\\": {\\"service_worker\\": \\"background.js\\"}}"}
+                """));
+
+        assertThat(report.success()).isFalse();
+        assertThat(called.get()).as("no toolchain executor for a structural surface").isFalse();
+        assertThat(report.diagnostics()).anyMatch(d -> d.message().contains("background.js"));
+    }
+
+    @Test
+    @DisplayName("Pure-JS MV3 extension whose references all resolve → SUCCESS")
+    void extensionOnly_resolvedReferences_passes() throws Exception {
+        BuildExecutor fake = (dir, tool) -> { throw new AssertionError("executor must not run for a structural surface"); };
+        var service = new BuildVerificationService(fake, mapper);
+
+        BuildReport report = service.verify(contextWithSource("""
+                {"manifest.json": "{\\"manifest_version\\": 3, \\"background\\": {\\"service_worker\\": \\"background.js\\"}}",
+                 "background.js": "self.addEventListener('install', () => {});"}
+                """));
+
+        assertThat(report.success()).isTrue();
+        assertThat(report.summary()).contains("structure verified");
+    }
+
+    @Test
+    @DisplayName("Hybrid: backend compiles but frontend extension is broken → aggregate FAILED")
+    void hybrid_backendOkButExtensionBroken_failsAggregate() throws Exception {
+        BuildExecutor fake = (dir, tool) -> {
+            assertThat(tool).isEqualTo(BuildTool.MAVEN);
+            return BuildReport.success(tool, "backend ok");
+        };
+        var service = new BuildVerificationService(fake, mapper);
+
+        // content_script.js is referenced by the frontend manifest but absent.
+        BuildReport report = service.verify(contextWithSource("""
+                {"backend/pom.xml": "<project/>",
+                 "backend/src/main/java/App.java": "class App {}",
+                 "frontend/manifest.json": "{\\"manifest_version\\": 3, \\"content_scripts\\": [{\\"matches\\": [\\"<all_urls>\\"], \\"js\\": [\\"content_script.js\\"]}]}"}
+                """));
+
+        assertThat(report.success()).isFalse();
+        assertThat(report.diagnostics()).anyMatch(d -> d.message().contains("content_script.js"));
+    }
 }

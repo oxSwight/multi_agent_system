@@ -28,9 +28,20 @@ import java.util.Set;
  * PNG, so a missing icon is the deterministic Assembler's job to backfill with a placeholder, not
  * a code-generation violation that would loop the model forever trying to "write" a binary.
  */
-final class ManifestReferenceValidator {
+public final class ManifestReferenceValidator {
 
     private ManifestReferenceValidator() {}
+
+    /**
+     * Reusable core: returns every manifest code-reference problem found in {@code sourceFiles}
+     * (an unparseable manifest, or a code file the manifest references that is absent). Shared by the
+     * P0 code-generation gate and the P1 build-surface verifier so both apply the identical rule.
+     */
+    public static List<String> findMissingCodeReferences(JsonNode sourceFiles, ObjectMapper mapper) {
+        List<String> violations = new java.util.ArrayList<>();
+        validateSourceFiles(sourceFiles, mapper, violations);
+        return violations;
+    }
 
     static void validateSourceFiles(JsonNode sourceFiles, ObjectMapper mapper, List<String> violations) {
         if (sourceFiles == null || !sourceFiles.isObject()) {

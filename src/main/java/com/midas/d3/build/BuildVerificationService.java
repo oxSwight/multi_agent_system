@@ -9,24 +9,35 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Runs the {@code BUILD_VERIFICATION} stage: it merges the generated source and test maps,
- * detects the toolchain, materializes everything into a disposable {@link SandboxWorkspace},
- * and delegates the actual build to a {@link BuildExecutor}. The result is a {@link BuildReport}
- * serialized to the canonical JSON artifact the state machine validates and routes on.
+ * Runs the {@code BUILD_VERIFICATION} stage: it merges the generated source and test maps, detects
+ * every verifiable {@link BuildSurface}, materializes everything into a disposable
+ * {@link SandboxWorkspace}, and verifies each surface on its own terms — a real build for toolchain
+ * surfaces, a deterministic structural check for MV3 extensions. The per-surface results are
+ * aggregated into the single canonical {@link BuildReport} JSON the state machine validates and
+ * routes on.
+ *
+ * <h2>Per-surface, not first-match</h2>
+ * The old detector returned a single toolchain on first match, so a hybrid project was verified only
+ * on its backend ({@code pom.xml} wins) and a pure-JS extension resolved to {@code NONE} and was
+ * skipped. Detecting and verifying every surface closes that false-PASS: the frontend extension is
+ * gated structurally even when a backend {@code pom.xml} is present, and a toolchain-less extension
+ * is a real gate rather than a fail-open skip.
  *
  * <h2>Fail-open vs fail-closed</h2>
  * <ul>
- *   <li><b>No recognized build descriptor</b> → {@link BuildReport#skipped} (a static bundle is
- *       not a failure).</li>
- *   <li><b>Toolchain unavailable / timeout</b> → also skipped: an environmental gap must not
- *       wedge the pipeline, but it is recorded loudly in the report summary.</li>
- *   <li><b>Real compile failure</b> → {@code FAILED}: this is the signal that drives the
- *       self-healing loop back into code generation.</li>
+ *   <li><b>No recognized surface</b> → {@link BuildReport#skipped} (a static bundle is not a failure).</li>
+ *   <li><b>Toolchain unavailable / timeout</b> for a surface → that surface is skipped (non-blocking)
+ *       so an environmental gap never wedges the pipeline, but it is recorded loudly.</li>
+ *   <li><b>Real compile/structural failure</b> on any surface → {@code FAILED}: the signal that drives
+ *       the self-healing loop back into code generation.</li>
  * </ul>
  */
 @Slf4j
@@ -47,11 +58,11 @@ public class BuildVerificationService {
         Objects.requireNonNull(context, "context must not be null");
 
         JsonNode merged = mergedSourceMap(context);
-        BuildTool tool = BuildToolDetector.detect(merged);
-        if (tool == BuildTool.NONE) {
-            log.info("[BuildVerificationService] Run [{}] — no recognized build descriptor; skipping verification.",
+        List<BuildSurface> surfaces = SurfaceDetector.detect(merged, objectMapper);
+        if (surfaces.isEmpty()) {
+            log.info("[BuildVerificationService] Run [{}] — no recognized project surface; skipping verification.",
                     context.getPipelineRunId());
-            return BuildReport.skipped("No recognized build descriptor (pom.xml / build.gradle / package.json) "
+            return BuildReport.skipped("No recognized project surface (Maven / Gradle / npm / MV3 extension) "
                     + "in the generated project — build verification not applicable.");
         }
 
@@ -60,24 +71,76 @@ public class BuildVerificationService {
             if (files == 0) {
                 return BuildReport.skipped("Generated source map produced no materializable files.");
             }
-            log.info("[BuildVerificationService] Run [{}] — verifying {} file(s) with {}.",
-                    context.getPipelineRunId(), files, tool);
-            BuildReport report = buildExecutor.execute(workspace.root(), tool);
-            // On failure, attach the offending source snippet to each attributable diagnostic so the
-            // self-healing loop feeds the model the exact broken code (sliced from the very map we
-            // just compiled) rather than coordinates buried in a noisy raw-output tail.
-            return BuildSnippetExtractor.enrich(report, merged);
-        } catch (BuildExecutionException e) {
-            // Environmental gap (toolchain absent / timeout): fail-open so the pipeline is not
-            // wedged by infrastructure, but record it prominently.
-            log.warn("[BuildVerificationService] Run [{}] — verification could not run: {}",
-                    context.getPipelineRunId(), e.getMessage());
-            return BuildReport.skipped("Build verification could not run: " + e.getMessage());
+            log.info("[BuildVerificationService] Run [{}] — verifying {} file(s) across {} surface(s): {}.",
+                    context.getPipelineRunId(), files, surfaces.size(),
+                    surfaces.stream().map(BuildSurface::label).toList());
+
+            List<BuildReport> reports = new ArrayList<>(surfaces.size());
+            for (BuildSurface surface : surfaces) {
+                reports.add(verifySurface(surface, workspace.root(), merged, context.getPipelineRunId()));
+            }
+            // A single surface passes through verbatim (tool, summary, diagnostics preserved);
+            // multiple surfaces are folded into one canonical report.
+            return reports.size() == 1 ? reports.get(0) : aggregate(reports, merged);
+
         } catch (IOException e) {
             log.warn("[BuildVerificationService] Run [{}] — sandbox setup failed: {}",
                     context.getPipelineRunId(), e.getMessage());
             return BuildReport.skipped("Build verification sandbox setup failed: " + e.getMessage());
         }
+    }
+
+    private BuildReport verifySurface(BuildSurface surface, Path sandboxRoot, JsonNode merged, String runId) {
+        if (!surface.kind().isToolchain()) {
+            BuildReport report = ExtensionStructureVerifier.verify(merged, surface.rootDir(), objectMapper);
+            log.info("[BuildVerificationService] Run [{}] — {} structural verification: {}.",
+                    runId, surface.label(), report.buildStatus());
+            return report;
+        }
+
+        Path surfaceRoot = surface.rootDir().isEmpty()
+                ? sandboxRoot
+                : sandboxRoot.resolve(surface.rootDir()).normalize();
+        try {
+            log.info("[BuildVerificationService] Run [{}] — building {} with {}.",
+                    runId, surface.label(), surface.kind().toolchain());
+            BuildReport report = buildExecutor.execute(surfaceRoot, surface.kind().toolchain());
+            // Attach the offending source snippet to each attributable diagnostic so the self-healing
+            // loop feeds the model the exact broken code rather than coordinates buried in raw output.
+            return BuildSnippetExtractor.enrich(report, merged);
+        } catch (BuildExecutionException e) {
+            // Environmental gap (toolchain absent / timeout): fail-open for this surface so the
+            // pipeline is not wedged by infrastructure, but record it prominently.
+            log.warn("[BuildVerificationService] Run [{}] — {} verification could not run: {}",
+                    runId, surface.label(), e.getMessage());
+            return BuildReport.skipped("Build verification could not run: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Folds multiple per-surface reports into one canonical report: any failing surface makes the
+     * whole verification FAILED (diagnostics merged across failures); otherwise SUCCESS, reporting the
+     * first real toolchain among the passing surfaces.
+     */
+    private BuildReport aggregate(List<BuildReport> reports, JsonNode merged) {
+        List<BuildReport> failures = reports.stream().filter(r -> !r.success()).toList();
+        if (!failures.isEmpty()) {
+            List<BuildDiagnostic> diagnostics = failures.stream()
+                    .flatMap(r -> r.diagnostics().stream())
+                    .toList();
+            BuildReport primary = failures.get(0);
+            BuildReport aggregated = BuildReport.failure(
+                    primary.tool(), primary.exitCode(), diagnostics,
+                    failures.size() + " of " + reports.size() + " surface(s) failed verification.",
+                    primary.rawOutputTail(), primary.failurePhase());
+            return BuildSnippetExtractor.enrich(aggregated, merged);
+        }
+        BuildTool tool = reports.stream()
+                .map(BuildReport::tool)
+                .filter(t -> t != BuildTool.NONE)
+                .findFirst()
+                .orElse(BuildTool.NONE);
+        return BuildReport.success(tool, reports.size() + " surface(s) verified.");
     }
 
     /**
