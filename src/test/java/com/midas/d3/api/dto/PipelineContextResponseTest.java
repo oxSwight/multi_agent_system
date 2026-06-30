@@ -54,6 +54,16 @@ class PipelineContextResponseTest {
     }
 
     @Test
+    void from_mapsQualityScoreWhenPresent() throws Exception {
+        var score = objectMapper.readTree("{\"overall\":0.9,\"build_passed\":true,\"rubric_score\":1.0}");
+        var ctx = MidasContext.start("Build an app", "run-004").withQualityScore(score);
+
+        PipelineContextResponse response = PipelineContextResponse.from(ctx, "PRODUCT_REVIEW");
+
+        assertThat(response.qualityScore()).isEqualTo(score);
+    }
+
+    @Test
     void from_mapsZeroAttemptsAndNullDirectiveByDefault() {
         var ctx = MidasContext.start("Build an app", "run-002");
 

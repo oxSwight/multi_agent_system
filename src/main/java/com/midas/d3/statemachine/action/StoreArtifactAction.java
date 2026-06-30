@@ -2,9 +2,16 @@ package com.midas.d3.statemachine.action;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.build.BuildReport;
+import com.midas.d3.build.BuildReportJson;
+import com.midas.d3.build.SourceMaps;
 import com.midas.d3.context.AuditEntry;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.quality.DomainCriteriaFloor;
+import com.midas.d3.quality.QualityEvalHarness;
+import com.midas.d3.quality.QualityScore;
+import com.midas.d3.quality.Rubric;
+import com.midas.d3.quality.SpecRubricBuilder;
 import com.midas.d3.statemachine.AgentDispatcher;
 import com.midas.d3.statemachine.MidasEvent;
 import com.midas.d3.statemachine.MidasState;
@@ -105,7 +112,7 @@ public class StoreArtifactAction implements Action<MidasState, MidasEvent> {
             case INTEGRATION_STRATEGY -> ctx.withIntegrationStrategy(node);
             case CODE_GENERATION      -> storeCodeGeneration(ctx, node);
             case TEST_GENERATION      -> ctx.withGeneratedTests(node);
-            case BUILD_VERIFICATION   -> ctx.withBuildReport(node);
+            case BUILD_VERIFICATION   -> storeBuildReportWithQualityScore(ctx, node);
             case SECOPS_AUDIT         -> ctx.withSecOpsArtifacts(node);
             case PRODUCT_REVIEW       -> ctx.withProductReviewReport(node);
             default -> {
@@ -113,6 +120,32 @@ public class StoreArtifactAction implements Action<MidasState, MidasEvent> {
                 yield ctx;
             }
         };
+    }
+
+    /**
+     * Stores the build report and, ADVISORY-ONLY (F4), the deterministic {@link QualityScore} for the
+     * run: the build signal gated against a {@link SpecRubricBuilder spec-derived rubric} of robust
+     * criteria. Pure and observability-only — it is logged, stored, and surfaced, but never routes the
+     * pipeline. Scoring is fully swallowed on any error so a measurement bug can never break the build
+     * gate (everything it could block on is already blocked upstream).
+     */
+    private MidasContext storeBuildReportWithQualityScore(MidasContext ctx, JsonNode buildReportNode) {
+        MidasContext withReport = ctx.withBuildReport(buildReportNode);
+        try {
+            JsonNode artifacts = SourceMaps.merge(
+                    ctx.getGeneratedSourceCode(), ctx.getGeneratedTests(), objectMapper);
+            Rubric rubric = SpecRubricBuilder.fromSpec(ctx.getTechnicalSpec());
+            BuildReport report = BuildReportJson.read(buildReportNode);
+            QualityScore score = QualityEvalHarness.score(artifacts, report, rubric);
+            log.info("[QualityScore] run=[{}] overall={} build_passed={} rubric_score={} violations={}",
+                    ctx.getPipelineRunId(), String.format("%.2f", score.overall()), score.buildPassed(),
+                    String.format("%.2f", score.rubricScore()), score.rubricViolations());
+            return withReport.withQualityScore(score.toJson(objectMapper));
+        } catch (RuntimeException e) {
+            log.warn("[QualityScore] run=[{}] advisory scoring skipped: {}",
+                    ctx.getPipelineRunId(), e.toString());
+            return withReport;
+        }
     }
 
     private MidasContext storeCodeGeneration(MidasContext ctx, JsonNode node) {

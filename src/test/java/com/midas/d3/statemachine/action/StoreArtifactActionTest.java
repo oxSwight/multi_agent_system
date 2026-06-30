@@ -1,5 +1,6 @@
 package com.midas.d3.statemachine.action;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.config.JacksonConfig;
 import com.midas.d3.context.MidasContext;
@@ -143,6 +144,38 @@ class StoreArtifactActionTest {
         assertThat(updated.getFeatureManifest().get(1).get("feature_id").asText()).isEqualTo("assign-task");
         assertThat(vars).doesNotContainKey(PipelineContextKeys.LAST_VALIDATED_NODE);
         verifyNoInteractions(pipelineCompletionAction);
+    }
+
+    @Test
+    @DisplayName("BUILD_VERIFICATION stores the build report and an advisory quality score")
+    void execute_buildVerification_storesQualityScore() throws Exception {
+        MidasContext ctx = MidasContext.start("Build a task API", "run-bv-001")
+                .withTechnicalSpec(objectMapper.readTree("""
+                        {"business_goal":"task api",
+                         "runtime_environment":{"deployment_target":"CLOUD_SERVICE","execution_model":"SERVER_SIDE"},
+                         "core_features":[{"id":"f","name":"F",
+                           "acceptance_criteria":[{"id":"ctrl","description":"controller","must_exist":"TaskController.java"}]}]}
+                        """))
+                .withGeneratedSourceCode(objectMapper.readTree(
+                        "{\"a/TaskController.java\":\"public class TaskController {}\"}"));
+        var buildReport = objectMapper.readTree("{\"build_status\":\"SUCCESS\",\"tool\":\"MAVEN\",\"summary\":\"ok\"}");
+
+        vars.put(PipelineContextKeys.MIDAS_CONTEXT, ctx);
+        vars.put(PipelineContextKeys.LAST_VALIDATED_NODE, buildReport);
+        vars.put(PipelineContextKeys.PENDING_STAGE, MidasState.BUILD_VERIFICATION);
+        when(topology.isProcessingStage(MidasState.BUILD_VERIFICATION)).thenReturn(true);
+        when(topology.nextStage(eq(MidasState.BUILD_VERIFICATION), any(MidasContext.class)))
+                .thenReturn(MidasState.SECOPS_AUDIT);
+
+        action.execute(stateContext);
+
+        MidasContext updated = (MidasContext) vars.get(PipelineContextKeys.MIDAS_CONTEXT);
+        assertThat(updated.getBuildReport()).isNotNull();
+        JsonNode score = updated.getQualityScore();
+        assertThat(score).isNotNull();
+        assertThat(score.get("build_passed").asBoolean()).isTrue();
+        // must_exist (TaskController.java) satisfied + build SUCCESS → full score
+        assertThat(score.get("overall").asDouble()).isEqualTo(1.0);
     }
 
     @Test

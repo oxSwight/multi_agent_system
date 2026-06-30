@@ -2,7 +2,6 @@ package com.midas.d3.build;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.midas.d3.context.MidasContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,9 +10,7 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -149,21 +146,6 @@ public class BuildVerificationService {
      * production source file of the same path.
      */
     private JsonNode mergedSourceMap(MidasContext context) {
-        ObjectNode merged = objectMapper.createObjectNode();
-        copyInto(merged, context.getGeneratedSourceCode());
-        copyInto(merged, context.getGeneratedTests());
-        return merged;
-    }
-
-    private void copyInto(ObjectNode target, JsonNode source) {
-        if (source == null || !source.isObject()) {
-            return;
-        }
-        for (Iterator<Map.Entry<String, JsonNode>> it = source.fields(); it.hasNext(); ) {
-            Map.Entry<String, JsonNode> e = it.next();
-            if (!target.has(e.getKey())) {
-                target.set(e.getKey(), e.getValue());
-            }
-        }
+        return SourceMaps.merge(context.getGeneratedSourceCode(), context.getGeneratedTests(), objectMapper);
     }
 }

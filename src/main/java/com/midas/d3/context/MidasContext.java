@@ -95,6 +95,14 @@ public final class MidasContext {
      */
     @With private final JsonNode buildReport;
 
+    /**
+     * Advisory, deterministic quality score (F4) computed after a passing/skipped build — the
+     * {@link com.midas.d3.quality.QualityScore}-shaped JSON ({@code overall}, {@code build_passed},
+     * {@code rubric_score}, {@code rubric_violations}). Observability-only: it is stored, logged and
+     * packaged with the run, but never routes the pipeline.
+     */
+    @With private final JsonNode qualityScore;
+
     /** Number of build-failure remediation loops consumed (bounded by the topology cap). */
     @With private final int buildRemediationAttempts;
 
@@ -184,6 +192,10 @@ public final class MidasContext {
 
     public Optional<JsonNode> getBuildReportOpt() {
         return Optional.ofNullable(buildReport);
+    }
+
+    public Optional<JsonNode> getQualityScoreOpt() {
+        return Optional.ofNullable(qualityScore);
     }
 
     public Optional<JsonNode> getRemediationDirectiveOpt() {
