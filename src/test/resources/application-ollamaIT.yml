@@ -1,0 +1,32 @@
+# ── Local Ollama integration-test profile ──────────────────────────────────────
+# Activate with: --spring.profiles.active=ollamaIT
+# Requires Ollama running at http://localhost:11434 with a model pulled.
+#
+# Switches the LLM client to NOUS (OpenAI-compatible) pointed at a local Ollama
+# instance instead of the mock/GEMINI values used in the base test application.yml.
+# All other test overrides (H2, Flyway off, Telegram off, schedulers off) are
+# inherited from application.yml and remain in force.
+# ──────────────────────────────────────────────────────────────────────────────
+
+midas:
+  llm:
+    client-type: NOUS
+    model: qwen2.5-coder:14b
+    stage-models:
+      CODE_GENERATION: qwen2.5-coder:14b
+      TEST_GENERATION: qwen2.5-coder:14b
+
+  nous:
+    base-url: http://localhost:11434
+    api-key: ollama-local-dev
+    model: qwen2.5-coder:14b
+    timeout-seconds: 300
+    http-max-retries: 1
+    routing:
+      enabled: false
+      default-model: qwen2.5-coder:14b
+      agents: {}
+
+logging:
+  level:
+    com.midas.d3: INFO

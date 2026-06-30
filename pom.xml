@@ -208,6 +208,12 @@
                         <include>**/*TestCase.java</include>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!--
+                        Tests tagged @Tag("integration") require an external dependency
+                        (e.g. a running Ollama instance) and must never run in CI.
+                        Run them manually: mvnw test -Dgroups=integration
+                    -->
+                    <excludeGroups>integration</excludeGroups>
                 </configuration>
             </plugin>
         </plugins>
