@@ -185,6 +185,11 @@ public class ImplementationEngineerValidator extends AbstractGoalKeeperValidator
             validateSourceFiles(sourceFiles, violations);
             JsonNode contractSource = resolveApiContractSource(technicalSpec, architecture);
             FrontendIntegrationValidator.validateSourceFiles(sourceFiles, contractSource, violations);
+            // Deterministic, type-independent gates: descriptor cross-file references must resolve,
+            // and generated paths must match the declared file_layout (no wrapper drift). These run
+            // only on the assembled envelope (architecture present), never on a partial surface pass.
+            ManifestReferenceValidator.validateSourceFiles(sourceFiles, objectMapper, violations);
+            PathConformanceValidator.validate(sourceFiles, architecture, violations);
         }
 
         if (featureManifest != null && featureManifest.isArray()) {

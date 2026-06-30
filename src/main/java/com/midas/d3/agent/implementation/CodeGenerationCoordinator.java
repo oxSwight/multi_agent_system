@@ -254,7 +254,7 @@ public class CodeGenerationCoordinator {
         try {
             String json = objectMapper.writeValueAsString(envelope);
             return requireImplementationValidator(validator).validateWithTechnicalSpec(
-                    json, context.getTechnicalSpec());
+                    json, context.getTechnicalSpec(), context.getArchitectureDesign());
         } catch (JsonProcessingException e) {
             throw new PatchFallbackException("Failed to serialize merged patch envelope: " + e.getMessage());
         } catch (ValidationHookException e) {
@@ -340,7 +340,7 @@ public class CodeGenerationCoordinator {
         try {
             mergedJson = objectMapper.writeValueAsString(envelope);
             requireImplementationValidator(validator).validateWithTechnicalSpec(
-                    mergedJson, context.getTechnicalSpec());
+                    mergedJson, context.getTechnicalSpec(), context.getArchitectureDesign());
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize merged HYBRID implementation envelope.", e);
         }
