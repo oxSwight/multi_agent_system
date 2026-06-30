@@ -39,8 +39,8 @@ class ArtifactPackagingServiceTest {
     // ── README always present ─────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Empty context (no artifacts) produces a valid ZIP containing README.md")
-    void packageResults_emptyContext_zipContainsReadme() throws IOException {
+    @DisplayName("Empty context (no artifacts) produces a valid ZIP containing the pipeline report")
+    void packageResults_emptyContext_zipContainsReport() throws IOException {
         MidasContext ctx = MidasContext.start("My idea", "run-empty-001");
 
         File zip = service.packageResults(ctx);
@@ -49,21 +49,22 @@ class ArtifactPackagingServiceTest {
             assertThat(zip.getName()).startsWith("midas_result_").endsWith(".zip");
 
             Set<String> entries = listZipEntries(zip);
-            assertThat(entries).contains("README.md");
+            // No project artifact → no synthesized README, but the run report is always present.
+            assertThat(entries).contains("MIDAS_PIPELINE_REPORT.md");
         } finally {
             zip.delete();
         }
     }
 
     @Test
-    @DisplayName("README.md contains the pipeline run ID and raw idea")
-    void packageResults_readme_containsRunMetadata() throws IOException {
+    @DisplayName("MIDAS_PIPELINE_REPORT.md contains the pipeline run ID and raw idea")
+    void packageResults_report_containsRunMetadata() throws IOException {
         MidasContext ctx = MidasContext.start("Build a task tracker", "run-meta-001");
 
         File zip = service.packageResults(ctx);
         try {
-            String readme = readZipEntry(zip, "README.md");
-            assertThat(readme)
+            String report = readZipEntry(zip, "MIDAS_PIPELINE_REPORT.md");
+            assertThat(report)
                     .contains("run-meta-001")
                     .contains("Build a task tracker");
         } finally {
@@ -101,7 +102,7 @@ class ArtifactPackagingServiceTest {
     // ── Stage 4: generatedSourceCode (filename → source map) ─────────────────
 
     @Test
-    @DisplayName("generatedSourceCode map → individual .java files under src/ directory")
+    @DisplayName("generatedSourceCode map → individual .java files at their verbatim paths")
     void packageResults_withSourceCode_createsSourceFiles() throws IOException {
         ObjectNode code = objectMapper.createObjectNode();
         code.put("com/example/TaskController.java", "public class TaskController {}");
@@ -114,10 +115,10 @@ class ArtifactPackagingServiceTest {
         try {
             Set<String> entries = listZipEntries(zip);
             assertThat(entries)
-                    .contains("src/com/example/TaskController.java")
-                    .contains("src/com/example/TaskService.java");
+                    .contains("com/example/TaskController.java")
+                    .contains("com/example/TaskService.java");
 
-            String content = readZipEntry(zip, "src/com/example/TaskController.java");
+            String content = readZipEntry(zip, "com/example/TaskController.java");
             assertThat(content).isEqualTo("public class TaskController {}");
         } finally {
             zip.delete();
@@ -127,10 +128,11 @@ class ArtifactPackagingServiceTest {
     // ── Stage 5: generatedTests ───────────────────────────────────────────────
 
     @Test
-    @DisplayName("generatedTests map → test files placed under tests/ directory")
+    @DisplayName("generatedTests map → test files placed at their verbatim paths")
     void packageResults_withGeneratedTests_createsTestFiles() throws IOException {
         ObjectNode tests = objectMapper.createObjectNode();
-        tests.put("com/example/TaskControllerTest.java", "class TaskControllerTest { @Test void test(){} }");
+        tests.put("src/test/java/com/example/TaskControllerTest.java",
+                "class TaskControllerTest { @Test void test(){} }");
 
         MidasContext ctx = MidasContext.start("Task app", "run-tests-001")
                 .withGeneratedTests(tests);
@@ -138,7 +140,7 @@ class ArtifactPackagingServiceTest {
         File zip = service.packageResults(ctx);
         try {
             Set<String> entries = listZipEntries(zip);
-            assertThat(entries).contains("tests/com/example/TaskControllerTest.java");
+            assertThat(entries).contains("src/test/java/com/example/TaskControllerTest.java");
         } finally {
             zip.delete();
         }
@@ -176,8 +178,8 @@ class ArtifactPackagingServiceTest {
     }
 
     @Test
-    @DisplayName("productReviewReport → 7_ProductReview.md with verdict surfaced in README")
-    void packageResults_withProductReview_containsReportAndReadmeVerdict() throws IOException {
+    @DisplayName("productReviewReport → 7_ProductReview.md with verdict surfaced in the run report")
+    void packageResults_withProductReview_containsReportAndVerdict() throws IOException {
         ObjectNode review = objectMapper.createObjectNode();
         review.put("verdict", "PASS_WITH_NOTES");
         review.put("summary", "Intent met; minor polish suggested.");
@@ -205,8 +207,8 @@ class ArtifactPackagingServiceTest {
                     .contains("PASS_WITH_NOTES")
                     .contains("coverage_matrix");
 
-            String readme = readZipEntry(zip, "README.md");
-            assertThat(readme)
+            String runReport = readZipEntry(zip, "MIDAS_PIPELINE_REPORT.md");
+            assertThat(runReport)
                     .contains("Product Review Verdict")
                     .contains("PASS_WITH_NOTES")
                     .contains("Intent met; minor polish suggested.")
@@ -217,8 +219,8 @@ class ArtifactPackagingServiceTest {
     }
 
     @Test
-    @DisplayName("Skipped integration stage → no 3_IntegrationStrategy.md, bypass noted in README")
-    void packageResults_skippedIntegrationStrategy_notesBypassInReadme() throws IOException {
+    @DisplayName("Skipped integration stage → no 3_IntegrationStrategy.md, bypass noted in run report")
+    void packageResults_skippedIntegrationStrategy_notesBypassInReport() throws IOException {
         ObjectNode architecture = objectMapper.createObjectNode();
         architecture.put("has_external_integrations", false);
         architecture.put("database_type", "PG");
@@ -232,10 +234,10 @@ class ArtifactPackagingServiceTest {
             Set<String> entries = listZipEntries(zip);
             assertThat(entries)
                     .doesNotContain("3_IntegrationStrategy.md")
-                    .contains("README.md");
+                    .contains("MIDAS_PIPELINE_REPORT.md");
 
-            String readme = readZipEntry(zip, "README.md");
-            assertThat(readme)
+            String runReport = readZipEntry(zip, "MIDAS_PIPELINE_REPORT.md");
+            assertThat(runReport)
                     .contains("Integration Strategy")
                     .contains("dynamically bypassed");
         } finally {
@@ -286,15 +288,63 @@ class ArtifactPackagingServiceTest {
             Set<String> entries = listZipEntries(zip);
             assertThat(entries)
                     .contains("README.md")
+                    .contains("MIDAS_PIPELINE_REPORT.md")
                     .contains("1_SystemAnalysis.md")
                     .contains("2_Architecture.md")
                     .contains("3_IntegrationStrategy.md")
-                    .contains("src/Main.java")
-                    .contains("tests/MainTest.java")
+                    .contains("Main.java")
+                    .contains("MainTest.java")
                     .contains("6_SecOps_Report.md")
                     .contains("7_ProductReview.md")
                     .contains("Dockerfile")
                     .contains("docker-compose.yml");
+        } finally {
+            zip.delete();
+        }
+    }
+
+    // ── Browser-extension assembly (verbatim layout + placeholder icons + README) ─────
+
+    @Test
+    @DisplayName("Extension artifact: manifest stays at its load-root, missing PNG icons are backfilled, README has install/usage")
+    void packageResults_extension_backfillsIconsAndSynthesizesReadme() throws IOException {
+        ObjectNode code = objectMapper.createObjectNode();
+        code.put("frontend/manifest.json", """
+                {
+                  "manifest_version": 3,
+                  "name": "Semantic Saver",
+                  "background": {"service_worker": "background.js"},
+                  "icons": {"16": "images/icon16.png", "128": "images/icon128.png"},
+                  "action": {"default_popup": "popup.html"}
+                }
+                """);
+        code.put("frontend/background.js", "self.addEventListener('install', () => {});");
+        code.put("frontend/popup.html", "<!DOCTYPE html><html><body></body></html>");
+
+        MidasContext ctx = MidasContext.start("Save semantic page data", "run-ext-001")
+                .withGeneratedSourceCode(code);
+
+        File zip = service.packageResults(ctx);
+        try {
+            Set<String> entries = listZipEntries(zip);
+            // Manifest preserved verbatim at its declared load-root — no src/ wrapper.
+            assertThat(entries)
+                    .contains("frontend/manifest.json")
+                    .contains("frontend/background.js")
+                    .doesNotContain("src/frontend/manifest.json");
+            // Binary icons the model could not author are backfilled at the resolved paths.
+            assertThat(entries)
+                    .contains("frontend/images/icon16.png")
+                    .contains("frontend/images/icon128.png");
+
+            byte[] icon = readZipEntryBytes(zip, "frontend/images/icon16.png");
+            assertThat(isValidPng(icon)).as("placeholder icon must be a valid PNG").isTrue();
+
+            String readme = readZipEntry(zip, "README.md");
+            assertThat(readme)
+                    .contains("Load unpacked")
+                    .contains("frontend")
+                    .contains("Semantic Saver");
         } finally {
             zip.delete();
         }
@@ -333,11 +383,28 @@ class ArtifactPackagingServiceTest {
     }
 
     private String readZipEntry(File zip, String entryName) throws IOException {
+        return new String(readZipEntryBytes(zip, entryName), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private byte[] readZipEntryBytes(File zip, String entryName) throws IOException {
         try (ZipFile zf = new ZipFile(zip)) {
             ZipEntry entry = zf.getEntry(entryName);
             assertThat(entry).as("Entry [%s] not found in ZIP", entryName).isNotNull();
-            return new String(zf.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return zf.getInputStream(entry).readAllBytes();
         }
+    }
+
+    private boolean isValidPng(byte[] bytes) {
+        byte[] signature = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        if (bytes.length < signature.length) {
+            return false;
+        }
+        for (int i = 0; i < signature.length; i++) {
+            if (bytes[i] != signature[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private long countTempDirEntries() throws IOException {

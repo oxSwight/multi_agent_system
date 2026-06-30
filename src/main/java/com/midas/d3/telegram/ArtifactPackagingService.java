@@ -17,9 +17,16 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -30,19 +37,28 @@ import java.util.zip.ZipOutputStream;
  * <h2>Archive structure</h2>
  * <pre>
  *   midas_result_20260614_1200_&lt;runId&gt;.zip
- *   ├── README.md                          ← always present: run metadata
+ *   ├── README.md                          ← user-facing install/usage (synthesized if the
+ *   │                                         project did not emit its own)
+ *   ├── MIDAS_PIPELINE_REPORT.md           ← always present: run metadata + Controller verdict
  *   ├── 1_SystemAnalysis.md                ← Agent 1: technical specification
  *   ├── 2_Architecture.md                  ← Agent 2: database schema + REST contracts
  *   ├── 3_IntegrationStrategy.md           ← Agent 3: external integrations
- *   ├── src/
- *   │   └── …/File.java                    ← Agent 4: generated source files (verbatim paths)
- *   ├── tests/
- *   │   └── …/FileTest.java                ← Agent 5: generated test files (verbatim paths)
+ *   ├── &lt;verbatim source paths&gt;            ← Agent 4: generated source files at their real paths
+ *   │                                         (e.g. frontend/manifest.json, backend/src/main/...)
+ *   ├── &lt;verbatim test paths&gt;              ← Agent 5: generated test files at their real paths
+ *   ├── &lt;placeholder icons&gt;                ← valid PNGs backfilled for any manifest icon ref the
+ *   │                                         model could not author (binary)
  *   ├── 6_SecOps_Report.md                 ← Agent 6: security audit findings
  *   ├── 7_ProductReview.md                 ← Agent 7: Controller quality-gate report
  *   ├── Dockerfile                         ← Agent 6: production Dockerfile
  *   └── docker-compose.yml                 ← Agent 6: docker-compose manifest
  * </pre>
+ *
+ * <h2>Verbatim layout (Assembler discipline)</h2>
+ * Source and test maps are written at their <em>exact</em> generated paths — the same tree the
+ * build sandbox compiled — rather than under a synthetic {@code src/}/{@code tests/} wrapper. A
+ * browser extension loads from the directory holding {@code manifest.json}; a stray wrapper segment
+ * breaks every relative reference inside it, so the delivered artifact must mirror what was built.
  *
  * <h2>Lifecycle</h2>
  * A temporary directory is created, populated, zipped, and then deleted — all within
@@ -60,6 +76,10 @@ public class ArtifactPackagingService {
 
     private static final DateTimeFormatter TIMESTAMP_FMT =
             DateTimeFormatter.ofPattern("yyyyMMdd_HHmm").withZone(ZoneOffset.UTC);
+
+    /** A valid 1×1 PNG used as the placeholder for any manifest icon reference the model could not emit. */
+    private static final byte[] PLACEHOLDER_PNG = Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
 
     private final ObjectMapper objectMapper;
 
@@ -97,7 +117,15 @@ public class ArtifactPackagingService {
     // ── Artifact writers ──────────────────────────────────────────────────────
 
     private void writeAllArtifacts(MidasContext ctx, Path dir) throws IOException {
-        writeRunMetadata(ctx, dir);
+        // Source and tests first, at verbatim paths, so the delivered tree mirrors what was built.
+        if (ctx.getGeneratedSourceCode() != null) {
+            writeSourceFileMap(dir, ctx.getGeneratedSourceCode());
+        }
+        if (ctx.getGeneratedTests() != null) {
+            writeSourceFileMap(dir, ctx.getGeneratedTests());
+        }
+
+        writePipelineReport(ctx, dir);
 
         if (ctx.getTechnicalSpec() != null) {
             writeJsonAsMarkdown(dir, "1_SystemAnalysis.md",
@@ -111,12 +139,6 @@ public class ArtifactPackagingService {
             writeJsonAsMarkdown(dir, "3_IntegrationStrategy.md",
                     "Integration Strategy — External Services & Rate Limiting", ctx.getIntegrationStrategy());
         }
-        if (ctx.getGeneratedSourceCode() != null) {
-            writeSourceFileMap(dir.resolve("src"), ctx.getGeneratedSourceCode());
-        }
-        if (ctx.getGeneratedTests() != null) {
-            writeSourceFileMap(dir.resolve("tests"), ctx.getGeneratedTests());
-        }
         if (ctx.getSecOpsArtifacts() != null) {
             writeSecOpsArtifacts(dir, ctx.getSecOpsArtifacts());
         }
@@ -124,12 +146,19 @@ public class ArtifactPackagingService {
             writeJsonAsMarkdown(dir, "7_ProductReview.md",
                     "Product Review — Controller Quality Gate", ctx.getProductReviewReport());
         }
+
+        // Deterministic backfill: binary icons the model could not author, and a user-facing
+        // install/usage README computed from the real load-root.
+        backfillPlaceholderIcons(dir, ctx.getGeneratedSourceCode());
+        ensureUserReadme(ctx, dir);
     }
 
     /**
-     * Always-present README with run metadata so the archive is never completely empty.
+     * Always-present run report with metadata and Controller verdict. Lives in its own file
+     * (not README.md) so it can never masquerade as the project's user documentation and never
+     * clobbers a README the project itself generated.
      */
-    private void writeRunMetadata(MidasContext ctx, Path dir) throws IOException {
+    private void writePipelineReport(MidasContext ctx, Path dir) throws IOException {
         StringBuilder sb = new StringBuilder();
         sb.append("# MIDAS Pipeline Run Report\n\n");
         sb.append("| Field | Value |\n|---|---|\n");
@@ -160,7 +189,7 @@ public class ArtifactPackagingService {
         sb.append("## Original Idea\n\n");
         sb.append("> ").append(ctx.getRawUserIdea().replace("\n", "\n> ")).append("\n");
 
-        Files.writeString(dir.resolve("README.md"), sb.toString(), StandardCharsets.UTF_8);
+        Files.writeString(dir.resolve("MIDAS_PIPELINE_REPORT.md"), sb.toString(), StandardCharsets.UTF_8);
     }
 
     private void appendProductReviewNotes(StringBuilder sb, JsonNode report) {
@@ -212,16 +241,10 @@ public class ArtifactPackagingService {
         Iterator<Map.Entry<String, JsonNode>> fields = fileMap.fields();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> entry = fields.next();
-            // Normalize path separators for the current OS
-            String relativePath = entry.getKey().replace('/', File.separatorChar);
-            Path   target       = baseDir.resolve(relativePath).normalize();
-
-            // Guard against path-traversal
-            if (!target.startsWith(baseDir)) {
-                log.warn("[ArtifactPackagingService] Skipping suspicious path: {}", entry.getKey());
+            Path target = safeResolve(baseDir, entry.getKey());
+            if (target == null) {
                 continue;
             }
-
             Files.createDirectories(target.getParent());
             Files.writeString(target, entry.getValue().asText(), StandardCharsets.UTF_8);
         }
@@ -259,6 +282,183 @@ public class ArtifactPackagingService {
         JsonNode node = parent.get(fieldName);
         if (node != null && !node.asText().isBlank()) {
             Files.writeString(dir.resolve(fieldName), node.asText(), StandardCharsets.UTF_8);
+        }
+    }
+
+    // ── Deterministic backfill (Assembler) ──────────────────────────────────────
+
+    /**
+     * For every PNG icon an extension manifest references but the model did not (could not) emit,
+     * writes a valid placeholder PNG at the resolved path so the reference resolves and the
+     * extension loads. Binary assembly belongs in Java, never the LLM.
+     */
+    private void backfillPlaceholderIcons(Path dir, JsonNode sourceFiles) throws IOException {
+        if (sourceFiles == null || !sourceFiles.isObject()) {
+            return;
+        }
+        Set<String> existing = sourcePathSet(sourceFiles);
+        Set<String> written = new LinkedHashSet<>();
+
+        for (Map.Entry<String, JsonNode> entry : iterable(sourceFiles)) {
+            String path = normalize(entry.getKey());
+            if (!entry.getValue().isTextual() || !isManifestPath(path)) {
+                continue;
+            }
+            JsonNode manifest = tryParse(entry.getValue().asText());
+            if (manifest == null || !manifest.isObject()) {
+                continue;
+            }
+            String manifestDir = directoryOf(path);
+            for (String iconRef : collectIconPngRefs(manifest)) {
+                String resolved = resolveRelative(manifestDir, iconRef);
+                if (resolved.isBlank() || existing.contains(resolved) || !written.add(resolved)) {
+                    continue;
+                }
+                Path target = safeResolve(dir, resolved);
+                if (target == null) {
+                    continue;
+                }
+                Files.createDirectories(target.getParent());
+                Files.write(target, PLACEHOLDER_PNG);
+                log.info("[ArtifactPackagingService] Backfilled placeholder icon [{}] referenced by [{}].",
+                        resolved, path);
+            }
+        }
+    }
+
+    /**
+     * Synthesizes a user-facing {@code README.md} with install/usage instructions computed from the
+     * real load-root, unless the project already emitted its own README (which is then preserved).
+     */
+    private void ensureUserReadme(MidasContext ctx, Path dir) throws IOException {
+        JsonNode sourceFiles = ctx.getGeneratedSourceCode();
+        if (sourceFiles == null || !sourceFiles.isObject() || sourceFiles.isEmpty()) {
+            return; // No project artifact to document.
+        }
+        if (projectHasOwnReadme(sourceFiles)) {
+            return; // Respect the project's own README.
+        }
+
+        Optional<ManifestLocation> extension = findExtensionManifest(sourceFiles);
+        Set<String> paths = sourcePathSet(sourceFiles);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("# ").append(projectTitle(ctx, extension.orElse(null))).append("\n\n");
+
+        if (extension.isPresent()) {
+            String loadRoot = extension.get().directory();
+            String loadRootLabel = loadRoot.isBlank() ? "the archive root" : "`" + loadRoot + "`";
+            sb.append("## Installation (Chrome / Edge)\n\n");
+            sb.append("1. Open `chrome://extensions` (or `edge://extensions`).\n");
+            sb.append("2. Enable **Developer mode** (top-right toggle).\n");
+            sb.append("3. Click **Load unpacked**.\n");
+            sb.append("4. Select the ").append(loadRootLabel)
+              .append(" directory from this archive (the folder that contains `manifest.json`).\n\n");
+        } else if (containsFile(paths, "package.json")) {
+            sb.append("## Installation\n\n");
+            sb.append("```sh\nnpm install\nnpm start\n```\n\n");
+        } else if (containsFile(paths, "pom.xml")) {
+            sb.append("## Build & Run\n\n");
+            sb.append("```sh\nmvn clean package\njava -jar target/*.jar\n```\n\n");
+        } else {
+            sb.append("## Contents\n\n");
+            sb.append("This archive contains the generated project source. ");
+            sb.append("See `MIDAS_PIPELINE_REPORT.md` for the build report.\n\n");
+        }
+
+        sb.append("## What this does\n\n");
+        sb.append("> ").append(ctx.getRawUserIdea().replace("\n", "\n> ")).append("\n\n");
+        sb.append("---\n_Generated by the MIDAS pipeline. See `MIDAS_PIPELINE_REPORT.md` for the run report._\n");
+
+        Files.writeString(dir.resolve("README.md"), sb.toString(), StandardCharsets.UTF_8);
+    }
+
+    private String projectTitle(MidasContext ctx, ManifestLocation extension) {
+        if (extension != null) {
+            JsonNode name = extension.manifest().get("name");
+            if (name != null && name.isTextual() && !name.asText().isBlank()) {
+                return name.asText().strip();
+            }
+        }
+        JsonNode spec = ctx.getTechnicalSpec();
+        if (spec != null) {
+            JsonNode goal = spec.get("business_goal");
+            if (goal != null && goal.isTextual() && !goal.asText().isBlank()) {
+                return goal.asText().strip();
+            }
+        }
+        return "Generated Project";
+    }
+
+    private boolean projectHasOwnReadme(JsonNode sourceFiles) {
+        for (Map.Entry<String, JsonNode> entry : iterable(sourceFiles)) {
+            String name = fileName(normalize(entry.getKey())).toLowerCase(Locale.ROOT);
+            if (name.equals("readme.md") || name.equals("readme")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Finds the shallowest extension manifest (the natural load-root) in the source map. */
+    private Optional<ManifestLocation> findExtensionManifest(JsonNode sourceFiles) {
+        ManifestLocation best = null;
+        for (Map.Entry<String, JsonNode> entry : iterable(sourceFiles)) {
+            String path = normalize(entry.getKey());
+            if (!entry.getValue().isTextual() || !isManifestPath(path)) {
+                continue;
+            }
+            JsonNode manifest = tryParse(entry.getValue().asText());
+            if (manifest == null || !looksLikeExtensionManifest(manifest)) {
+                continue;
+            }
+            String dir = directoryOf(path);
+            if (best == null || dir.length() < best.directory().length()) {
+                best = new ManifestLocation(dir, manifest);
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    private static boolean looksLikeExtensionManifest(JsonNode manifest) {
+        return manifest.isObject() && (manifest.has("manifest_version")
+                || manifest.has("background") || manifest.has("content_scripts")
+                || manifest.has("action") || manifest.has("browser_action"));
+    }
+
+    private List<String> collectIconPngRefs(JsonNode manifest) {
+        List<String> refs = new ArrayList<>();
+        addIconValues(refs, manifest.get("icons"));
+        addDefaultIcon(refs, manifest.get("action"));
+        addDefaultIcon(refs, manifest.get("browser_action"));
+        addDefaultIcon(refs, manifest.get("page_action"));
+        return refs;
+    }
+
+    private void addDefaultIcon(List<String> refs, JsonNode actionNode) {
+        if (actionNode != null && actionNode.isObject()) {
+            JsonNode icon = actionNode.get("default_icon");
+            if (icon != null && icon.isTextual()) {
+                addPng(refs, icon.asText());
+            } else {
+                addIconValues(refs, icon);
+            }
+        }
+    }
+
+    private void addIconValues(List<String> refs, JsonNode iconMap) {
+        if (iconMap != null && iconMap.isObject()) {
+            iconMap.fields().forEachRemaining(e -> {
+                if (e.getValue().isTextual()) {
+                    addPng(refs, e.getValue().asText());
+                }
+            });
+        }
+    }
+
+    private void addPng(List<String> refs, String ref) {
+        if (ref != null && ref.strip().toLowerCase(Locale.ROOT).endsWith(".png")) {
+            refs.add(ref.strip());
         }
     }
 
@@ -315,8 +515,100 @@ public class ArtifactPackagingService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /**
+     * Resolves {@code relativePath} under {@code baseDir}, guarding against path traversal.
+     * Returns {@code null} (logged) when the entry would escape the base directory.
+     */
+    private Path safeResolve(Path baseDir, String relativePath) {
+        String normalized = relativePath.replace('/', File.separatorChar);
+        Path target = baseDir.resolve(normalized).normalize();
+        if (!target.startsWith(baseDir)) {
+            log.warn("[ArtifactPackagingService] Skipping suspicious path: {}", relativePath);
+            return null;
+        }
+        return target;
+    }
+
+    private Set<String> sourcePathSet(JsonNode sourceFiles) {
+        Set<String> paths = new LinkedHashSet<>();
+        for (Map.Entry<String, JsonNode> entry : iterable(sourceFiles)) {
+            if (entry.getValue().isTextual()) {
+                paths.add(normalize(entry.getKey()));
+            }
+        }
+        return paths;
+    }
+
+    private JsonNode tryParse(String json) {
+        try {
+            return objectMapper.readTree(json);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private Iterable<Map.Entry<String, JsonNode>> iterable(JsonNode objectNode) {
+        return objectNode::fields;
+    }
+
+    private static boolean isManifestPath(String normalizedPath) {
+        return normalizedPath.equals("manifest.json") || normalizedPath.endsWith("/manifest.json");
+    }
+
+    private static boolean containsFile(Set<String> paths, String fileName) {
+        for (String p : paths) {
+            if (fileName(p).equalsIgnoreCase(fileName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String normalize(String path) {
+        return path == null ? "" : path.replace('\\', '/');
+    }
+
+    private static String fileName(String path) {
+        String normalized = normalize(path);
+        int slash = normalized.lastIndexOf('/');
+        return slash >= 0 ? normalized.substring(slash + 1) : normalized;
+    }
+
+    private static String directoryOf(String path) {
+        String normalized = normalize(path);
+        int slash = normalized.lastIndexOf('/');
+        return slash >= 0 ? normalized.substring(0, slash + 1) : "";
+    }
+
+    private static String resolveRelative(String baseDir, String ref) {
+        String normalizedRef = normalize(ref);
+        while (normalizedRef.startsWith("/") || normalizedRef.startsWith("./")) {
+            normalizedRef = normalizedRef.startsWith("./")
+                    ? normalizedRef.substring(2)
+                    : normalizedRef.substring(1);
+        }
+        String combined = normalize(baseDir) + normalizedRef;
+        String[] parts = combined.split("/");
+        List<String> resolved = new ArrayList<>();
+        for (String part : parts) {
+            if (part.isEmpty() || ".".equals(part)) {
+                continue;
+            }
+            if ("..".equals(part)) {
+                if (!resolved.isEmpty()) {
+                    resolved.remove(resolved.size() - 1);
+                }
+            } else {
+                resolved.add(part);
+            }
+        }
+        return String.join("/", resolved);
+    }
+
     /** Strips characters unsafe for use in file/directory names. */
     private static String sanitize(String id) {
         return id != null ? id.replaceAll("[^a-zA-Z0-9\\-_]", "_") : "unknown";
     }
+
+    private record ManifestLocation(String directory, JsonNode manifest) {}
 }
