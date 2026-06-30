@@ -191,30 +191,30 @@ public class NousRestClient implements LlmClient {
         return properties.getModel();
     }
 
+    /**
+     * Single source of truth for model selection: an explicit per-call override — the
+     * {@link com.midas.d3.llm.LlmModelPolicy} decision (stage-models pin / fast-tier / primary) —
+     * <b>always wins</b>, matching the documented "operator override always wins" contract.
+     * {@code nous.routing.agents} and {@code nous.routing.default-model} are fallbacks only for calls
+     * that carry no override (e.g. direct LlmClient callers outside the staged pipeline). This keeps
+     * stage-level policy (including fast-tier tier-down) authoritative instead of being silently
+     * shadowed by a per-agent routing pin.
+     */
     private String resolveModel(LlmCallRequest request) {
+        String override = request.getModelOverride();
+        if (override != null && !override.isBlank()) {
+            return override.trim();
+        }
+
         NousProperties.Routing routing = properties.getRouting();
         if (routing.isEnabled()) {
-            String agentName = request.getAgentName();
-            String mapped = routing.getAgents().get(agentName);
+            String mapped = routing.getAgents().get(request.getAgentName());
             if (mapped != null && !mapped.isBlank()) {
                 return mapped.trim();
-            }
-            // Honor an explicit per-call override (e.g. the LlmModelPolicy tier-down decision) for
-            // agents that are not explicitly pinned in routing.agents, before the generic default.
-            // This is what lets stage-level model tiering take effect on the routed NOUS path.
-            String override = request.getModelOverride();
-            if (override != null && !override.isBlank()) {
-                return override.trim();
             }
             if (routing.getDefaultModel() != null && !routing.getDefaultModel().isBlank()) {
                 return routing.getDefaultModel().trim();
             }
-            return properties.getModel();
-        }
-
-        String override = request.getModelOverride();
-        if (override != null && !override.isBlank()) {
-            return override.trim();
         }
         return properties.getModel();
     }

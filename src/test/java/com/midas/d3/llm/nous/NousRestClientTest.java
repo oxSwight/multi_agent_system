@@ -80,8 +80,10 @@ class NousRestClientTest {
     }
 
     @Test
-    @DisplayName("Routes ControllerAgent to Qwen when routing is enabled")
-    void call_routingEnabled_controllerAgent_usesQwen() {
+    @DisplayName("Per-call override wins over a routing.agents pin (LlmModelPolicy is the single source)")
+    void call_routingEnabled_override_winsOverAgentPin() {
+        // ControllerAgent is pinned to qwen in routing.agents, but the per-call override carries the
+        // LlmModelPolicy decision — which is authoritative and must win.
         NousRestClient client = newClient(okExchange());
 
         LlmCallRequest request = LlmCallRequest.of(
@@ -91,6 +93,24 @@ class NousRestClientTest {
                 "user",
                 "run-routing-001",
                 "deepseek-r1:8b");
+
+        LlmCallResult result = client.call(request);
+
+        assertThat(result.modelUsed()).isEqualTo("deepseek-r1:8b");
+    }
+
+    @Test
+    @DisplayName("routing.agents pin applies only when the call carries no override")
+    void call_routingEnabled_noOverride_usesAgentPin() {
+        NousRestClient client = newClient(okExchange());
+
+        // No model override → routing.agents pin for ControllerAgent applies.
+        LlmCallRequest request = LlmCallRequest.of(
+                MidasState.PRODUCT_REVIEW,
+                "ControllerAgent",
+                "system",
+                "user",
+                "run-routing-001b");
 
         LlmCallResult result = client.call(request);
 
