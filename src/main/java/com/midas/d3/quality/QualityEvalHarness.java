@@ -58,19 +58,43 @@ public final class QualityEvalHarness {
 
     /**
      * The built-in golden corpus. Deliberately small and conservative — it grows as P4-A2 wires live
-     * pipeline runs through the harness. The single seed case asserts a buildable REST service with a
-     * controller and no hardcoded credentials.
+     * pipeline runs through the harness. Two seed cases anchor the two dominant shapes the pipeline
+     * emits: a buildable REST service and a buildable CLI tool. Both demand test sources and forbid a
+     * {@code System.exit} call — a generated exit would terminate the sandbox JVM that executes the
+     * code, so exit status must flow through return codes instead.
      */
     public static List<GoldenCase> defaultGoldenCases() {
+        // Case 1 — a REST CRUD service: buildable, exposes a controller, ships tests, and carries no
+        // hardcoded credentials nor a sandbox-killing System.exit.
         Rubric restCrudApi = new Rubric("rest-crud-api", List.of(
                 RubricRule.requirePath("pom.xml"),
                 RubricRule.requireContent(".java", "rest-controller", "(?i)@RestController|@Controller"),
-                RubricRule.forbidContent("hardcoded-password", "(?i)password\\s*[:=]\\s*[\"'][^\"']+[\"']")
+                RubricRule.requirePath("Test.java"),
+                RubricRule.forbidContent("hardcoded-password", "(?i)password\\s*[:=]\\s*[\"'][^\"']+[\"']"),
+                RubricRule.forbidContent("system-exit", "(?i)System\\.exit")
         ));
-        return List.of(new GoldenCase(
-                "rest-crud-api",
-                "A buildable REST CRUD service exposing a controller, with no hardcoded credentials.",
-                restCrudApi,
-                1.0));
+
+        // Case 2 — a command-line tool: buildable, has a main entry point, ships tests, and signals its
+        // exit status via return codes rather than a System.exit that would kill the sandbox JVM.
+        Rubric cliTool = new Rubric("cli-tool", List.of(
+                RubricRule.requirePath("pom.xml"),
+                RubricRule.requireContent(".java", "main-method", "(?i)public\\s+static\\s+void\\s+main"),
+                RubricRule.requirePath("Test.java"),
+                RubricRule.forbidContent("system-exit", "(?i)System\\.exit")
+        ));
+
+        return List.of(
+                new GoldenCase(
+                        "rest-crud-api",
+                        "A buildable REST CRUD service exposing a controller and tests, with no hardcoded "
+                                + "credentials and no sandbox-killing System.exit.",
+                        restCrudApi,
+                        1.0),
+                new GoldenCase(
+                        "cli-tool",
+                        "A buildable command-line tool with a main entry point and tests, signaling exit "
+                                + "status via return codes rather than a sandbox-killing System.exit.",
+                        cliTool,
+                        1.0));
     }
 }
