@@ -86,6 +86,70 @@ class FrontendIntegrationValidatorTest {
     }
 
     @Test
+    void validateSourceFiles_jsQueriesIdMissingFromHtml_isRejected() throws Exception {
+        ObjectNode sourceFiles = objectMapper.createObjectNode();
+        sourceFiles.put("frontend/src/popup.html",
+                "<button id=\"add-profile-btn\"></button><script src=\"popup.js\"></script>");
+        sourceFiles.put("frontend/src/popup.js", "document.getElementById('addProfileButton').click();");
+        sourceFiles.put("frontend/src/popup.css", "* { box-sizing: border-box; }");
+
+        FrontendIntegrationValidator.validateSourceFiles(sourceFiles, null, violations);
+
+        assertThat(violations).anyMatch(v -> v.contains("addProfileButton") && v.contains("element id"));
+    }
+
+    @Test
+    void validateSourceFiles_dynamicallyCreatedId_isTolerated() throws Exception {
+        ObjectNode sourceFiles = objectMapper.createObjectNode();
+        sourceFiles.put("frontend/src/popup.html",
+                "<div id=\"list\"></div><script src=\"popup.js\"></script>");
+        sourceFiles.put("frontend/src/popup.js", """
+                const row = document.createElement('div');
+                row.id = 'dynamic-row';
+                document.getElementById('list').appendChild(row);
+                document.getElementById('dynamic-row').textContent = 'x';
+                """);
+        sourceFiles.put("frontend/src/popup.css", "* { box-sizing: border-box; }");
+
+        FrontendIntegrationValidator.validateSourceFiles(sourceFiles, null, violations);
+
+        // 'dynamic-row' is created in JS, so it must not be flagged as a missing id.
+        assertThat(violations).noneMatch(v -> v.contains("dynamic-row"));
+    }
+
+    @Test
+    void validateSourceFiles_unhandledMessageAction_isRejected() throws Exception {
+        ObjectNode sourceFiles = objectMapper.createObjectNode();
+        sourceFiles.put("frontend/src/content_script.js",
+                "chrome.runtime.sendMessage({ action: 'saveSemanticData', payload: {} });");
+        sourceFiles.put("frontend/src/background.js", """
+                chrome.runtime.onMessage.addListener((msg) => {
+                  if (msg.action === 'somethingElse') { /* ... */ }
+                });
+                """);
+
+        FrontendIntegrationValidator.validateSourceFiles(sourceFiles, null, violations);
+
+        assertThat(violations).anyMatch(v -> v.contains("saveSemanticData") && v.contains("onMessage"));
+    }
+
+    @Test
+    void validateSourceFiles_handledMessageAction_passes() throws Exception {
+        ObjectNode sourceFiles = objectMapper.createObjectNode();
+        sourceFiles.put("frontend/src/content_script.js",
+                "chrome.runtime.sendMessage({ action: 'saveSemanticData', payload: {} });");
+        sourceFiles.put("frontend/src/background.js", """
+                chrome.runtime.onMessage.addListener((msg) => {
+                  if (msg.action === 'saveSemanticData') { /* handle */ }
+                });
+                """);
+
+        FrontendIntegrationValidator.validateSourceFiles(sourceFiles, null, violations);
+
+        assertThat(violations).noneMatch(v -> v.contains("sends runtime message action"));
+    }
+
+    @Test
     void validateTestAgainstSource_hallucinatedId_isRejected() throws Exception {
         ObjectNode generatedSource = objectMapper.createObjectNode();
         generatedSource.put("frontend/src/popup.html", "<button id=\"add-profile-btn\"></button>");

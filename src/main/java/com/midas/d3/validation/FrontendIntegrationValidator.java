@@ -30,6 +30,14 @@ final class FrontendIntegrationValidator {
             "fetch\\(\\s*['\"`]([^'\"`]+)['\"`]");
     /** An OpenAPI-style path parameter, e.g. the {@code {profileId}} in {@code /api/resumes/{profileId}}. */
     private static final Pattern PATH_PARAM = Pattern.compile("\\{[^/{}]+}");
+    /** An element id created/assigned in JS: {@code id="x"}, {@code id: 'x'}, {@code el.id = 'x'}, setAttribute. */
+    private static final Pattern JS_DEFINED_ID = Pattern.compile(
+            "(?:\\bid\\s*[:=]\\s*|setAttribute\\(\\s*['\"]id['\"]\\s*,\\s*)['\"]([^'\"]+)['\"]");
+    /** A {@code chrome.*.sendMessage(} call — the start of a runtime message dispatch. */
+    private static final Pattern SEND_MESSAGE = Pattern.compile("sendMessage\\s*\\(");
+    /** The action/type discriminator inside a message payload object. */
+    private static final Pattern ACTION_IN_PAYLOAD = Pattern.compile(
+            "(?:action|type)\\s*:\\s*['\"]([^'\"]+)['\"]");
 
     private FrontendIntegrationValidator() {}
 
@@ -72,6 +80,106 @@ final class FrontendIntegrationValidator {
         }
 
         validateApiContractUsage(sourceFiles, architecture, violations);
+        validateDomIdConsistency(sourceFiles, violations);
+        validateMessageActionContracts(sourceFiles, violations);
+    }
+
+    /**
+     * Cross-file UI contract: every element id a script queries (getElementById / querySelector('#…'))
+     * must exist in some generated HTML or be created in JS. Catches the popup.js↔popup.html id drift
+     * where a handler binds to an id the markup never defines, so the feature silently no-ops.
+     */
+    private static void validateDomIdConsistency(JsonNode sourceFiles, List<String> violations) {
+        Set<String> htmlIds = collectHtmlIds(sourceFiles);
+        if (htmlIds.isEmpty()) {
+            return;
+        }
+        Set<String> definedInJs = collectJsDefinedIds(sourceFiles);
+
+        Iterator<Map.Entry<String, JsonNode>> fields = sourceFiles.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            String path = entry.getKey();
+            if (!entry.getValue().isTextual() || !isImportableSource(path)) {
+                continue;
+            }
+            for (String id : collectQueriedIds(entry.getValue().asText())) {
+                if (!htmlIds.contains(id) && !definedInJs.contains(id)) {
+                    violations.add("[" + path + "] queries element id ['" + id + "'] that exists in no generated "
+                            + "HTML and is never created in JS — use the exact id present in the markup "
+                            + "(getElementById/querySelector must match an existing id), or render the element.");
+                }
+            }
+        }
+    }
+
+    /**
+     * Cross-file message contract: every runtime message action a script sends
+     * ({@code chrome.runtime/tabs.sendMessage({action|type:'X'})}) must be referenced by some
+     * {@code onMessage} listener. Catches the content_script→background gap where a message like
+     * {@code 'saveSemanticData'} is dispatched but no service worker branches on it.
+     */
+    private static void validateMessageActionContracts(JsonNode sourceFiles, List<String> violations) {
+        StringBuilder handlerContext = new StringBuilder();
+        Iterator<Map.Entry<String, JsonNode>> fields = sourceFiles.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            if (entry.getValue().isTextual() && entry.getValue().asText().contains("onMessage")) {
+                handlerContext.append(entry.getValue().asText()).append('\n');
+            }
+        }
+        String handlers = handlerContext.toString();
+
+        fields = sourceFiles.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            String path = entry.getKey();
+            if (!entry.getValue().isTextual()) {
+                continue;
+            }
+            String content = entry.getValue().asText();
+            if (!content.contains("sendMessage")) {
+                continue;
+            }
+            for (String action : extractSentActions(content)) {
+                if (!handlers.contains("'" + action + "'") && !handlers.contains("\"" + action + "\"")) {
+                    violations.add("[" + path + "] sends runtime message action ['" + action + "'] but no "
+                            + "onMessage listener references it — the receiving script (background / service "
+                            + "worker) must branch on this action so the message is actually handled.");
+                }
+            }
+        }
+    }
+
+    private static Set<String> collectJsDefinedIds(JsonNode sourceFiles) {
+        Set<String> ids = new HashSet<>();
+        Iterator<Map.Entry<String, JsonNode>> fields = sourceFiles.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            if (!entry.getValue().isTextual() || !isImportableSource(entry.getKey())) {
+                continue;
+            }
+            Matcher matcher = JS_DEFINED_ID.matcher(entry.getValue().asText());
+            while (matcher.find()) {
+                ids.add(matcher.group(1));
+            }
+        }
+        return ids;
+    }
+
+    /** Extracts action/type strings from message payloads, scoped to the window after each sendMessage(. */
+    private static Set<String> extractSentActions(String content) {
+        Set<String> actions = new HashSet<>();
+        Matcher send = SEND_MESSAGE.matcher(content);
+        while (send.find()) {
+            int start = send.end();
+            int end = Math.min(content.length(), start + 200);
+            Matcher action = ACTION_IN_PAYLOAD.matcher(content.substring(start, end));
+            if (action.find()) {
+                actions.add(action.group(1));
+            }
+        }
+        return actions;
     }
 
     static void validateTestAgainstSource(String testPath,
