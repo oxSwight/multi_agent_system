@@ -20,9 +20,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -155,6 +157,42 @@ class PerFileCodeGenerationStrategyTest {
                 .hasMessageContaining("MAX_TOKENS");
 
         verify(llmClient, times(1)).call(any());
+    }
+
+    @Test
+    @DisplayName("prompt-cache contract: retry carries correction in volatile suffix, prefix unchanged")
+    void retry_cacheablePrefix_isPreservedAcrossAttempts() throws Exception {
+        stubModelPolicy();
+        JsonNode architecture = objectMapper.readTree("""
+                {"file_layout":["manifest.json"]}
+                """);
+        AgentContextView view = viewWithArchitecture(architecture);
+        MidasContext ctx = MidasContext.start("cache-test", "run-cache")
+                .withTechnicalSpec(objectMapper.readTree("""
+                        {"runtime_environment":{"execution_model":"HYBRID"}}
+                        """));
+
+        when(llmClient.call(any()))
+                .thenReturn(LlmCallResult.ofText("not a code block"))
+                .thenReturn(LlmCallResult.ofText("```json\n{}\n```"));
+
+        strategy.generatePass(ctx, view, ImplementationSurface.CLIENT,
+                AgentSystemPrompts.HYBRID_CLIENT_IMPLEMENTATION_PROMPT,
+                "ImplementationEngineerClient", validator, true);
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(2)).call(captor.capture());
+        List<LlmCallRequest> requests = captor.getAllValues();
+        LlmCallRequest attempt1 = requests.get(0);
+        LlmCallRequest attempt2 = requests.get(1);
+
+        assertThat(attempt2.getCacheableUserPrefix())
+                .as("cacheable prefix must be byte-identical across retry attempts")
+                .isEqualTo(attempt1.getCacheableUserPrefix());
+        assertThat(attempt1.hasVolatileSuffix()).isFalse();
+        assertThat(attempt2.hasVolatileSuffix()).isTrue();
+        assertThat(attempt2.getVolatileSuffix()).contains("CORRECTION REQUIRED");
+        assertThat(attempt2.getCacheableUserPrefix()).doesNotContain("CORRECTION REQUIRED");
     }
 
     @Test

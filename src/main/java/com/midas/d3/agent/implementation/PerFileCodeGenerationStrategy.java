@@ -161,11 +161,15 @@ public class PerFileCodeGenerationStrategy {
         int totalCompletionTokens = 0;
         String lastFinishReason = "";
         int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
+        LlmCallRequest baseRequest = LlmCallRequest.of(
+                MidasState.CODE_GENERATION, llmAgentName,
+                systemPrompt, baseUserMessage,
+                context.getPipelineRunId(), modelOverride);
 
         for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
-            String userMessage = attempt == 1
-                    ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
+            LlmCallRequest request = attempt == 1
+                    ? baseRequest
+                    : baseRequest.withCorrectionFeedback(buildCorrectionFeedback(lastError, attempt, effectiveMax));
 
             log.info("[PerFileCodeGenerationStrategy] {} file [{}/{}] {} attempt {}/{} — run=[{}]",
                     surface != null ? surface.name() : "SINGLE",
@@ -173,13 +177,7 @@ public class PerFileCodeGenerationStrategy {
                     attempt, effectiveMax, context.getPipelineRunId());
 
             try {
-                LlmCallResult llmResult = invokeLlm(context, llmAgentName, LlmCallRequest.of(
-                        MidasState.CODE_GENERATION,
-                        llmAgentName,
-                        systemPrompt,
-                        userMessage,
-                        context.getPipelineRunId(),
-                        modelOverride), attempt, effectiveMax);
+                LlmCallResult llmResult = invokeLlm(context, llmAgentName, request, attempt, effectiveMax);
 
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
@@ -269,10 +267,8 @@ public class PerFileCodeGenerationStrategy {
         return AgentSystemPrompts.appendProductReviewRemediation(baseSystemPrompt, context.getRemediationDirective());
     }
 
-    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt, int maxAttempts) {
-        return baseUserMessage
-                + "\n\n"
-                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
+    private static String buildCorrectionFeedback(String error, int attempt, int maxAttempts) {
+        return "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
                 + "Your previous response was rejected by the validator.\n"
                 + "Violations found:\n"
                 + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"

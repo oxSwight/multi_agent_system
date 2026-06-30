@@ -26,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -384,6 +385,53 @@ class CodeGenerationCoordinatorTest {
 
         verify(llmClient, atLeast(2)).call(any(LlmCallRequest.class));
         assertThat(result.validatedOutput().get("source_files").has(CLI_FILE)).isTrue();
+    }
+
+    @Test
+    @DisplayName("SURGICAL_PATCH cache contract: retry prefix is byte-identical, correction in volatile suffix only")
+    void execute_surgicalPatch_retry_preservesCacheablePrefix() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"},"core_features":["CLI main"]}
+                """);
+        var baselineSource = objectMapper.readTree("""
+                {"cmd/main.go":"package main\\nfunc main() {}"}
+                """);
+        var manifest = objectMapper.readTree("""
+                [{"feature_id":"cli-main","feature_name":"CLI main","files":["cmd/main.go"],"entry_points":["main"]}]
+                """);
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","remediation_mode":"SURGICAL_PATCH","affected_paths":["cmd/main.go"],"required_changes":["Add export flag"]}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-patch-cache")
+                .withTechnicalSpec(spec)
+                .withGeneratedSourceCode(baselineSource)
+                .withFeatureManifest(manifest)
+                .withRemediationDirective(directive);
+
+        when(contextReducer.reducePatchImplementationPass(eq(ctx), eq(List.of("cmd/main.go"))))
+                .thenReturn(view("run-patch-cache", "IMPLEMENTATION_ENGINEER_PATCH"));
+
+        when(llmClient.call(any()))
+                .thenReturn(LlmCallResult.ofText("not json at all"))
+                .thenReturn(LlmCallResult.ofText("""
+                        {"source_files":{"cmd/main.go":"package main\\nfunc main() { export() }"}}
+                        """));
+
+        coordinator.execute(ctx, "ImplementationEngineerAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(2)).call(captor.capture());
+        List<LlmCallRequest> requests = captor.getAllValues();
+        LlmCallRequest attempt1 = requests.get(0);
+        LlmCallRequest attempt2 = requests.get(1);
+
+        assertThat(attempt2.getCacheableUserPrefix())
+                .as("cacheable prefix must be byte-identical across retry attempts")
+                .isEqualTo(attempt1.getCacheableUserPrefix());
+        assertThat(attempt1.hasVolatileSuffix()).isFalse();
+        assertThat(attempt2.hasVolatileSuffix()).isTrue();
+        assertThat(attempt2.getVolatileSuffix()).contains("CORRECTION REQUIRED");
+        assertThat(attempt2.getCacheableUserPrefix()).doesNotContain("CORRECTION REQUIRED");
     }
 
     @Test

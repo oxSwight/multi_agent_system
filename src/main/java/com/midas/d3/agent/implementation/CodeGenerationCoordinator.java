@@ -186,26 +186,22 @@ public class CodeGenerationCoordinator {
         int totalCompletionTokens = 0;
         String lastFinishReason = "";
         int effectiveMax = AgentRetryPolicy.maxValidationAttempts();
+        LlmCallRequest baseRequest = LlmCallRequest.of(
+                MidasState.CODE_GENERATION, llmAgentName,
+                effectivePatchSystemPrompt(context), baseUserMessage,
+                context.getPipelineRunId(), modelOverride);
 
         for (int attempt = 1; attempt <= AgentRetryPolicy.maxValidationAttempts(); attempt++) {
-            String userMessage = attempt == 1
-                    ? baseUserMessage
-                    : injectCorrectionFeedback(baseUserMessage, lastError, attempt, effectiveMax);
+            LlmCallRequest request = attempt == 1
+                    ? baseRequest
+                    : baseRequest.withCorrectionFeedback(buildCorrectionFeedback(lastError, attempt, effectiveMax));
 
             log.info("[CodeGenerationCoordinator] PATCH {} attempt {}/{} — run=[{}]",
                     surface != null ? surface.name() : "SINGLE",
                     attempt, effectiveMax, context.getPipelineRunId());
 
             try {
-                LlmCallResult llmResult = invokeLlm(
-                        context, llmAgentName, LlmCallRequest.of(
-                        MidasState.CODE_GENERATION,
-                        llmAgentName,
-                        effectivePatchSystemPrompt(context),
-                        userMessage,
-                        context.getPipelineRunId(),
-                        modelOverride),
-                        attempt, effectiveMax);
+                LlmCallResult llmResult = invokeLlm(context, llmAgentName, request, attempt, effectiveMax);
                 totalPromptTokens += llmResult.promptTokens();
                 totalCompletionTokens += llmResult.completionTokens();
                 lastFinishReason = llmResult.finishReason();
@@ -478,10 +474,8 @@ public class CodeGenerationCoordinator {
         return sb.toString();
     }
 
-    private static String injectCorrectionFeedback(String baseUserMessage, String error, int attempt, int maxAttempts) {
-        return baseUserMessage
-                + "\n\n"
-                + "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
+    private static String buildCorrectionFeedback(String error, int attempt, int maxAttempts) {
+        return "--- CORRECTION REQUIRED (attempt " + attempt + " of " + maxAttempts + ") ---\n"
                 + "Your previous response was rejected by the schema validator.\n"
                 + "Violations found:\n"
                 + AgentRetryPolicy.formatViolationsForFeedback(error) + "\n"

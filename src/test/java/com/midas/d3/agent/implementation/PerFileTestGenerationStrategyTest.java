@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -135,6 +136,43 @@ class PerFileTestGenerationStrategyTest {
                 "QaAutomationAgent", validator))
                 .isInstanceOf(AgentExecutionException.class)
                 .hasMessageContaining("no test file paths");
+    }
+
+    @Test
+    @DisplayName("prompt-cache contract: retry carries correction in volatile suffix, prefix unchanged")
+    void retry_cacheablePrefix_isPreservedAcrossAttempts() throws Exception {
+        stubModelPolicy();
+        JsonNode architecture = objectMapper.readTree("""
+                {"file_layout":["src/popup.test.ts"]}
+                """);
+        AgentContextView view = viewWithArchitecture(architecture);
+        MidasContext ctx = MidasContext.start("cache-test", "run-cache");
+
+        when(llmClient.call(any()))
+                .thenReturn(LlmCallResult.ofText("not a code block"))
+                .thenReturn(LlmCallResult.ofText("""
+                        ```typescript
+                        describe('popup', () => { it('works', () => expect(true).toBe(true)); });
+                        ```
+                        """));
+
+        strategy.generatePass(ctx, view, null,
+                AgentSystemPrompts.QA_ENGINEER_PROMPT,
+                "QaAutomationAgent", validator);
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(2)).call(captor.capture());
+        List<LlmCallRequest> requests = captor.getAllValues();
+        LlmCallRequest attempt1 = requests.get(0);
+        LlmCallRequest attempt2 = requests.get(1);
+
+        assertThat(attempt2.getCacheableUserPrefix())
+                .as("cacheable prefix must be byte-identical across retry attempts")
+                .isEqualTo(attempt1.getCacheableUserPrefix());
+        assertThat(attempt1.hasVolatileSuffix()).isFalse();
+        assertThat(attempt2.hasVolatileSuffix()).isTrue();
+        assertThat(attempt2.getVolatileSuffix()).contains("CORRECTION REQUIRED");
+        assertThat(attempt2.getCacheableUserPrefix()).doesNotContain("CORRECTION REQUIRED");
     }
 
     @Test

@@ -26,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -358,6 +359,53 @@ class TestGenerationCoordinatorTest {
         assertThat(result.validatedOutput().has("cmd/main_test.go")).isTrue();
         assertThat(result.validatedOutput().has("cmd/util_test.go")).isTrue();
         assertThat(result.attemptsUsed()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("SURGICAL_PATCH cache contract: retry prefix is byte-identical, correction in volatile suffix only")
+    void execute_surgicalPatch_retry_preservesCacheablePrefix() throws Exception {
+        var spec = objectMapper.readTree("""
+                {"runtime_environment":{"execution_model":"CLI"}}
+                """);
+        var patchedSource = objectMapper.readTree("""
+                {"cmd/main.go":"package main\\nfunc main() {}"}
+                """);
+        var baselineTests = objectMapper.readTree("""
+                {"cmd/util_test.go":"func TestUtil(t *testing.T) {}"}
+                """);
+        var directive = objectMapper.readTree("""
+                {"source_verdict":"REJECT","remediation_mode":"SURGICAL_PATCH","affected_paths":["cmd/main.go"],"required_changes":["Cover main"]}
+                """);
+        var ctx = MidasContext.start("Build CLI tool", "run-test-patch-cache")
+                .withTechnicalSpec(spec)
+                .withGeneratedSourceCode(patchedSource)
+                .withGeneratedTests(baselineTests)
+                .withRemediationDirective(directive);
+
+        when(contextReducer.reducePatchTestPass(eq(ctx), eq(List.of("cmd/main.go")), eq(patchedSource)))
+                .thenReturn(view("run-test-patch-cache", "QA_ENGINEER_PATCH"));
+
+        when(llmClient.call(any()))
+                .thenReturn(LlmCallResult.ofText("not json at all"))
+                .thenReturn(LlmCallResult.ofText("""
+                        {"cmd/main_test.go":"func TestMain(t *testing.T) {}"}
+                        """));
+
+        coordinator.execute(ctx, "QaAutomationAgent");
+
+        ArgumentCaptor<LlmCallRequest> captor = ArgumentCaptor.forClass(LlmCallRequest.class);
+        verify(llmClient, times(2)).call(captor.capture());
+        List<LlmCallRequest> requests = captor.getAllValues();
+        LlmCallRequest attempt1 = requests.get(0);
+        LlmCallRequest attempt2 = requests.get(1);
+
+        assertThat(attempt2.getCacheableUserPrefix())
+                .as("cacheable prefix must be byte-identical across retry attempts")
+                .isEqualTo(attempt1.getCacheableUserPrefix());
+        assertThat(attempt1.hasVolatileSuffix()).isFalse();
+        assertThat(attempt2.hasVolatileSuffix()).isTrue();
+        assertThat(attempt2.getVolatileSuffix()).contains("CORRECTION REQUIRED");
+        assertThat(attempt2.getCacheableUserPrefix()).doesNotContain("CORRECTION REQUIRED");
     }
 
     private void stubQaView(String runId, ContextReducer.AgentRole role, String... testPaths) {
