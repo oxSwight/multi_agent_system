@@ -28,6 +28,7 @@ public class NousProperties {
     private int timeoutSeconds = 120;
     private int httpMaxRetries = 2;
     private Routing routing = new Routing();
+    private OutputBudget outputBudget = new OutputBudget();
 
     @Getter
     @Setter
@@ -36,5 +37,18 @@ public class NousProperties {
         private boolean enabled = false;
         private String defaultModel = "qwen2.5-coder:14b";
         private Map<String, String> agents = new LinkedHashMap<>();
+    }
+
+    /**
+     * Per-stage completion-token caps ({@code max_tokens}). A bounded stage (e.g. the Controller
+     * verdict) should not reserve a code-generation-sized completion budget. Built-in per-stage
+     * defaults apply when {@link #stages} has no entry; an operator entry (keyed by {@code MidasState}
+     * name) overrides the built-in; {@link #defaultTokens} is the floor for stages with neither.
+     */
+    @Getter
+    @Setter
+    public static class OutputBudget {
+        private int defaultTokens = 8192;
+        private Map<String, Integer> stages = new LinkedHashMap<>();
     }
 }

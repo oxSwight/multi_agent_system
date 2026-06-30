@@ -38,6 +38,16 @@ public class NousRequest {
      */
     public static NousRequest of(String model, String systemPrompt,
                                  String cacheableUserPrefix, String volatileSuffix) {
+        return of(model, systemPrompt, cacheableUserPrefix, volatileSuffix, 0);
+    }
+
+    /**
+     * Same as {@link #of(String, String, String, String)} but with an explicit per-call completion
+     * budget. A non-positive {@code maxTokens} falls back to the per-model default — so callers that
+     * do not compute a stage budget keep the previous behavior.
+     */
+    public static NousRequest of(String model, String systemPrompt,
+                                 String cacheableUserPrefix, String volatileSuffix, int maxTokens) {
         List<Message> messages = new ArrayList<>(3);
         messages.add(Message.system(systemPrompt));
         messages.add(Message.user(cacheableUserPrefix));
@@ -48,7 +58,7 @@ public class NousRequest {
                 .model(model)
                 .messages(List.copyOf(messages))
                 .temperature(0.1)
-                .maxTokens(resolveMaxTokens(model))
+                .maxTokens(maxTokens > 0 ? maxTokens : resolveMaxTokens(model))
                 .build();
     }
 

@@ -63,12 +63,14 @@ public class NousRestClient implements LlmClient {
     @Override
     public LlmCallResult call(LlmCallRequest request) throws LlmCallException {
         String effectiveModel = resolveModel(request);
+        int maxTokens = OutputTokenBudget.resolve(
+                request.getStage(), effectiveModel, properties.getOutputBudget());
         // Honor the prompt-cache split: stable [system, prefix] + optional volatile correction message.
         NousRequest body = NousRequest.of(effectiveModel, request.getSystemPrompt(),
-                request.getCacheableUserPrefix(), request.getVolatileSuffix());
+                request.getCacheableUserPrefix(), request.getVolatileSuffix(), maxTokens);
 
-        log.info("[NousRestClient] Calling agent=[{}] run=[{}] model={}",
-                request.getAgentName(), request.getPipelineRunId(), effectiveModel);
+        log.info("[NousRestClient] Calling agent=[{}] run=[{}] model={} maxTokens={}",
+                request.getAgentName(), request.getPipelineRunId(), effectiveModel, maxTokens);
 
         int serverErrorAttempts = 0;
         int rateLimitAttempts = 0;
