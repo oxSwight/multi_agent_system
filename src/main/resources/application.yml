@@ -73,6 +73,19 @@ midas:
   artifact:
     dir: ${MIDAS_ARTIFACT_DIR:./midas-artifacts}
 
+  # ── Rate limiting (denial-of-wallet defence) ──────────────────────────────
+  # Per-caller (JWT chatId) token buckets on /api/**. run-creation is the tight cap on the
+  # expensive POST /api/v1/pipelines (each accepted request starts a full LLM pipeline);
+  # general is a looser cap on all other API calls. Periods accept 1m/30s/PT1M forms.
+  ratelimit:
+    enabled: ${MIDAS_RATELIMIT_ENABLED:true}
+    run-creation:
+      capacity: ${MIDAS_RATELIMIT_RUN_CAPACITY:10}
+      period: ${MIDAS_RATELIMIT_RUN_PERIOD:1m}
+    general:
+      capacity: ${MIDAS_RATELIMIT_GENERAL_CAPACITY:120}
+      period: ${MIDAS_RATELIMIT_GENERAL_PERIOD:1m}
+
   agent-retry:
     parse-max-attempts: ${MIDAS_AGENT_RETRY_PARSE_MAX:2}
     validation-max-attempts: ${MIDAS_AGENT_RETRY_VALIDATION_MAX:3}
