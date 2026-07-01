@@ -45,9 +45,6 @@ import java.util.concurrent.Executor;
 @Component
 public class AgentDispatcher {
 
-    /** Mandatory pause between agent invocations to stay under Gemini free-tier RPM limits. */
-    private static final long INTER_AGENT_DELAY_MS = 10_000L;
-
     /** Pseudo-agent name under which the deterministic build gate is logged. */
     private static final String BUILD_VERIFICATION_AGENT_NAME = "BuildVerification";
 
@@ -60,15 +57,22 @@ public class AgentDispatcher {
      *  instead of a client-visible CRITICAL FAILURE. Opt-out via {@code midas.degradation.enabled=false}. */
     private final boolean degradationEnabled;
 
+    /** Pause (ms) before each agent invocation to stay under cloud free-tier RPM limits. Default 10s for
+     *  cloud safety; set {@code midas.agent.inter-agent-delay-ms=0} for local providers (Ollama) which have
+     *  no RPM cap, so pooled worker threads are not held asleep for ~80s/run. */
+    private final long interAgentDelayMs;
+
     public AgentDispatcher(List<BaseMidasAgent> agents,
                            @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor,
                            PersistenceService persistenceService,
                            BuildVerificationService buildVerificationService,
-                           @Value("${midas.degradation.enabled:true}") boolean degradationEnabled) {
+                           @Value("${midas.degradation.enabled:true}") boolean degradationEnabled,
+                           @Value("${midas.agent.inter-agent-delay-ms:10000}") long interAgentDelayMs) {
         this.agentTaskExecutor  = agentTaskExecutor;
         this.persistenceService = persistenceService;
         this.buildVerificationService = buildVerificationService;
         this.degradationEnabled = degradationEnabled;
+        this.interAgentDelayMs = Math.max(0, interAgentDelayMs);
         this.agentMap = new EnumMap<>(MidasState.class);
         for (BaseMidasAgent agent : agents) {
             MidasState state = agent.resolveStage();
@@ -178,9 +182,11 @@ public class AgentDispatcher {
         long startMs = System.currentTimeMillis();
 
         try {
-            log.debug("[AgentDispatcher] Throttling {} ms before agent [{}] for run [{}].",
-                    INTER_AGENT_DELAY_MS, agent.getAgentName(), runId);
-            Thread.sleep(INTER_AGENT_DELAY_MS);
+            if (interAgentDelayMs > 0) {
+                log.debug("[AgentDispatcher] Throttling {} ms before agent [{}] for run [{}].",
+                        interAgentDelayMs, agent.getAgentName(), runId);
+                Thread.sleep(interAgentDelayMs);
+            }
 
             AgentResult result = agent.execute(context);
             long elapsedMs = System.currentTimeMillis() - startMs;
