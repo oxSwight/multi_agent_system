@@ -163,7 +163,11 @@ public class PerFileCodeGenerationStrategy {
                             + AgentRetryPolicy.formatViolationsForFeedback(lastFailure),
                     normalizedSource,
                     featureManifest,
-                    List.copyOf(lastFailure.getViolations()));
+                    List.copyOf(lastFailure.getViolations()),
+                    // Carry the tokens already spent so this delivered-with-gaps run records real cost, not $0.
+                    totalPromptTokens,
+                    totalCompletionTokens,
+                    modelId);
         }
 
         LlmCallObservability.logExecutionSummary(

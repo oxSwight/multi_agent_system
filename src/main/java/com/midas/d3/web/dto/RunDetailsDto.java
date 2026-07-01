@@ -1,10 +1,10 @@
 package com.midas.d3.web.dto;
 
 import com.midas.d3.persistence.entity.MidasRunEntity;
-import com.midas.d3.web.FinOpsCostEstimator;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Full detail view of a single pipeline run, combining the summary fields
@@ -33,8 +33,7 @@ public record RunDetailsDto(
         Instant createdAt,
         List<AgentLogDto> agentLogs
 ) {
-    public static RunDetailsDto from(MidasRunEntity entity, List<AgentLogDto> agentLogs,
-                                     FinOpsCostEstimator costEstimator) {
+    public static RunDetailsDto from(MidasRunEntity entity, List<AgentLogDto> agentLogs) {
         return new RunDetailsDto(
                 entity.getId(),
                 entity.getStatus(),
@@ -42,9 +41,23 @@ public record RunDetailsDto(
                 entity.getArtifactPath(),
                 entity.getTotalPromptTokens(),
                 entity.getTotalCompletionTokens(),
-                costEstimator.estimateCostUsd(entity.getTotalPromptTokens(), entity.getTotalCompletionTokens()),
+                // Sum the per-agent (model-aware) costs rather than estimating from run totals, which would
+                // apply a single rate across possibly-different models and mis-cost local vs cloud stages.
+                sumAgentCosts(agentLogs),
                 entity.getCreatedAt(),
                 agentLogs
         );
+    }
+
+    private static Double sumAgentCosts(List<AgentLogDto> agentLogs) {
+        List<Double> costs = agentLogs.stream()
+                .map(AgentLogDto::estimatedCostUsd)
+                .filter(Objects::nonNull)
+                .toList();
+        if (costs.isEmpty()) {
+            return null;
+        }
+        double total = costs.stream().mapToDouble(Double::doubleValue).sum();
+        return Math.round(total * 1_000_000.0) / 1_000_000.0;
     }
 }

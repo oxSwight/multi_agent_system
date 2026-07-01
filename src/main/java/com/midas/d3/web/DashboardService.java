@@ -93,7 +93,7 @@ public class DashboardService {
                 .map(entity -> AgentLogDto.from(entity, finOpsCostEstimator))
                 .toList();
 
-        return RunDetailsDto.from(run, logs, finOpsCostEstimator);
+        return RunDetailsDto.from(run, logs);
     }
 
     // ── Performance chart ────────────────────────────────────────────────────

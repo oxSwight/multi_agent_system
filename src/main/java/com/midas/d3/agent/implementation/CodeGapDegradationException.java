@@ -25,6 +25,11 @@ public final class CodeGapDegradationException extends AgentExecutionException {
     private final transient JsonNode partialSource;
     private final transient JsonNode featureManifest;
     private final transient List<String> gaps;
+    // Token usage already consumed by the (degraded) generation, so a delivered-with-gaps run — a SOLD
+    // path — records its real cost instead of $0. See AgentDispatcher's degraded branch + FinOps.
+    private final int promptTokens;
+    private final int completionTokens;
+    private final transient String modelId;
 
     public CodeGapDegradationException(String agentName,
                                        ContextReducer.AgentRole role,
@@ -32,16 +37,25 @@ public final class CodeGapDegradationException extends AgentExecutionException {
                                        String lastError,
                                        JsonNode partialSource,
                                        JsonNode featureManifest,
-                                       List<String> gaps) {
+                                       List<String> gaps,
+                                       int promptTokens,
+                                       int completionTokens,
+                                       String modelId) {
         super(agentName, role, attemptsUsed, lastError);
-        this.partialSource   = partialSource;
-        this.featureManifest = featureManifest;
-        this.gaps            = gaps == null ? List.of() : List.copyOf(gaps);
+        this.partialSource    = partialSource;
+        this.featureManifest  = featureManifest;
+        this.gaps             = gaps == null ? List.of() : List.copyOf(gaps);
+        this.promptTokens     = promptTokens;
+        this.completionTokens = completionTokens;
+        this.modelId          = modelId;
     }
 
     public JsonNode getPartialSource()   { return partialSource; }
     public JsonNode getFeatureManifest() { return featureManifest; }
     public List<String> getGaps()        { return gaps; }
+    public int getPromptTokens()         { return promptTokens; }
+    public int getCompletionTokens()     { return completionTokens; }
+    public String getModelId()           { return modelId; }
 
     /** True when there is at least one generated file to deliver — the precondition for degrading. */
     public boolean hasSalvageablePartial() {

@@ -23,7 +23,8 @@ public record AgentLogDto(
                 entity.getCompletionTokens(),
                 entity.getModelId(),
                 entity.getFinishReason(),
-                costEstimator.estimateCostUsd(entity.getPromptTokens(), entity.getCompletionTokens()),
+                costEstimator.estimateCostUsd(
+                        entity.getPromptTokens(), entity.getCompletionTokens(), entity.getModelId()),
                 entity.isError()
         );
     }

@@ -130,7 +130,8 @@ class AgentDispatcherTest {
         JsonNode manifest = mapper.readTree("[{\"feature_name\":\"Create task\"}]");
         when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
                 "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
-                3, "assembled envelope rejected", partial, manifest, List.of("Assign not implemented")));
+                3, "assembled envelope rejected", partial, manifest, List.of("Assign not implemented"),
+                1200, 340, "qwen2.5-coder:14b"));
         when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
 
         dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
@@ -142,10 +143,11 @@ class AgentDispatcherTest {
         assertThat(vars.get(PipelineContextKeys.DEGRADATION_GAPS))
                 .isEqualTo(List.of("Assign not implemented"));
 
-        // A delivered, degraded product — logged as NON-error (isError=false).
+        // A delivered, degraded product — logged as NON-error (isError=false) with the REAL tokens+model
+        // already consumed, so this sold path records true cost instead of $0.
         verify(persistenceService).logAgentExecution(
                 eq("run-dispatch-001"), eq("SecOpsAgent"), contains("[DEGRADED]"),
-                isNull(), eq(0), eq(0), anyLong(), eq(false));
+                eq("qwen2.5-coder:14b"), eq(1200), eq(340), anyLong(), eq(false));
 
         ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
         verify(machine).sendEvent(eventCaptor.capture());
@@ -161,7 +163,8 @@ class AgentDispatcherTest {
         // (setUp dispatcher has degradationEnabled=true). Exercises the salvageability half of the guard.
         when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
                 "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
-                3, "nothing salvageable", mapper.createObjectNode(), mapper.createArrayNode(), List.of("gap")));
+                3, "nothing salvageable", mapper.createObjectNode(), mapper.createArrayNode(), List.of("gap"),
+                0, 0, "qwen2.5-coder:14b"));
         when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
 
         dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
@@ -188,7 +191,8 @@ class AgentDispatcherTest {
                 List.of(agent), Runnable::run, persistenceService, buildVerificationService, false);
         when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
                 "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
-                3, "assembled envelope rejected", partial, mapper.createArrayNode(), List.of("gap")));
+                3, "assembled envelope rejected", partial, mapper.createArrayNode(), List.of("gap"),
+                0, 0, "qwen2.5-coder:14b"));
         when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
 
         disabled.dispatch(machine, MidasState.SECOPS_AUDIT);
