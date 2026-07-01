@@ -10,6 +10,7 @@ import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.persistence.PersistenceService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.support.MessageBuilder;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -48,10 +50,21 @@ public class AgentDispatcher {
     /** Pseudo-agent name under which the deterministic build gate is logged. */
     private static final String BUILD_VERIFICATION_AGENT_NAME = "BuildVerification";
 
+    /** States in which the run is already finalized — a CRITICAL_FAILURE that lands here needs no fallback. */
+    private static final EnumSet<MidasState> TERMINAL_STATES = EnumSet.of(
+            MidasState.COMPLETED, MidasState.COMPLETED_WITH_GAPS, MidasState.ERROR);
+
     private final Map<MidasState, BaseMidasAgent> agentMap;
     private final Executor agentTaskExecutor;
     private final PersistenceService persistenceService;
     private final BuildVerificationService buildVerificationService;
+
+    /**
+     * Resolved lazily to break the construction cycle: {@link PipelineOrchestrator} → StateMachineFactory
+     * → state-machine actions → {@code AgentDispatcher}. Used only on the durable-ERROR fallback path to
+     * evict a machine that could not accept its own CRITICAL_FAILURE.
+     */
+    private final ObjectProvider<PipelineOrchestrator> orchestratorProvider;
 
     /** When true (default), an unhealable CODE_GENERATION functional gap degrades to COMPLETED_WITH_GAPS
      *  instead of a client-visible CRITICAL FAILURE. Opt-out via {@code midas.degradation.enabled=false}. */
@@ -66,11 +79,13 @@ public class AgentDispatcher {
                            @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor,
                            PersistenceService persistenceService,
                            BuildVerificationService buildVerificationService,
+                           ObjectProvider<PipelineOrchestrator> orchestratorProvider,
                            @Value("${midas.degradation.enabled:true}") boolean degradationEnabled,
                            @Value("${midas.agent.inter-agent-delay-ms:10000}") long interAgentDelayMs) {
         this.agentTaskExecutor  = agentTaskExecutor;
         this.persistenceService = persistenceService;
         this.buildVerificationService = buildVerificationService;
+        this.orchestratorProvider = orchestratorProvider;
         this.degradationEnabled = degradationEnabled;
         this.interAgentDelayMs = Math.max(0, interAgentDelayMs);
         this.agentMap = new EnumMap<>(MidasState.class);
@@ -170,7 +185,7 @@ public class AgentDispatcher {
             persistenceService.logAgentExecution(
                     runId, BUILD_VERIFICATION_AGENT_NAME, "Build verification error: " + e.getMessage(),
                     null, 0, 0, elapsedMs, true);
-            sendCriticalFailure(machine, "Build verification error: " + e.getMessage());
+            sendCriticalFailure(machine, runId, "Build verification error: " + e.getMessage());
         }
     }
 
@@ -230,7 +245,7 @@ public class AgentDispatcher {
             persistenceService.logAgentExecution(
                     runId, agent.getAgentName(), "Interrupted during inter-agent throttle",
                     null, 0, 0, elapsedMs, true);
-            sendCriticalFailure(machine, "Agent dispatch interrupted");
+            sendCriticalFailure(machine, runId, "Agent dispatch interrupted");
 
         } catch (CodeGapDegradationException e) {
             long elapsedMs = System.currentTimeMillis() - startMs;
@@ -256,7 +271,7 @@ public class AgentDispatcher {
                         degradationEnabled ? "had no salvageable partial" : "disabled", e.getMessage());
                 persistenceService.logAgentExecution(
                         runId, agent.getAgentName(), e.getMessage(), null, 0, 0, elapsedMs, true);
-                sendCriticalFailure(machine, e.getMessage());
+                sendCriticalFailure(machine, runId, e.getMessage());
             }
 
         } catch (AgentExecutionException e) {
@@ -268,7 +283,7 @@ public class AgentDispatcher {
                     runId, agent.getAgentName(), e.getMessage(),
                     null, 0, 0, elapsedMs, true);
 
-            sendCriticalFailure(machine, e.getMessage());
+            sendCriticalFailure(machine, runId, e.getMessage());
 
         } catch (LlmCallException e) {
             long elapsedMs = System.currentTimeMillis() - startMs;
@@ -279,7 +294,7 @@ public class AgentDispatcher {
                     runId, agent.getAgentName(), e.getMessage(),
                     null, 0, 0, elapsedMs, true);
 
-            sendCriticalFailure(machine, e.getMessage());
+            sendCriticalFailure(machine, runId, e.getMessage());
 
         } catch (Exception e) {
             long elapsedMs = System.currentTimeMillis() - startMs;
@@ -290,7 +305,7 @@ public class AgentDispatcher {
                     runId, agent.getAgentName(), "Unexpected error: " + e.getMessage(),
                     null, 0, 0, elapsedMs, true);
 
-            sendCriticalFailure(machine, "Unexpected agent error: " + e.getMessage());
+            sendCriticalFailure(machine, runId, "Unexpected agent error: " + e.getMessage());
         }
     }
 
@@ -304,11 +319,50 @@ public class AgentDispatcher {
         }
     }
 
-    private void sendCriticalFailure(StateMachine<MidasState, MidasEvent> machine, String errorMessage) {
+    /**
+     * Sends {@link MidasEvent#CRITICAL_FAILURE} and — when the machine does not accept it — applies a
+     * durable-ERROR fallback so the run cannot wedge.
+     *
+     * <p>Normally the machine transitions straight to {@link MidasState#ERROR}. But if the event is
+     * denied (the machine sits in a CHOICE pseudo-state, was already stopped/evicted, or
+     * {@link #sendEvent} swallowed a reactive error), the machine never reaches a terminal state: its
+     * terminal-eviction listener never fires, so it leaks in the orchestrator registry AND — because
+     * {@code hasActiveMachine} stays {@code true} — the reaper skips it. An auto/Telegram run would
+     * then wait forever. In that case force the run to {@code ERROR} in the DB and evict the machine,
+     * delivering an honest terminal instead of a silent hang.
+     */
+    private void sendCriticalFailure(StateMachine<MidasState, MidasEvent> machine,
+                                     String runId, String errorMessage) {
+        String message = (errorMessage != null && !errorMessage.isBlank())
+                ? errorMessage
+                : "Agent exhausted all retries";
+
         sendEvent(machine, MessageBuilder
                 .withPayload(MidasEvent.CRITICAL_FAILURE)
-                .setHeader(PipelineContextKeys.AGENT_ERROR_HEADER,
-                        errorMessage != null ? errorMessage : "Agent exhausted all retries")
+                .setHeader(PipelineContextKeys.AGENT_ERROR_HEADER, message)
                 .build());
+
+        MidasState state = machine.getState() != null ? machine.getState().getId() : null;
+        if (state != null && TERMINAL_STATES.contains(state)) {
+            return; // Machine accepted the failure (or was already terminal) — normal path.
+        }
+
+        // Not terminal. But if the machine has already left the registry — its terminal-eviction
+        // listener fired during the transition and evicted it — the run finalized cleanly and there is
+        // nothing to force. Gating on the registry (not just getState()) also makes the decision robust
+        // against a benign getState()/async-stop race: a genuine wedge leaves the machine BOTH
+        // non-terminal AND still registered.
+        PipelineOrchestrator orchestrator = orchestratorProvider.getObject();
+        if (!orchestrator.hasActiveMachine(runId)) {
+            return;
+        }
+
+        // Durable-ERROR fallback: give the client an honest terminal and reclaim the leaked machine.
+        // NOTE: because the machine never entered ERROR here, a Telegram run's state listener does not
+        // fire, so the DB/REST show ERROR but no chat message is pushed — tracked as a P3-4 follow-up.
+        log.error("[AgentDispatcher] Run [{}] wedged after CRITICAL_FAILURE (state={}, still registered) "
+                + "— applying durable ERROR fallback (mark ERROR + evict).", runId, state);
+        persistenceService.failRun(runId, message);
+        orchestrator.evictRun(runId);
     }
 }

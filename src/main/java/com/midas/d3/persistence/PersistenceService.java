@@ -207,6 +207,28 @@ public class PersistenceService {
         }
     }
 
+    /**
+     * Force-marks a run as {@code ERROR} when the state machine could not record the terminal itself —
+     * the durable-ERROR fallback for a {@code CRITICAL_FAILURE} the machine did not accept (see
+     * {@link com.midas.d3.statemachine.AgentDispatcher}). Sets the status and records the failure so
+     * the client and dashboard see an honest terminal immediately, instead of a wedged run that only
+     * the reaper would eventually clean up.
+     *
+     * @param runId        the pipeline run ID
+     * @param errorMessage human-readable failure description
+     */
+    public void failRun(String runId, String errorMessage) {
+        try {
+            runRepository.updateStatus(runId, "ERROR", Instant.now());
+            logAgentExecution(runId, "AgentDispatcher",
+                    errorMessage != null ? errorMessage : "Critical failure — no details",
+                    null, 0, 0, 0L, true);
+            log.warn("[PersistenceService] Marked run [{}] as ERROR via durable-ERROR fallback.", runId);
+        } catch (Exception ex) {
+            log.warn("[PersistenceService] Failed to mark run [{}] as ERROR: {}", runId, ex.getMessage(), ex);
+        }
+    }
+
     // ── Agent log ─────────────────────────────────────────────────────────────
 
     /**
