@@ -69,6 +69,12 @@ midas:
     parse-max-attempts: ${MIDAS_AGENT_RETRY_PARSE_MAX:2}
     validation-max-attempts: ${MIDAS_AGENT_RETRY_VALIDATION_MAX:3}
 
+  agent:
+    # Pause (ms) before each agent invocation to respect cloud free-tier RPM limits. Default 10s for cloud
+    # safety; set to 0 for LOCAL providers (Ollama/LM Studio) which have no RPM cap — avoids ~80s/run of
+    # pooled worker threads held asleep.
+    inter-agent-delay-ms: ${MIDAS_AGENT_INTER_AGENT_DELAY_MS:10000}
+
   finops:
     # Cloud list prices (USD per 1M tokens) applied ONLY to non-free models (see free-model-prefixes).
     # Defaults approximate Gemini 2.5 Flash.

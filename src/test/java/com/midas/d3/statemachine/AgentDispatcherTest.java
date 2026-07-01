@@ -50,7 +50,7 @@ class AgentDispatcherTest {
         when(agent.getAgentName()).thenReturn("SecOpsAgent");
 
         dispatcher = new AgentDispatcher(
-                List.of(agent), syncExecutor, persistenceService, buildVerificationService, true);
+                List.of(agent), syncExecutor, persistenceService, buildVerificationService, true, 0L);
 
         context = MidasContext.start("Build API", "run-dispatch-001");
         Map<Object, Object> variables = new HashMap<>();
@@ -188,7 +188,7 @@ class AgentDispatcherTest {
         ObjectMapper mapper = new ObjectMapper();
         JsonNode partial = mapper.readTree("{\"src/main/java/A.java\":\"class A {}\"}");
         AgentDispatcher disabled = new AgentDispatcher(
-                List.of(agent), Runnable::run, persistenceService, buildVerificationService, false);
+                List.of(agent), Runnable::run, persistenceService, buildVerificationService, false, 0L);
         when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
                 "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
                 3, "assembled envelope rejected", partial, mapper.createArrayNode(), List.of("gap"),
