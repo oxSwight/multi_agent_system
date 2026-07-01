@@ -77,6 +77,10 @@ midas:
     client-type: ${MIDAS_LLM_CLIENT_TYPE:NOUS}
     timeout-seconds: ${MIDAS_LLM_TIMEOUT_SECONDS:180}
     http-max-retries: ${MIDAS_LLM_HTTP_MAX_RETRIES:5}
+    # Max in-memory size (MB) for a single LLM HTTP response body. Raised well above the WebFlux
+    # 256KB codec default so large CODE_GENERATION/TEST_GENERATION responses don't crash the run;
+    # an over-limit response fails fast (non-retryable) rather than burning the retry budget.
+    max-response-mb: ${MIDAS_LLM_MAX_RESPONSE_MB:16}
     base-url: ${MIDAS_LLM_BASE_URL:https://generativelanguage.googleapis.com}
     api-key: ${MIDAS_LLM_API_KEY:}
     model: ${MIDAS_LLM_MODEL:qwen2.5-coder:14b}

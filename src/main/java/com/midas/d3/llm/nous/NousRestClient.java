@@ -4,9 +4,11 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.llm.LlmCallRequest;
 import com.midas.d3.llm.LlmCallResult;
 import com.midas.d3.llm.LlmClient;
+import com.midas.d3.llm.LlmErrorClassifier;
 import com.midas.d3.llm.nous.dto.NousRequest;
 import com.midas.d3.llm.nous.dto.NousResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -29,17 +31,25 @@ public class NousRestClient implements LlmClient {
     private final NousProperties  properties;
     private final int             timeoutSeconds;
     private final int             httpMaxRetries;
+    private final int             maxResponseMb;
 
-    public NousRestClient(WebClient.Builder webClientBuilder, NousProperties properties) {
+    public NousRestClient(WebClient.Builder webClientBuilder,
+                          NousProperties properties,
+                          @Value("${midas.llm.max-response-mb:16}") int maxResponseMb) {
         this.properties     = properties;
         this.timeoutSeconds = properties.getTimeoutSeconds();
         this.httpMaxRetries = Math.max(0, properties.getHttpMaxRetries());
+        this.maxResponseMb  = Math.max(1, maxResponseMb);
 
         String baseUrl = properties.getBaseUrl();
         String apiKey  = properties.getApiKey();
 
         WebClient.Builder builder = webClientBuilder
                 .baseUrl(baseUrl)
+                // Large CODE_GENERATION/TEST_GENERATION responses routinely exceed WebFlux's 256KB codec
+                // default; without this a DataBufferLimitException crashes the core value step. See below
+                // where it is also classified non-retryable so it fails fast rather than burning retries.
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(this.maxResponseMb * 1024 * 1024))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .defaultHeader(HttpHeaders.ACCEPT,       MediaType.APPLICATION_JSON_VALUE);
 
@@ -167,6 +177,16 @@ public class NousRestClient implements LlmClient {
                             request.getAgentName(), httpCause.getStatusCode(),
                             httpCause.getResponseBodyAsString());
                     throw mapHttpError(request.getAgentName(), httpCause);
+                }
+
+                if (LlmErrorClassifier.isBufferLimitError(e)) {
+                    log.error("[NousRestClient][{}] LLM response exceeded the {} MB in-memory buffer — "
+                            + "failing fast (not retryable).", request.getAgentName(), maxResponseMb);
+                    throw new LlmCallException(
+                            "LLM response for agent [%s] exceeded the %d MB buffer limit "
+                                    .formatted(request.getAgentName(), maxResponseMb)
+                                    + "(midas.llm.max-response-mb). Not retryable — raise the limit or reduce scope.",
+                            e, false);
                 }
 
                 if (isTimeoutCause(e)) {

@@ -57,21 +57,27 @@ public class GeminiLlmClient implements LlmClient {
     private final String    model;
     private final int       timeoutSeconds;
     private final int       httpMaxRetries;
+    private final int       maxResponseMb;
 
     public GeminiLlmClient(
             WebClient.Builder webClientBuilder,
             @Value("${midas.llm.api-key:}") String apiKey,
             @Value("${midas.llm.model:gemini-2.5-flash}") String model,
             @Value("${midas.llm.timeout-seconds:120}") int timeoutSeconds,
-            @Value("${midas.llm.http-max-retries:2}") int httpMaxRetries) {
+            @Value("${midas.llm.http-max-retries:2}") int httpMaxRetries,
+            @Value("${midas.llm.max-response-mb:16}") int maxResponseMb) {
 
         this.apiKey         = apiKey;
         this.model          = model;
         this.timeoutSeconds = timeoutSeconds;
         this.httpMaxRetries = Math.max(0, httpMaxRetries);
+        this.maxResponseMb  = Math.max(1, maxResponseMb);
 
         this.webClient = webClientBuilder
                 .baseUrl(GEMINI_BASE_URL)
+                // Raise the 256KB WebFlux codec default so large generations don't crash the core step
+                // (also classified non-retryable below to fail fast rather than burn the retry budget).
+                .codecs(c -> c.defaultCodecs().maxInMemorySize(this.maxResponseMb * 1024 * 1024))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .build();
     }
@@ -188,6 +194,16 @@ public class GeminiLlmClient implements LlmClient {
                             request.getAgentName(), httpCause.getStatusCode(),
                             httpCause.getResponseBodyAsString());
                     throw mapHttpError(request.getAgentName(), httpCause);
+                }
+
+                if (LlmErrorClassifier.isBufferLimitError(e)) {
+                    log.error("[GeminiLlmClient][{}] LLM response exceeded the {} MB in-memory buffer — "
+                            + "failing fast (not retryable).", request.getAgentName(), maxResponseMb);
+                    throw new LlmCallException(
+                            "LLM response for agent [%s] exceeded the %d MB buffer limit "
+                                    .formatted(request.getAgentName(), maxResponseMb)
+                                    + "(midas.llm.max-response-mb). Not retryable — raise the limit or reduce scope.",
+                            e, false);
                 }
 
                 if (isTimeoutCause(e)) {
