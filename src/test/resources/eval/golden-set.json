@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "description": "MIDAS eval golden-set. 'expected': PASS = must reach COMPLETED; DEGRADE = deliberately over-scoped, must be delivered (COMPLETED or COMPLETED_WITH_GAPS), never a client-visible ERROR. Seeded from the proven-reliable scope; grow toward 25-50.",
+  "ideas": [
+    {
+      "id": "srv-task-crud",
+      "kind": "SERVER_SIDE_CRUD",
+      "title": "Task manager REST API",
+      "expected": "PASS",
+      "tags": ["crud", "spring", "core-scope"],
+      "prompt": "REST API на Spring Boot для управления задачами. Сущность Task: id, title, description, status (TODO/IN_PROGRESS/DONE), dueDate. Полный CRUD: создать, получить по id, получить список, обновить, удалить. Хранение в реляционной БД через JPA-репозиторий."
+    },
+    {
+      "id": "srv-contact-crud",
+      "kind": "SERVER_SIDE_CRUD",
+      "title": "Contact book REST API",
+      "expected": "PASS",
+      "tags": ["crud", "spring", "core-scope"],
+      "prompt": "REST API на Spring Boot — записная книжка контактов. Сущность Contact: id, firstName, lastName, email, phone. CRUD-эндпоинты: создать контакт, получить контакт по id, список всех контактов, обновить, удалить. Персистентность через JPA."
+    },
+    {
+      "id": "srv-inventory-crud",
+      "kind": "SERVER_SIDE_CRUD",
+      "title": "Warehouse inventory REST API",
+      "expected": "PASS",
+      "tags": ["crud", "spring", "core-scope"],
+      "prompt": "REST-сервис на Spring Boot для складского учёта. Сущность Product: id, sku, name, quantity, price. Реализуй CRUD: добавить товар, посмотреть товар по id, список товаров, изменить, удалить. Данные в БД через Spring Data JPA."
+    },
+    {
+      "id": "srv-bookmark-crud",
+      "kind": "SERVER_SIDE_CRUD",
+      "title": "Bookmarks REST API",
+      "expected": "PASS",
+      "tags": ["crud", "spring", "core-scope"],
+      "prompt": "REST API на Spring Boot для хранения закладок. Сущность Bookmark: id, url, title, tags, createdAt. Полный набор CRUD-операций над закладками с сохранением в реляционную БД через JPA-репозиторий."
+    },
+    {
+      "id": "ext-reading-time",
+      "kind": "EXTENSION",
+      "title": "Reading-time badge extension",
+      "expected": "PASS",
+      "tags": ["chrome-mv3", "client-only", "core-scope"],
+      "prompt": "Chrome-расширение (Manifest V3), полностью клиентское. Content-script вычисляет примерное время чтения текущей статьи (по числу слов) и показывает бейдж с минутами в углу страницы. Popup позволяет включить/выключить бейдж; настройка сохраняется в chrome.storage."
+    },
+    {
+      "id": "ext-tab-groups",
+      "kind": "EXTENSION",
+      "title": "Group tabs by domain extension",
+      "expected": "PASS",
+      "tags": ["chrome-mv3", "client-only", "core-scope"],
+      "prompt": "Chrome-расширение (Manifest V3). По нажатию кнопки в popup группирует все открытые вкладки текущего окна по домену, используя chrome.tabs и chrome.tabGroups. Полностью клиентское, без бэкенда."
+    },
+    {
+      "id": "ext-word-counter",
+      "kind": "EXTENSION",
+      "title": "Selection word counter extension",
+      "expected": "PASS",
+      "tags": ["chrome-mv3", "client-only", "core-scope"],
+      "prompt": "Chrome-расширение (Manifest V3), клиентское. Content-script считает количество слов и символов в выделенном на странице тексте и показывает всплывающую подсказку рядом с выделением. Popup показывает счётчик для всей страницы."
+    },
+    {
+      "id": "ext-color-picker",
+      "kind": "EXTENSION",
+      "title": "Page color picker extension",
+      "expected": "PASS",
+      "tags": ["chrome-mv3", "client-only", "core-scope"],
+      "prompt": "Chrome-расширение (Manifest V3), полностью клиентское. Позволяет выбрать цвет любого элемента на странице (пипетка на основе EyeDropper API), копирует HEX в буфер обмена и сохраняет историю последних цветов в chrome.storage. Popup показывает историю."
+    },
+    {
+      "id": "hyb-autofill-sidebar",
+      "kind": "HYBRID",
+      "title": "Autofill sidebar extension + backend",
+      "expected": "PASS",
+      "tags": ["chrome-mv3", "hybrid", "spring-backend", "golden-case"],
+      "prompt": "Chrome-расширение (Manifest V3) с боковой панелью для автозаполнения форм на страницах вакансий: капсула-триггер на полях ввода, подсветка распознанных полей, инлайн-редактирование значений перед вставкой. Значения полей приходят с бэкенда на Spring Boot (эндпоинт возвращает карту поле→значение по профилю пользователя)."
+    },
+    {
+      "id": "hyb-snippet-sync",
+      "kind": "HYBRID",
+      "title": "Snippet manager extension + backend sync",
+      "expected": "PASS",
+      "tags": ["chrome-mv3", "hybrid", "spring-backend"],
+      "prompt": "Chrome-расширение (Manifest V3) — менеджер текстовых сниппетов: сохранить выделенный текст как сниппет, вставить сниппет по горячей клавише на странице. Сниппеты синхронизируются с бэкендом на Spring Boot (CRUD REST API для сниппетов с хранением в БД)."
+    },
+    {
+      "id": "stress-ai-job-assistant",
+      "kind": "STRESS",
+      "title": "AI Job-Application Assistant (over-scoped)",
+      "expected": "DEGRADE",
+      "tags": ["chrome-mv3", "over-scoped", "known-ceiling"],
+      "prompt": "AI-ассистент для откликов на вакансии как Chrome-расширение: капсула на полях, инлайн-редактирование, авто-подбор ответов ИИ, генерация сопроводительных писем, отслеживание откликов, аналитика воронки, интеграция с несколькими job-бордами, синхронизация профиля через бэкенд с авторизацией, экспорт в PDF, напоминания. Максимально насыщенная мульти-возможностная идея."
+    },
+    {
+      "id": "stress-all-in-one-suite",
+      "kind": "STRESS",
+      "title": "All-in-one productivity suite (over-scoped)",
+      "expected": "DEGRADE",
+      "tags": ["over-scoped", "known-ceiling"],
+      "prompt": "Всё-в-одном продуктивность-платформа: задачи, заметки, календарь, трекинг привычек, помодоро-таймер, командные доски, чат, интеграции с почтой и календарями, мобильные пуш-уведомления, AI-ассистент, биллинг и мультитенантность. Единый продукт со всем перечисленным."
+    }
+  ]
+}
