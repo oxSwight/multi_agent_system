@@ -1,0 +1,24 @@
+# ============================================================
+# Production profile overrides. Activate with SPRING_PROFILES_ACTIVE=prod
+# (docker-compose sets this on the backend service).
+#
+# The base application.yml runs com.midas.d3 at DEBUG for a frictionless local
+# dev experience; in production that leaks verbose internals and hurts perf, so
+# this profile lowers logging to INFO and reaffirms graceful shutdown.
+# ============================================================
+server:
+  shutdown: graceful
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 120s
+  jpa:
+    show-sql: false
+    open-in-view: false
+
+logging:
+  level:
+    root: INFO
+    com.midas.d3: INFO
+    org.springframework.statemachine: WARN
+    org.flywaydb: INFO
