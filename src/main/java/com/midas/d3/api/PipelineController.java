@@ -2,6 +2,7 @@ package com.midas.d3.api;
 
 import com.midas.d3.api.dto.*;
 import com.midas.d3.context.MidasContext;
+import com.midas.d3.ratelimit.RunCreationRateLimit;
 import com.midas.d3.statemachine.PipelineOrchestrator;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
@@ -55,6 +56,7 @@ public class PipelineController {
      */
     @PostMapping({ "", "/start" })
     @ResponseStatus(HttpStatus.CREATED)
+    @RunCreationRateLimit
     public StartPipelineResponse startPipeline(@Valid @RequestBody StartPipelineRequest request) {
         // No Telegram binding is accepted over REST (see StartPipelineRequest): a client cannot make
         // the pipeline deliver another user's artifact to an arbitrary chat. Telegram-initiated runs
