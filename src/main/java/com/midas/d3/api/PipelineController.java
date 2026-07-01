@@ -3,11 +3,8 @@ package com.midas.d3.api;
 import com.midas.d3.api.dto.*;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.statemachine.PipelineOrchestrator;
-import com.midas.d3.telegram.TelegramPipelineBot;
-import com.midas.d3.telegram.TelegramStateListener;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -42,14 +39,11 @@ public class PipelineController {
 
     private final PipelineOrchestrator orchestrator;
     private final PipelineArtifactService artifactService;
-    private final TelegramPipelineBot telegramBot;
 
     public PipelineController(PipelineOrchestrator orchestrator,
-                              PipelineArtifactService artifactService,
-                              @Autowired(required = false) TelegramPipelineBot telegramBot) {
+                              PipelineArtifactService artifactService) {
         this.orchestrator = orchestrator;
         this.artifactService = artifactService;
-        this.telegramBot = telegramBot;
     }
 
     // ── POST /api/v1/pipelines ────────────────────────────────────────────────
@@ -62,24 +56,12 @@ public class PipelineController {
     @PostMapping({ "", "/start" })
     @ResponseStatus(HttpStatus.CREATED)
     public StartPipelineResponse startPipeline(@Valid @RequestBody StartPipelineRequest request) {
-        String runId;
-        if (request.hasTelegramBinding()) {
-            if (telegramBot == null) {
-                throw new IllegalStateException(
-                        "Telegram bot is not enabled — cannot bind pipeline progress to chat.");
-            }
-            var listener = new TelegramStateListener(
-                    telegramBot, request.telegramChatId(), request.telegramMessageId());
-            runId = orchestrator.startPipelineWithListener(
-                    request.rawUserIdea(),
-                    request.telegramChatId(),
-                    request.telegramMessageId(),
-                    listener);
-        } else if (request.isAutoMode()) {
-            runId = orchestrator.startPipelineAuto(request.rawUserIdea());
-        } else {
-            runId = orchestrator.startPipeline(request.rawUserIdea());
-        }
+        // No Telegram binding is accepted over REST (see StartPipelineRequest): a client cannot make
+        // the pipeline deliver another user's artifact to an arbitrary chat. Telegram-initiated runs
+        // are started by the bot itself with the real chat id from the incoming update.
+        String runId = request.isAutoMode()
+                ? orchestrator.startPipelineAuto(request.rawUserIdea())
+                : orchestrator.startPipeline(request.rawUserIdea());
         return new StartPipelineResponse(runId, orchestrator.getState(runId).name());
     }
 

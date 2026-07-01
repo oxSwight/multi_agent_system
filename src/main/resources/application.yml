@@ -55,6 +55,10 @@ midas:
       # OVERRIDE IN PRODUCTION via MIDAS_JWT_SECRET environment variable.
       # Default is for local development only — never use in production.
       secret: ${MIDAS_JWT_SECRET:c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0c2VjcmV0}
+    cors:
+      # Comma-separated allowed browser origins for /api/**. Set your prod dashboard
+      # origin(s) via MIDAS_CORS_ALLOWED_ORIGINS (e.g. https://app.example.com).
+      allowed-origins: ${MIDAS_CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
   context:
     max-artifact-size-kb: 512

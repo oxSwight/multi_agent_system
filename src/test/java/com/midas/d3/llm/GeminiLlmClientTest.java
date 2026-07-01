@@ -91,6 +91,26 @@ class GeminiLlmClientTest {
     }
 
     @Test
+    @DisplayName("Sends the API key via x-goog-api-key header, never as a ?key= query param (no secret in URL)")
+    void call_sendsApiKeyInHeader_notInQueryParam() {
+        AtomicReference<String> capturedKeyHeader = new AtomicReference<>();
+        AtomicReference<String> capturedQuery = new AtomicReference<>();
+        ExchangeFunction exchange = request -> {
+            capturedKeyHeader.set(request.headers().getFirst("x-goog-api-key"));
+            capturedQuery.set(request.url().getQuery());
+            return Mono.just(ClientResponse.create(HttpStatus.OK)
+                    .header(HttpHeaders.CONTENT_TYPE, "application/json")
+                    .body(SUCCESS_BODY)
+                    .build());
+        };
+
+        newClient(exchange).call(requestForRun("run-key-header"));
+
+        assertThat(capturedKeyHeader.get()).isEqualTo("test-api-key");
+        assertThat(capturedQuery.get() == null ? "" : capturedQuery.get()).doesNotContain("key=");
+    }
+
+    @Test
     @DisplayName("Uses modelOverride in URL path when present on request")
     void call_withModelOverride_usesOverrideInUrlPath() {
         AtomicReference<String> capturedPath = new AtomicReference<>();
