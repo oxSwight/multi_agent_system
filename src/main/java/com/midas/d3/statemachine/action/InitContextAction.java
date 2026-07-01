@@ -59,6 +59,13 @@ public class InitContextAction implements Action<MidasState, MidasEvent> {
         vars.put(PipelineContextKeys.MIDAS_CONTEXT, midasContext);
         // Clear the completion latch so a machine reused via RESET → START can deliver again.
         vars.remove(PipelineContextKeys.ARTIFACT_DELIVERY_INITIATED);
+        // Clear any residual graceful-degradation state so a reused machine cannot leak a prior run's
+        // partial payload or degraded flag into this fresh run (DegradeToGapsAction consumes the
+        // DEGRADATION_* keys on its happy path, but never runs if the prior run degraded and reset).
+        vars.remove(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE);
+        vars.remove(PipelineContextKeys.DEGRADATION_FEATURE_MANIFEST);
+        vars.remove(PipelineContextKeys.DEGRADATION_GAPS);
+        vars.remove(PipelineContextKeys.DEGRADED_COMPLETION);
         if (autoMode) {
             vars.put(PipelineContextKeys.AUTO_MODE_KEY, Boolean.TRUE);
         }

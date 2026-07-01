@@ -56,6 +56,11 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
     private static final String CAPTION_SUCCESS =
             "✅ <b>Пайплайн завершен.</b> Итоговые артефакты сгенерированы.";
 
+    private static final String CAPTION_DEGRADED =
+            "⚠️ <b>Пайплайн завершён с оговорками.</b> Доставлен частичный артефакт: часть функций "
+            + "не удалось реализовать в рамках бюджета генерации, и сборка НЕ проверялась. "
+            + "Честный отчёт о покрытии — в <code>MIDAS_COVERAGE_REPORT.md</code>.";
+
     private final ArtifactPackagingService           packagingService;
     private final ObjectProvider<TelegramPipelineBot> telegramBotProvider;
     private final Executor                           agentTaskExecutor;
@@ -101,17 +106,23 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
             return;
         }
 
+        // Graceful degradation: when DegradeToGapsAction has flagged DEGRADED_COMPLETION the run is
+        // finalized as COMPLETED_WITH_GAPS (distinct DB status + caption) but reuses this exact
+        // packaging/delivery path — the client always gets an artifact, never a crash.
+        boolean degraded = Boolean.TRUE.equals(vars.get(PipelineContextKeys.DEGRADED_COMPLETION));
+
         if (ctx.getTelegramChatId() == null) {
             // REST-initiated run: package artifacts locally, persist path, skip Telegram delivery.
-            CompletableFuture.runAsync(() -> packageRestArtifacts(ctx), agentTaskExecutor);
-            log.debug("[PipelineCompletionAction] Run [{}] REST-initiated — packaging artifacts locally.",
-                    runId);
+            final MidasContext restCtx = ctx;
+            CompletableFuture.runAsync(() -> packageRestArtifacts(restCtx, degraded), agentTaskExecutor);
+            log.debug("[PipelineCompletionAction] Run [{}] REST-initiated — packaging artifacts locally{}.",
+                    runId, degraded ? " (degraded)" : "");
             return;
         }
 
         TelegramPipelineBot bot = telegramBotProvider.getIfAvailable();
         if (bot == null) {
-            persistenceService.completeRunWithoutArtifact(runId);
+            persistCompletionWithoutArtifact(runId, degraded);
             log.debug("[PipelineCompletionAction] Telegram bot not active — " +
                       "skipping artifact delivery for run [{}].", runId);
             return;
@@ -120,22 +131,23 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
         // Capture finals for lambda — ctx and bot are effectively final at this point
         final MidasContext       finalCtx = ctx;
         final TelegramPipelineBot finalBot = bot;
-        CompletableFuture.runAsync(() -> deliverArtifacts(finalCtx, finalBot), agentTaskExecutor);
+        CompletableFuture.runAsync(() -> deliverArtifacts(finalCtx, finalBot, degraded), agentTaskExecutor);
     }
 
     // ── Async delivery ────────────────────────────────────────────────────────
 
-    private void packageRestArtifacts(MidasContext ctx) {
+    private void packageRestArtifacts(MidasContext ctx, boolean degraded) {
         String runId = ctx.getPipelineRunId();
         File zipFile = null;
         try {
-            log.info("[PipelineCompletionAction] Packaging REST artifacts for run [{}].", runId);
+            log.info("[PipelineCompletionAction] Packaging REST artifacts for run [{}]{}.",
+                    runId, degraded ? " (degraded)" : "");
             zipFile = packagingService.packageResults(ctx);
-            persistenceService.completeRun(runId, zipFile.getAbsolutePath());
+            persistCompletion(runId, zipFile.getAbsolutePath(), degraded);
             log.info("[PipelineCompletionAction] REST artifact ZIP saved at [{}] for run [{}].",
                     zipFile.getAbsolutePath(), runId);
         } catch (Exception e) {
-            persistenceService.completeRunWithoutArtifact(runId);
+            persistCompletionWithoutArtifact(runId, degraded);
             log.error("[PipelineCompletionAction] Failed to package REST artifacts for run [{}]: {}",
                     runId, e.getMessage(), e);
         } finally {
@@ -146,21 +158,22 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
         }
     }
 
-    private void deliverArtifacts(MidasContext ctx, TelegramPipelineBot bot) {
+    private void deliverArtifacts(MidasContext ctx, TelegramPipelineBot bot, boolean degraded) {
         long   chatId  = ctx.getTelegramChatId();
         String runId   = ctx.getPipelineRunId();
         File   zipFile = null;
 
         try {
-            log.info("[PipelineCompletionAction] Packaging artifacts for run [{}], chat [{}].",
-                    runId, chatId);
+            log.info("[PipelineCompletionAction] Packaging artifacts for run [{}], chat [{}]{}.",
+                    runId, chatId, degraded ? " (degraded)" : "");
 
             zipFile = packagingService.packageResults(ctx);
 
-            // Persist the artifact path and mark COMPLETED before sending over the network.
-            persistenceService.completeRun(runId, zipFile.getAbsolutePath());
+            // Persist the artifact path and mark COMPLETED (or COMPLETED_WITH_GAPS) before sending.
+            persistCompletion(runId, zipFile.getAbsolutePath(), degraded);
 
-            boolean delivered = bot.sendArtifactDocument(chatId, zipFile, CAPTION_SUCCESS);
+            boolean delivered = bot.sendArtifactDocument(chatId, zipFile,
+                    degraded ? CAPTION_DEGRADED : CAPTION_SUCCESS);
             if (delivered) {
                 bot.updatePipelineCompletionMessage(ctx, true);
             }
@@ -170,7 +183,7 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
 
         } catch (IOException e) {
             // ZIP creation failed — still mark run as completed without artifact.
-            persistenceService.completeRunWithoutArtifact(runId);
+            persistCompletionWithoutArtifact(runId, degraded);
             log.error("[PipelineCompletionAction] Failed to package artifacts for run [{}]: {}",
                     runId, e.getMessage(), e);
             bot.sendHtmlMessage(chatId,
@@ -180,12 +193,32 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
                     "<code>GET /api/v1/pipelines/" + runId + "/context</code>");
 
         } catch (Exception e) {
-            persistenceService.completeRunWithoutArtifact(runId);
+            persistCompletionWithoutArtifact(runId, degraded);
             log.error("[PipelineCompletionAction] Unexpected error during artifact delivery " +
                       "for run [{}]: {}", runId, e.getMessage(), e);
 
         } finally {
             deleteZipSilently(zipFile, runId);
+        }
+    }
+
+    // ── Completion status (clean vs. graceful degradation) ──────────────────────
+
+    /** Marks the run COMPLETED_WITH_GAPS when degraded, otherwise a clean COMPLETED — with artifact. */
+    private void persistCompletion(String runId, String artifactPath, boolean degraded) {
+        if (degraded) {
+            persistenceService.completeRunWithGaps(runId, artifactPath);
+        } else {
+            persistenceService.completeRun(runId, artifactPath);
+        }
+    }
+
+    /** Same terminal status selection, for the no-artifact path (packaging failed or bot absent). */
+    private void persistCompletionWithoutArtifact(String runId, boolean degraded) {
+        if (degraded) {
+            persistenceService.completeRunWithGapsWithoutArtifact(runId);
+        } else {
+            persistenceService.completeRunWithoutArtifact(runId);
         }
     }
 

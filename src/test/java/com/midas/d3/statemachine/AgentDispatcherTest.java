@@ -1,9 +1,12 @@
 package com.midas.d3.statemachine;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.base.BaseMidasAgent;
+import com.midas.d3.agent.implementation.CodeGapDegradationException;
 import com.midas.d3.build.BuildVerificationService;
+import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.persistence.PersistenceService;
 import org.springframework.messaging.Message;
@@ -114,5 +117,91 @@ class AgentDispatcherTest {
         assertThat(submitted.getPayload()).isEqualTo(MidasEvent.SUBMIT_RESULT);
         assertThat(submitted.getHeaders().get(PipelineContextKeys.LLM_OUTPUT_HEADER))
                 .isEqualTo(reportJson);
+    }
+
+    // ── Graceful degradation (COMPLETED_WITH_GAPS) ────────────────────────────
+
+    @Test
+    @DisplayName("Unhealable functional gap + salvageable partial + degradation enabled → DEGRADE_ARTIFACT")
+    @SuppressWarnings("unchecked")
+    void dispatch_codeGap_degradationEnabled_emitsDegradeArtifact() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode partial  = mapper.readTree("{\"src/main/java/A.java\":\"class A {}\"}");
+        JsonNode manifest = mapper.readTree("[{\"feature_name\":\"Create task\"}]");
+        when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
+                "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
+                3, "assembled envelope rejected", partial, manifest, List.of("Assign not implemented")));
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+
+        dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
+
+        // The partial payload is handed to DegradeToGapsAction via ExtendedState, not message headers.
+        Map<Object, Object> vars = machine.getExtendedState().getVariables();
+        assertThat(vars.get(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE)).isEqualTo(partial);
+        assertThat(vars.get(PipelineContextKeys.DEGRADATION_FEATURE_MANIFEST)).isEqualTo(manifest);
+        assertThat(vars.get(PipelineContextKeys.DEGRADATION_GAPS))
+                .isEqualTo(List.of("Assign not implemented"));
+
+        // A delivered, degraded product — logged as NON-error (isError=false).
+        verify(persistenceService).logAgentExecution(
+                eq("run-dispatch-001"), eq("SecOpsAgent"), contains("[DEGRADED]"),
+                isNull(), eq(0), eq(0), anyLong(), eq(false));
+
+        ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
+        verify(machine).sendEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().block().getPayload()).isEqualTo(MidasEvent.DEGRADE_ARTIFACT);
+    }
+
+    @Test
+    @DisplayName("Unhealable gap, degradation enabled but NO salvageable partial → CRITICAL_FAILURE")
+    @SuppressWarnings("unchecked")
+    void dispatch_codeGap_enabledButNotSalvageable_emitsCriticalFailure() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        // Empty object partial → hasSalvageablePartial() == false even though degradation is enabled
+        // (setUp dispatcher has degradationEnabled=true). Exercises the salvageability half of the guard.
+        when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
+                "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
+                3, "nothing salvageable", mapper.createObjectNode(), mapper.createArrayNode(), List.of("gap")));
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+
+        dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
+
+        // Nothing to deliver → no degradation payload published; the run fails like any exhausted agent.
+        Map<Object, Object> vars = machine.getExtendedState().getVariables();
+        assertThat(vars).doesNotContainKey(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE);
+        verify(persistenceService).logAgentExecution(
+                eq("run-dispatch-001"), eq("SecOpsAgent"), anyString(),
+                isNull(), eq(0), eq(0), anyLong(), eq(true));
+
+        ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
+        verify(machine).sendEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().block().getPayload()).isEqualTo(MidasEvent.CRITICAL_FAILURE);
+    }
+
+    @Test
+    @DisplayName("Unhealable functional gap but degradation disabled → CRITICAL_FAILURE (fallback)")
+    @SuppressWarnings("unchecked")
+    void dispatch_codeGap_degradationDisabled_emitsCriticalFailure() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode partial = mapper.readTree("{\"src/main/java/A.java\":\"class A {}\"}");
+        AgentDispatcher disabled = new AgentDispatcher(
+                List.of(agent), Runnable::run, persistenceService, buildVerificationService, false);
+        when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
+                "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
+                3, "assembled envelope rejected", partial, mapper.createArrayNode(), List.of("gap")));
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+
+        disabled.dispatch(machine, MidasState.SECOPS_AUDIT);
+
+        // No degradation payload published; the run fails like any other exhausted agent.
+        Map<Object, Object> vars = machine.getExtendedState().getVariables();
+        assertThat(vars).doesNotContainKey(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE);
+        verify(persistenceService).logAgentExecution(
+                eq("run-dispatch-001"), eq("SecOpsAgent"), anyString(),
+                isNull(), eq(0), eq(0), anyLong(), eq(true));
+
+        ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
+        verify(machine).sendEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().block().getPayload()).isEqualTo(MidasEvent.CRITICAL_FAILURE);
     }
 }

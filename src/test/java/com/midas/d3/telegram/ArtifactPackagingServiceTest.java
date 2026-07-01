@@ -245,6 +245,57 @@ class ArtifactPackagingServiceTest {
         }
     }
 
+    // ── Graceful degradation: coverage report ─────────────────────────────────
+
+    @Test
+    @DisplayName("coverageReport present → MIDAS_COVERAGE_REPORT.md with delivered capabilities, gaps, and matrix")
+    void packageResults_withCoverageReport_writesCoverageMarkdown() throws IOException {
+        ObjectNode report = objectMapper.createObjectNode();
+        report.put("status", "COMPLETED_WITH_GAPS");
+        report.put("build_verified", false);
+        report.put("delivered_file_count", 2);
+        report.putArray("delivered_capabilities").add("Create task").add("List tasks");
+        report.putArray("gaps").add("Assign task not implemented");
+        report.putArray("coverage_matrix")
+                .add(objectMapper.createObjectNode().put("capability", "Create task").put("status", "GENERATED"))
+                .add(objectMapper.createObjectNode().put("gap", "Assign task not implemented").put("status", "MISSING"));
+        report.put("summary", "Delivered a best-effort partial artifact (2 file(s)).");
+
+        MidasContext ctx = MidasContext.start("Task app", "run-coverage-001")
+                .withCoverageReport(report);
+
+        File zip = service.packageResults(ctx);
+        try {
+            Set<String> entries = listZipEntries(zip);
+            assertThat(entries).contains("MIDAS_COVERAGE_REPORT.md");
+
+            String md = readZipEntry(zip, "MIDAS_COVERAGE_REPORT.md");
+            assertThat(md)
+                    .contains("Delivered With Gaps")
+                    .contains("COMPLETED_WITH_GAPS")
+                    .contains("Create task")
+                    .contains("Assign task not implemented")
+                    .contains("GENERATED")
+                    .contains("MISSING")
+                    .contains("Delivered a best-effort partial artifact");
+        } finally {
+            zip.delete();
+        }
+    }
+
+    @Test
+    @DisplayName("No coverageReport (clean run) → no MIDAS_COVERAGE_REPORT.md in the ZIP")
+    void packageResults_noCoverageReport_omitsCoverageMarkdown() throws IOException {
+        MidasContext ctx = MidasContext.start("Clean run", "run-nocoverage-001");
+
+        File zip = service.packageResults(ctx);
+        try {
+            assertThat(listZipEntries(zip)).doesNotContain("MIDAS_COVERAGE_REPORT.md");
+        } finally {
+            zip.delete();
+        }
+    }
+
     // ── Full context ──────────────────────────────────────────────────────────
 
     @Test

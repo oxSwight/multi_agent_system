@@ -127,6 +127,12 @@ public class ArtifactPackagingService {
 
         writePipelineReport(ctx, dir);
 
+        // Graceful degradation: an honest, client-facing account of what was delivered vs. what could
+        // not be completed. Present only on a COMPLETED_WITH_GAPS run (set by DegradeToGapsAction).
+        if (ctx.getCoverageReport() != null) {
+            writeCoverageReport(dir, ctx.getCoverageReport());
+        }
+
         if (ctx.getTechnicalSpec() != null) {
             writeJsonAsMarkdown(dir, "1_SystemAnalysis.md",
                     "System Analysis — Technical Specification", ctx.getTechnicalSpec());
@@ -190,6 +196,74 @@ public class ArtifactPackagingService {
         sb.append("> ").append(ctx.getRawUserIdea().replace("\n", "\n> ")).append("\n");
 
         Files.writeString(dir.resolve("MIDAS_PIPELINE_REPORT.md"), sb.toString(), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Renders the graceful-degradation coverage report ({@link MidasContext#getCoverageReport()}) as a
+     * human-readable {@code MIDAS_COVERAGE_REPORT.md}. Reads the {@code DegradeToGapsAction}-shaped node
+     * defensively — any missing section is simply skipped so a partially-populated report never fails
+     * packaging (the whole point of degradation is to always deliver something).
+     */
+    private void writeCoverageReport(Path dir, JsonNode report) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        sb.append("# MIDAS Coverage Report — Delivered With Gaps\n\n");
+        sb.append("> **This project was delivered as a best-effort partial artifact.** ");
+        sb.append("The build was **not** verified, and the gaps listed below could not be completed ");
+        sb.append("within the generation budget. Review the code and the gaps before use.\n\n");
+
+        sb.append("| Field | Value |\n|---|---|\n");
+        sb.append("| **Status** | `").append(textOr(report, "status", "COMPLETED_WITH_GAPS")).append("` |\n");
+        sb.append("| **Build verified** | `").append(boolText(report.get("build_verified"), false)).append("` |\n");
+        JsonNode fileCount = report.get("delivered_file_count");
+        if (fileCount != null && fileCount.isNumber()) {
+            sb.append("| **Delivered files** | `").append(fileCount.asInt()).append("` |\n");
+        }
+        sb.append("\n");
+
+        appendBulletList(sb, "## Delivered capabilities", report.get("delivered_capabilities"));
+        appendBulletList(sb, "## Gaps (could not be completed)", report.get("gaps"));
+
+        JsonNode matrix = report.get("coverage_matrix");
+        if (matrix != null && matrix.isArray() && !matrix.isEmpty()) {
+            sb.append("## Coverage matrix\n\n");
+            sb.append("| Item | Status |\n|---|---|\n");
+            for (JsonNode row : matrix) {
+                JsonNode item = row.get("capability") != null ? row.get("capability") : row.get("gap");
+                String itemText = item != null && item.isTextual() ? item.asText().strip() : "—";
+                sb.append("| ").append(itemText).append(" | `")
+                  .append(textOr(row, "status", "UNKNOWN")).append("` |\n");
+            }
+            sb.append("\n");
+        }
+
+        JsonNode summary = report.get("summary");
+        if (summary != null && summary.isTextual() && !summary.asText().isBlank()) {
+            sb.append("## Summary\n\n").append(summary.asText().strip()).append("\n");
+        }
+
+        Files.writeString(dir.resolve("MIDAS_COVERAGE_REPORT.md"), sb.toString(), StandardCharsets.UTF_8);
+    }
+
+    private void appendBulletList(StringBuilder sb, String heading, JsonNode array) {
+        if (array == null || !array.isArray() || array.isEmpty()) {
+            return;
+        }
+        sb.append(heading).append("\n\n");
+        for (JsonNode item : array) {
+            if (item.isTextual() && !item.asText().isBlank()) {
+                sb.append("- ").append(item.asText().strip()).append("\n");
+            }
+        }
+        sb.append("\n");
+    }
+
+    private static String textOr(JsonNode parent, String field, String fallback) {
+        JsonNode node = parent.get(field);
+        return (node != null && node.isTextual() && !node.asText().isBlank()) ? node.asText().strip() : fallback;
+    }
+
+    private static String boolText(JsonNode node, boolean fallback) {
+        return String.valueOf(node != null && node.isBoolean() ? node.asBoolean() : fallback);
     }
 
     private void appendProductReviewNotes(StringBuilder sb, JsonNode report) {

@@ -1,5 +1,7 @@
 package com.midas.d3.statemachine;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.midas.d3.context.MidasContext;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -10,6 +12,7 @@ import org.springframework.statemachine.config.StateMachineFactory;
 import org.springframework.test.context.ActiveProfiles;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
@@ -338,6 +341,80 @@ class PipelineStateMachineTest {
                 MessageBuilder.withPayload(MidasEvent.RESET).build())).blockLast();
 
         assertThat(machine.getState().getId()).isEqualTo(MidasState.IDLE);
+    }
+
+    // ── Graceful degradation (COMPLETED_WITH_GAPS) ────────────────────────────
+
+    @Test
+    @DisplayName("DEGRADE_ARTIFACT at CODE_GENERATION → COMPLETED_WITH_GAPS with an honest coverage report")
+    void degradeArtifact_atCodeGeneration_completesWithGaps() throws Exception {
+        // Drive to CODE_GENERATION (architecture declares no external integrations → INTEGRATION skipped).
+        sendStart("Build a self-contained CLI tool");
+        sendSubmit(VALID_TECH_SPEC);
+        assertState(MidasState.ARCHITECTURE_DESIGN);
+        sendSubmit("""
+            {
+              "architecture_style": "CLI_TOOL",
+              "has_external_integrations": false,
+              "tech_stack": {"language": "Java", "framework": "none", "platform_apis": [], "build_tool": "Maven"},
+              "components": [{"name": "Main", "type": "SERVICE", "responsibility": "CLI entry point"}],
+              "file_layout": ["src/main/java/com/example/Main.java"],
+              "data_persistence": {"type": "LOCAL_FILE", "schema": []},
+              "api_contracts": []
+            }
+            """);
+        assertState(MidasState.CODE_GENERATION);
+
+        // Simulate what AgentDispatcher publishes when CODE_GENERATION hits an unhealable functional
+        // gap but a best-effort partial is salvageable: the payload rides ExtendedState, not headers.
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode partial  = mapper.readTree(
+                "{\"src/main/java/com/example/Main.java\":\"public class Main {}\"}");
+        JsonNode manifest = mapper.readTree("[{\"feature_name\":\"Create task\"}]");
+        var vars = machine.getExtendedState().getVariables();
+        vars.put(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE, partial);
+        vars.put(PipelineContextKeys.DEGRADATION_FEATURE_MANIFEST, manifest);
+        vars.put(PipelineContextKeys.DEGRADATION_GAPS, List.of("Track progress not implemented"));
+
+        machine.sendEvent(Mono.just(
+                MessageBuilder.withPayload(MidasEvent.DEGRADE_ARTIFACT).build())).blockLast();
+
+        // Terminal graceful-degradation state — never a client-visible ERROR.
+        assertState(MidasState.COMPLETED_WITH_GAPS);
+
+        MidasContext ctx = extractContext();
+        assertThat(ctx.getCoverageReport()).isNotNull();
+        assertThat(ctx.getCoverageReport().get("status").asText())
+                .isEqualTo(MidasState.COMPLETED_WITH_GAPS.name());
+        assertThat(ctx.getCoverageReport().get("build_verified").asBoolean()).isFalse();
+        assertThat(ctx.getCoverageReport().get("gaps")).isNotEmpty();
+        assertThat(ctx.getGeneratedSourceCode()).isNotNull();
+        assertThat(ctx.getGeneratedSourceCode().has("src/main/java/com/example/Main.java")).isTrue();
+        // A delivered, degraded product — not an error.
+        assertThat(ctx.getLastErrorMessage()).isNull();
+        assertThat(vars.get(PipelineContextKeys.DEGRADED_COMPLETION)).isEqualTo(Boolean.TRUE);
+        // Transient payload consumed so a reused machine cannot leak it into a later run.
+        assertThat(vars).doesNotContainKey(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE);
+
+        // Like COMPLETED and ERROR, the degraded terminal accepts RESET for machine reuse.
+        machine.sendEvent(Mono.just(
+                MessageBuilder.withPayload(MidasEvent.RESET).build())).blockLast();
+        assertState(MidasState.IDLE);
+
+        // Machine reuse (RESET → START): the prior degraded run's flag + partial payload must NOT
+        // leak into the fresh run — otherwise its eventual clean COMPLETED would be misrecorded as
+        // COMPLETED_WITH_GAPS. InitContextAction is the sole safeguard that clears them on START.
+        sendStart("Build a completely different app");
+        assertState(MidasState.SYSTEM_ANALYSIS);
+        assertThat(vars).doesNotContainKeys(
+                PipelineContextKeys.DEGRADED_COMPLETION,
+                PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE,
+                PipelineContextKeys.DEGRADATION_FEATURE_MANIFEST,
+                PipelineContextKeys.DEGRADATION_GAPS,
+                PipelineContextKeys.ARTIFACT_DELIVERY_INITIATED);
+        MidasContext freshCtx = extractContext();
+        assertThat(freshCtx.getRawUserIdea()).isEqualTo("Build a completely different app");
+        assertThat(freshCtx.getCoverageReport()).isNull();
     }
 
     // ── Guard edge cases ──────────────────────────────────────────────────────
