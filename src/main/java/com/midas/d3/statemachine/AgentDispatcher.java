@@ -3,6 +3,7 @@ package com.midas.d3.statemachine;
 import com.midas.d3.agent.base.AgentExecutionException;
 import com.midas.d3.agent.base.AgentResult;
 import com.midas.d3.agent.base.BaseMidasAgent;
+import com.midas.d3.agent.implementation.CodeGapDegradationException;
 import com.midas.d3.build.BuildVerificationService;
 import com.midas.d3.config.AsyncConfig;
 import com.midas.d3.context.MidasContext;
@@ -10,6 +11,7 @@ import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.persistence.PersistenceService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.statemachine.StateMachine;
 import org.springframework.stereotype.Component;
@@ -54,13 +56,19 @@ public class AgentDispatcher {
     private final PersistenceService persistenceService;
     private final BuildVerificationService buildVerificationService;
 
+    /** When true (default), an unhealable CODE_GENERATION functional gap degrades to COMPLETED_WITH_GAPS
+     *  instead of a client-visible CRITICAL FAILURE. Opt-out via {@code midas.degradation.enabled=false}. */
+    private final boolean degradationEnabled;
+
     public AgentDispatcher(List<BaseMidasAgent> agents,
                            @Qualifier(AsyncConfig.AGENT_EXECUTOR) Executor agentTaskExecutor,
                            PersistenceService persistenceService,
-                           BuildVerificationService buildVerificationService) {
+                           BuildVerificationService buildVerificationService,
+                           @Value("${midas.degradation.enabled:true}") boolean degradationEnabled) {
         this.agentTaskExecutor  = agentTaskExecutor;
         this.persistenceService = persistenceService;
         this.buildVerificationService = buildVerificationService;
+        this.degradationEnabled = degradationEnabled;
         this.agentMap = new EnumMap<>(MidasState.class);
         for (BaseMidasAgent agent : agents) {
             MidasState state = agent.resolveStage();
@@ -217,6 +225,32 @@ public class AgentDispatcher {
                     runId, agent.getAgentName(), "Interrupted during inter-agent throttle",
                     null, 0, 0, elapsedMs, true);
             sendCriticalFailure(machine, "Agent dispatch interrupted");
+
+        } catch (CodeGapDegradationException e) {
+            long elapsedMs = System.currentTimeMillis() - startMs;
+            if (degradationEnabled && e.hasSalvageablePartial()) {
+                log.warn("[AgentDispatcher] Agent [{}] hit an unhealable functional gap for run [{}] ({}ms) "
+                                + "— delivering a partial artifact + coverage report (COMPLETED_WITH_GAPS). Gaps: {}",
+                        agent.getAgentName(), runId, elapsedMs, e.getGaps());
+                // Not a client-visible error: a delivered, degraded product. Logged as non-error with the gaps.
+                persistenceService.logAgentExecution(
+                        runId, agent.getAgentName(),
+                        "[DEGRADED] Delivered partial artifact with gaps: " + String.join("; ", e.getGaps()),
+                        null, 0, 0, elapsedMs, false);
+
+                Map<Object, Object> vars = machine.getExtendedState().getVariables();
+                vars.put(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE, e.getPartialSource());
+                vars.put(PipelineContextKeys.DEGRADATION_FEATURE_MANIFEST, e.getFeatureManifest());
+                vars.put(PipelineContextKeys.DEGRADATION_GAPS, e.getGaps());
+                sendEvent(machine, MessageBuilder.withPayload(MidasEvent.DEGRADE_ARTIFACT).build());
+            } else {
+                log.error("[AgentDispatcher] Agent [{}] functional gap for run [{}] ({}ms); degradation {} — "
+                                + "failing. {}", agent.getAgentName(), runId, elapsedMs,
+                        degradationEnabled ? "had no salvageable partial" : "disabled", e.getMessage());
+                persistenceService.logAgentExecution(
+                        runId, agent.getAgentName(), e.getMessage(), null, 0, 0, elapsedMs, true);
+                sendCriticalFailure(machine, e.getMessage());
+            }
 
         } catch (AgentExecutionException e) {
             long elapsedMs = System.currentTimeMillis() - startMs;

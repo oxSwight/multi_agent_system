@@ -141,6 +141,44 @@ public class PersistenceService {
     }
 
     /**
+     * Persists the artifact ZIP path and sets status to {@code "COMPLETED_WITH_GAPS"} — the
+     * graceful-degradation terminal used when a partial artifact + coverage report was delivered
+     * instead of a client-visible failure. Also queues the run for Evolution Agent analysis.
+     *
+     * @param runId        the pipeline run ID
+     * @param artifactPath absolute filesystem path to the generated ZIP file
+     */
+    public void completeRunWithGaps(String runId, String artifactPath) {
+        try {
+            Instant now = Instant.now();
+            runRepository.updateArtifactPathAndStatus(runId, artifactPath, "COMPLETED_WITH_GAPS", now);
+            runRepository.updateNeedsRefactoring(runId, true, now);
+            log.info("[PersistenceService] Marked run [{}] COMPLETED_WITH_GAPS, artifact=[{}], queued for evolution.",
+                    runId, artifactPath);
+        } catch (Exception ex) {
+            log.warn("[PersistenceService] Failed to complete-with-gaps run [{}]: {}", runId, ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * Sets status to {@code "COMPLETED_WITH_GAPS"} without an artifact ZIP (packaging failed or the
+     * run was REST-initiated with no ZIP). Also queues the run for Evolution Agent analysis.
+     *
+     * @param runId the pipeline run ID
+     */
+    public void completeRunWithGapsWithoutArtifact(String runId) {
+        try {
+            Instant now = Instant.now();
+            runRepository.updateStatus(runId, "COMPLETED_WITH_GAPS", now);
+            runRepository.updateNeedsRefactoring(runId, true, now);
+            log.info("[PersistenceService] Marked run [{}] COMPLETED_WITH_GAPS (no artifact ZIP), queued for evolution.",
+                    runId);
+        } catch (Exception ex) {
+            log.warn("[PersistenceService] Failed to complete-with-gaps run [{}]: {}", runId, ex.getMessage(), ex);
+        }
+    }
+
+    /**
      * Clears the {@code needs_refactoring} flag after the Evolution Agent has
      * successfully analyzed the run. Prevents the same run from being re-analyzed
      * in subsequent scheduling cycles.

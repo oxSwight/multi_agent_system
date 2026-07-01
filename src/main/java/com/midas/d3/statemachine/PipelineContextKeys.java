@@ -47,6 +47,30 @@ public final class PipelineContextKeys {
      */
     public static final String ARTIFACT_DELIVERY_INITIATED = "ARTIFACT_DELIVERY_INITIATED";
 
+    // ── Graceful degradation (COMPLETED_WITH_GAPS) ───────────────────────────
+
+    /**
+     * ExtendedState key: {@code JsonNode} best-effort {@code source_files} map salvaged when
+     * CODE_GENERATION hit an unhealable functional gap. Written by
+     * {@link com.midas.d3.statemachine.AgentDispatcher} on {@link MidasEvent#DEGRADE_ARTIFACT},
+     * consumed (and removed) by {@link com.midas.d3.statemachine.action.DegradeToGapsAction}.
+     */
+    public static final String DEGRADATION_PARTIAL_SOURCE = "DEGRADATION_PARTIAL_SOURCE";
+
+    /** ExtendedState key: {@code JsonNode} best-effort {@code feature_manifest} for the partial artifact. */
+    public static final String DEGRADATION_FEATURE_MANIFEST = "DEGRADATION_FEATURE_MANIFEST";
+
+    /** ExtendedState key: {@code List<String>} the specific unmet gaps (assembled-gate violations). */
+    public static final String DEGRADATION_GAPS = "DEGRADATION_GAPS";
+
+    /**
+     * ExtendedState key: {@code Boolean} set by {@link com.midas.d3.statemachine.action.DegradeToGapsAction}
+     * so the shared {@link com.midas.d3.statemachine.action.PipelineCompletionAction} finalizes the run as
+     * {@code COMPLETED_WITH_GAPS} (distinct status + caption) rather than a clean {@code COMPLETED}. Cleared
+     * by {@link com.midas.d3.statemachine.action.InitContextAction} on START for machine reuse.
+     */
+    public static final String DEGRADED_COMPLETION = "DEGRADED_COMPLETION";
+
     // ── Message header keys ──────────────────────────────────────────────────
 
     /** Header: raw user idea string. Required on {@link MidasEvent#START} messages. */

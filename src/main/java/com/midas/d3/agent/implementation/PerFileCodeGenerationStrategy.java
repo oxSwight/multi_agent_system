@@ -148,13 +148,22 @@ public class PerFileCodeGenerationStrategy {
         }
 
         if (lastFailure != null) {
-            throw new AgentExecutionException(
+            // Graceful degradation: the best-effort partial (normalizedSource + featureManifest) and the
+            // specific unmet gaps are in hand right here. Carry them on the exception so the dispatcher can
+            // deliver a COMPLETED_WITH_GAPS product with an honest coverage report instead of dead-ending
+            // the whole run at a client-visible CRITICAL FAILURE. If degradation is disabled or the partial
+            // is not salvageable, the dispatcher falls back to the same CRITICAL FAILURE path (this remains
+            // an AgentExecutionException), so nothing else changes.
+            throw new CodeGapDegradationException(
                     llmAgentName,
                     ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
                     totalAttempts,
                     "Assembled envelope rejected after per-file generation and "
                             + AssembledHealingSupport.MAX_HEAL_ROUNDS + " self-healing round(s): "
-                            + AgentRetryPolicy.formatViolationsForFeedback(lastFailure));
+                            + AgentRetryPolicy.formatViolationsForFeedback(lastFailure),
+                    normalizedSource,
+                    featureManifest,
+                    List.copyOf(lastFailure.getViolations()));
         }
 
         LlmCallObservability.logExecutionSummary(

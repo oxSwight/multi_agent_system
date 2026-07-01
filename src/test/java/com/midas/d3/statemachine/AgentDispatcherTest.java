@@ -47,7 +47,7 @@ class AgentDispatcherTest {
         when(agent.getAgentName()).thenReturn("SecOpsAgent");
 
         dispatcher = new AgentDispatcher(
-                List.of(agent), syncExecutor, persistenceService, buildVerificationService);
+                List.of(agent), syncExecutor, persistenceService, buildVerificationService, true);
 
         context = MidasContext.start("Build API", "run-dispatch-001");
         Map<Object, Object> variables = new HashMap<>();

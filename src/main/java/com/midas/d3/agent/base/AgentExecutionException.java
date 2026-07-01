@@ -8,8 +8,12 @@ import com.midas.d3.context.ContextReducer;
  *
  * <p>Callers (e.g. pipeline orchestration layer) should treat this as a
  * terminal failure for the current pipeline stage.
+ *
+ * <p>Non-final so {@link com.midas.d3.agent.implementation.CodeGapDegradationException} can extend it:
+ * that subtype carries a salvageable partial artifact for graceful degradation, yet still behaves as an
+ * {@code AgentExecutionException} for every existing {@code catch} (the dispatcher catches the subtype first).
  */
-public final class AgentExecutionException extends RuntimeException {
+public class AgentExecutionException extends RuntimeException {
 
     private final String                  agentName;
     private final ContextReducer.AgentRole role;
