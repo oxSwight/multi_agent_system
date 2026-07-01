@@ -303,6 +303,25 @@ class PipelineCompletionActionTest {
         verifyNoInteractions(packagingService);
     }
 
+    @Test
+    @DisplayName("Degraded Telegram run, packaging IOException → honest degraded message + COMPLETED_WITH_GAPS status")
+    void execute_degradedTelegramIOException_honestMessageAndStatus() throws IOException {
+        long chatId = 515151L;
+        MidasContext ctx = MidasContext.start("TG degraded io", "run-degr-io-001")
+                .withTelegramChatId(chatId);
+        stubDegradedContextVars(ctx);
+        when(telegramBotProvider.getIfAvailable()).thenReturn(telegramBot);
+        when(packagingService.packageResults(any())).thenThrow(new IOException("Disk full"));
+
+        action.execute(stateContext);
+
+        verify(persistenceService).completeRunWithGapsWithoutArtifact("run-degr-io-001");
+        verify(persistenceService, never()).completeRunWithoutArtifact(anyString());
+        // Honest wording on a degraded run: it did NOT "успешно завершен" — it finished with gaps.
+        verify(telegramBot).sendHtmlMessage(eq(chatId),
+                argThat(msg -> msg.contains("с оговорками") && !msg.contains("успешно")));
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void stubContextVars(MidasContext ctx) {

@@ -22,7 +22,7 @@ public class PipelineArtifactService {
         }
 
         MidasState activeState = resolveActiveState(runId);
-        if (activeState != null && activeState != MidasState.COMPLETED) {
+        if (activeState != null && !isArtifactReadyState(activeState)) {
             throw new ArtifactNotFoundException(
                     "Artifacts are not available: pipeline run " + runId + " is not COMPLETED.");
         }
@@ -31,7 +31,7 @@ public class PipelineArtifactService {
                 .orElseThrow(() -> new PipelineOrchestrator.PipelineNotFoundException(
                         "No pipeline run found for ID: " + runId));
 
-        if (activeState == null && !"COMPLETED".equals(run.getStatus())) {
+        if (activeState == null && !isArtifactReadyStatus(run.getStatus())) {
             throw new ArtifactNotFoundException(
                     "Artifacts are not available: pipeline run " + runId + " is not COMPLETED.");
         }
@@ -57,5 +57,18 @@ public class PipelineArtifactService {
         } catch (PipelineOrchestrator.PipelineNotFoundException e) {
             return null;
         }
+    }
+
+    /**
+     * Terminal states whose artifacts are downloadable. COMPLETED_WITH_GAPS is included because a
+     * graceful-degradation run still delivers a real archive (partial source + MIDAS_COVERAGE_REPORT.md);
+     * the client must be able to fetch it, not be told the run "is not COMPLETED".
+     */
+    private static boolean isArtifactReadyState(MidasState state) {
+        return state == MidasState.COMPLETED || state == MidasState.COMPLETED_WITH_GAPS;
+    }
+
+    private static boolean isArtifactReadyStatus(String status) {
+        return "COMPLETED".equals(status) || "COMPLETED_WITH_GAPS".equals(status);
     }
 }
