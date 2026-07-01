@@ -74,7 +74,7 @@ class DomainCriteriaFloorTest {
     }
 
     @Test
-    @DisplayName("Non-extension product gets no floor (no false constraints)")
+    @DisplayName("Non-extension product without a Spring-CRUD shape gets no floor (no false constraints)")
     void nonExtension_getsNoFloor() throws Exception {
         JsonNode spec = mapper.readTree("""
                 {
@@ -83,9 +83,55 @@ class DomainCriteriaFloorTest {
                   "core_features": [{"id": "crud", "name": "CRUD tasks"}]
                 }
                 """);
+        // No Java/Spring signal → the REST floor must not attach (would false-reject a non-Spring stack).
         assertThat(DomainCriteriaFloor.forSpec(spec)).isEmpty();
         assertThat(DomainCriteriaFloor.forSpec(null)).isEmpty();
         assertThat(DomainCriteriaFloor.forSpec(mapper.readTree("{}"))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Spring REST CRUD service gets the deterministic REST-CRUD floor")
+    void springRestCrud_getsRestFloor() throws Exception {
+        JsonNode spec = mapper.readTree("""
+                {
+                  "business_goal": "A Spring Boot REST API for managing tasks with full CRUD (create, read, update, delete)",
+                  "runtime_environment": {"deployment_target": "CLOUD_SERVICE", "execution_model": "SERVER_SIDE"},
+                  "core_features": [{"id": "task-crud", "name": "CRUD operations for tasks"}]
+                }
+                """);
+
+        List<String> ids = DomainCriteriaFloor.forSpec(spec).stream().map(AcceptanceCriterion::id).toList();
+
+        assertThat(ids).contains("rest-controller", "rest-create", "rest-read", "rest-update",
+                "rest-delete", "persistence-entity", "data-repository");
+        // never leaks the extension floor onto a server product
+        assertThat(ids).doesNotContain("ux-sidebar", "ext-event-handler");
+    }
+
+    @Test
+    @DisplayName("A read-only (non-CRUD) Spring REST service is not over-constrained with the CRUD floor")
+    void springRestReadOnly_getsNoFloor() throws Exception {
+        JsonNode spec = mapper.readTree("""
+                {
+                  "business_goal": "A Spring Boot REST API that returns weather forecasts",
+                  "runtime_environment": {"deployment_target": "CLOUD_SERVICE", "execution_model": "SERVER_SIDE"},
+                  "core_features": [{"id": "forecast", "name": "Get forecast"}]
+                }
+                """);
+        assertThat(DomainCriteriaFloor.forSpec(spec)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("A non-Java (Node) REST CRUD service gets no floor (no false reject against Spring annotations)")
+    void nodeRestCrud_getsNoFloor() throws Exception {
+        JsonNode spec = mapper.readTree("""
+                {
+                  "business_goal": "A Node.js Express REST API with full CRUD: create, read, update, delete users",
+                  "runtime_environment": {"deployment_target": "CLOUD_SERVICE", "execution_model": "SERVER_SIDE"},
+                  "core_features": [{"id": "crud", "name": "CRUD users"}]
+                }
+                """);
+        assertThat(DomainCriteriaFloor.forSpec(spec)).isEmpty();
     }
 
     @Test

@@ -48,16 +48,23 @@ public final class DomainCriteriaFloor {
         }
         // contains, not equals: a HYBRID product declares a COMPOUND target such as
         // "BROWSER_EXTENSION + CLOUD_SERVICE", so an exact match would miss exactly the case the
-        // floor exists for.
-        if (!deploymentTarget(technicalSpec).contains("BROWSER_EXTENSION")) {
-            return List.of();
+        // floor exists for. The extension shape is checked first so a HYBRID never also picks up the
+        // pure-server REST floor (its backend is shaped by the architect, not this floor).
+        if (deploymentTarget(technicalSpec).contains("BROWSER_EXTENSION")) {
+            List<AcceptanceCriterion> floor = new ArrayList<>(browserExtensionBaseline());
+            if (looksLikeAutofillSidebar(technicalSpec)) {
+                floor.addAll(autofillSidebarFloor());
+            }
+            return floor;
         }
 
-        List<AcceptanceCriterion> floor = new ArrayList<>(browserExtensionBaseline());
-        if (looksLikeAutofillSidebar(technicalSpec)) {
-            floor.addAll(autofillSidebarFloor());
+        // Pure SERVER_SIDE Spring REST CRUD: a deterministic floor that gives the gates (F2), the
+        // Controller's evidence (F3) and the quality score (F4) substantive, robust signals for the
+        // REST-CRUD shape — the same role the sidebar floor plays for the extension shape.
+        if (looksLikeSpringRestCrud(technicalSpec)) {
+            return springRestCrudFloor();
         }
-        return floor;
+        return List.of();
     }
 
     /**
@@ -157,6 +164,37 @@ public final class DomainCriteriaFloor {
         return floor;
     }
 
+    /**
+     * The deterministic floor for a Spring REST CRUD service. Markers are tolerant (annotation OR the
+     * equivalent {@code RequestMethod} form) so a correct implementation satisfies them regardless of
+     * style, while a hollow one fails. Scoped to a {@code .java} file so it constrains the Spring
+     * surface only.
+     */
+    private static List<AcceptanceCriterion> springRestCrudFloor() {
+        return List.of(
+                AcceptanceCriterion.content("rest-controller",
+                        "a REST controller exposing the HTTP API",
+                        ".java", "(?i)@RestController|@Controller"),
+                AcceptanceCriterion.content("rest-create",
+                        "a create endpoint (HTTP POST)",
+                        ".java", "(?i)@PostMapping|RequestMethod\\.POST"),
+                AcceptanceCriterion.content("rest-read",
+                        "a read endpoint (HTTP GET)",
+                        ".java", "(?i)@GetMapping|RequestMethod\\.GET"),
+                AcceptanceCriterion.content("rest-update",
+                        "an update endpoint (HTTP PUT/PATCH)",
+                        ".java", "(?i)@PutMapping|@PatchMapping|RequestMethod\\.(PUT|PATCH)"),
+                AcceptanceCriterion.content("rest-delete",
+                        "a delete endpoint (HTTP DELETE)",
+                        ".java", "(?i)@DeleteMapping|RequestMethod\\.DELETE"),
+                AcceptanceCriterion.content("persistence-entity",
+                        "a persistent domain entity",
+                        ".java", "(?i)@Entity|@Document|@Table"),
+                AcceptanceCriterion.content("data-repository",
+                        "a data-access repository",
+                        ".java", "(?i)@Repository|extends\\s+\\w*Repository|:\\s*\\w*Repository\\b"));
+    }
+
     // ── Shape detection ──────────────────────────────────────────────────────────
 
     private static String deploymentTarget(JsonNode technicalSpec) {
@@ -168,6 +206,43 @@ public final class DomainCriteriaFloor {
         return target != null && target.isTextual()
                 ? target.asText().strip().toUpperCase(Locale.ROOT)
                 : "";
+    }
+
+    private static String executionModel(JsonNode technicalSpec) {
+        JsonNode env = technicalSpec.get("runtime_environment");
+        if (env == null || !env.isObject()) {
+            return "";
+        }
+        JsonNode model = env.get("execution_model");
+        return model != null && model.isTextual()
+                ? model.asText().strip().toUpperCase(Locale.ROOT)
+                : "";
+    }
+
+    /** True when the runtime boundary is a server/cloud service (not a client or extension). */
+    private static boolean isServerSide(JsonNode technicalSpec) {
+        String dt = deploymentTarget(technicalSpec);
+        return dt.contains("CLOUD_SERVICE") || dt.contains("SERVER")
+                || executionModel(technicalSpec).contains("SERVER");
+    }
+
+    /**
+     * True when the spec describes a <b>Spring (Java) REST CRUD</b> service: a server-side runtime, a
+     * Java/Spring stack, a REST surface, and explicit CRUD intent. The CRUD signal is deliberately
+     * strong (the word "crud", or the create+update+delete verbs together) so a read-only or
+     * single-purpose REST service is not over-constrained with the full CRUD floor; a non-Java stack
+     * (e.g. Node) yields no floor rather than a false reject against Spring annotations.
+     */
+    private static boolean looksLikeSpringRestCrud(JsonNode technicalSpec) {
+        if (!isServerSide(technicalSpec)) {
+            return false;
+        }
+        String h = technicalSpec.toString().toLowerCase(Locale.ROOT);
+        boolean springJava = h.matches("(?s).*(spring|jpa|hibernate).*") || h.matches("(?s).*\\bjava\\b.*");
+        boolean rest = h.matches("(?s).*(rest|\\bapi\\b|endpoint|controller|http).*");
+        boolean crud = h.contains("crud")
+                || (h.contains("create") && h.contains("update") && h.contains("delete"));
+        return springJava && rest && crud;
     }
 
     /**
