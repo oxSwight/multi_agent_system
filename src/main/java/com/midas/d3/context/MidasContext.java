@@ -106,6 +106,16 @@ public final class MidasContext {
     /** Number of build-failure remediation loops consumed (bounded by the topology cap). */
     @With private final int buildRemediationAttempts;
 
+    /**
+     * Graceful-degradation coverage report, set only when a run terminates in
+     * {@link com.midas.d3.statemachine.MidasState#COMPLETED_WITH_GAPS}. Honest account of what was
+     * delivered vs. what could not be completed within the generation budget — a
+     * {@code {status, build_verified, delivered_file_count, gaps[], coverage_matrix, summary}}-shaped
+     * node (reuses the Controller {@code coverage_matrix} concept). Surfaced in {@code GET /context}
+     * and packaged as {@code MIDAS_COVERAGE_REPORT.md}. Null on a clean COMPLETED or an ERROR run.
+     */
+    @With private final JsonNode coverageReport;
+
     @With private final JsonNode remediationDirective;
 
     // ── Telegram Integration ─────────────────────────────────────────────────
@@ -196,6 +206,10 @@ public final class MidasContext {
 
     public Optional<JsonNode> getQualityScoreOpt() {
         return Optional.ofNullable(qualityScore);
+    }
+
+    public Optional<JsonNode> getCoverageReportOpt() {
+        return Optional.ofNullable(coverageReport);
     }
 
     public Optional<JsonNode> getRemediationDirectiveOpt() {

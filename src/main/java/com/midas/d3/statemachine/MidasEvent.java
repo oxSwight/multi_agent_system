@@ -50,6 +50,18 @@ public enum MidasEvent {
     CRITICAL_FAILURE,
 
     /**
+     * Fired by {@link com.midas.d3.statemachine.AgentDispatcher} when {@link MidasState#CODE_GENERATION}
+     * hits an unhealable functional gap yet a best-effort partial artifact is salvageable and graceful
+     * degradation is enabled. Triggers {@code CODE_GENERATION → COMPLETED_WITH_GAPS}: the pipeline
+     * delivers the partial source plus a coverage report instead of a client-visible CRITICAL FAILURE.
+     *
+     * <p>The partial payload (source, feature manifest, gaps) is passed via ExtendedState variables
+     * ({@link com.midas.d3.statemachine.PipelineContextKeys#DEGRADATION_PARTIAL_SOURCE} et al.), not
+     * message headers, so {@link com.midas.d3.statemachine.action.DegradeToGapsAction} can read it.
+     */
+    DEGRADE_ARTIFACT,
+
+    /**
      * Fired by {@link com.midas.d3.statemachine.action.AgentEntryAction} when the System Analyst
      * returns a response prefixed with {@code [NEED_INFO]}, indicating the user's idea is too
      * ambiguous to proceed. Triggers {@code SYSTEM_ANALYSIS → WAITING_FOR_USER_INPUT}.

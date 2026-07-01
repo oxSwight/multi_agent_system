@@ -68,6 +68,16 @@ public enum MidasState {
     /** Terminal success state. All artifacts are validated and stored. */
     COMPLETED,
 
+    /**
+     * Terminal <em>graceful-degradation</em> state. Reached when {@link #CODE_GENERATION} hits an
+     * unhealable functional gap (the assembled-envelope gate exhausts its self-healing budget) but a
+     * best-effort partial artifact is salvageable. Instead of a client-visible {@code CRITICAL FAILURE}
+     * → {@link #ERROR}, the pipeline delivers the partial source plus an honest coverage report
+     * (see {@link com.midas.d3.statemachine.action.DegradeToGapsAction}). Like {@link #COMPLETED} and
+     * {@link #ERROR}, it accepts {@link MidasEvent#RESET} for machine reuse.
+     */
+    COMPLETED_WITH_GAPS,
+
     /** Terminal failure state. Reached after exhausting all validation retries. */
     ERROR,
 
