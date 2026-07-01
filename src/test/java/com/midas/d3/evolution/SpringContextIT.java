@@ -11,6 +11,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
@@ -71,8 +73,8 @@ class SpringContextIT {
     @Test
     @DisplayName("runEvolutionCycle() completes without exception when no pending runs exist")
     void schedulerEntryPoint_noOp_whenQueueEmpty() {
-        when(runRepository.findByStatusAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
-                eq("COMPLETED"), any(Pageable.class)))
+        when(runRepository.findByStatusInAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
+                eq(List.of("COMPLETED", "COMPLETED_WITH_GAPS")), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
         assertThatNoException().isThrownBy(() -> service.runEvolutionCycle());
