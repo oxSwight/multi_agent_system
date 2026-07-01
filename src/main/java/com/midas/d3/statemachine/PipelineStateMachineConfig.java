@@ -3,6 +3,7 @@ package com.midas.d3.statemachine;
 import com.midas.d3.statemachine.action.*;
 import com.midas.d3.statemachine.guard.BuildRemediationAvailableGuard;
 import com.midas.d3.statemachine.guard.BuildRemediationExhaustedGuard;
+import com.midas.d3.statemachine.guard.QualityBackstopGuard;
 import com.midas.d3.statemachine.guard.RemediationAvailableGuard;
 import com.midas.d3.statemachine.guard.RemediationExhaustedGuard;
 import com.midas.d3.statemachine.guard.RetriesExhaustedGuard;
@@ -81,6 +82,8 @@ public class PipelineStateMachineConfig
     private final IncrementRetryAction       incrementRetryAction;
     private final PipelineErrorAction        pipelineErrorAction;
     private final ProductReviewRejectionAction productReviewRejectionAction;
+    private final QualityBackstopGuard       qualityBackstopGuard;
+    private final QualityBackstopAction      qualityBackstopAction;
     private final RemediationInitAction      remediationInitAction;
     private final BuildRemediationInitAction buildRemediationInitAction;
     private final BuildFailureErrorAction    buildFailureErrorAction;
@@ -153,6 +156,10 @@ public class PipelineStateMachineConfig
                 t = t.withChoice()
                         .source(choice)
                         .first(MidasState.CODE_GENERATION, remediationAvailableGuard, remediationInitAction)
+                        // Quality backstop: a REJECT that exhausted remediation but carries substantive
+                        // deterministic proof (gated rubric fully satisfied + build OK) completes as
+                        // PASS_WITH_NOTES instead of ERROR — checked BEFORE the exhausted→ERROR route.
+                        .then(next, qualityBackstopGuard, qualityBackstopAction)
                         .then(MidasState.ERROR, remediationExhaustedGuard, productReviewRejectionAction)
                         .then(next, validationSucceededGuard, storeArtifactAction)
                         .then(MidasState.ERROR, retriesExhaustedGuard, pipelineErrorAction)
