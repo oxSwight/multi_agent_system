@@ -246,11 +246,75 @@ class PipelineCompletionActionTest {
         verify(telegramBot).sendArtifactDocument(eq(expectedChatId), any(File.class), anyString());
     }
 
+    // ── Graceful degradation: COMPLETED_WITH_GAPS terminal status ────────────
+
+    @Test
+    @DisplayName("Degraded REST run → packages locally and persists COMPLETED_WITH_GAPS (completeRunWithGaps)")
+    void execute_degradedRest_persistsCompletedWithGaps() throws IOException {
+        MidasContext ctx = MidasContext.start("REST degraded idea", "run-degr-rest-001");
+        stubDegradedContextVars(ctx);
+
+        File fakeZip = File.createTempFile("degr_rest_artifact", ".zip");
+        when(packagingService.packageResults(ctx)).thenReturn(fakeZip);
+
+        action.execute(stateContext);
+
+        verify(packagingService).packageResults(ctx);
+        verify(persistenceService).completeRunWithGaps(eq("run-degr-rest-001"), anyString());
+        verify(persistenceService, never()).completeRun(anyString(), anyString());
+        verifyNoInteractions(telegramBotProvider);
+
+        fakeZip.delete();
+    }
+
+    @Test
+    @DisplayName("Degraded Telegram run → sends degraded caption and persists COMPLETED_WITH_GAPS")
+    void execute_degradedTelegram_sendsDegradedCaptionAndStatus() throws IOException {
+        long chatId = 424242L;
+        MidasContext ctx = MidasContext.start("TG degraded idea", "run-degr-tg-001")
+                .withTelegramChatId(chatId);
+        stubDegradedContextVars(ctx);
+        when(telegramBotProvider.getIfAvailable()).thenReturn(telegramBot);
+
+        File fakeZip = File.createTempFile("degr_tg_artifact", ".zip");
+        when(packagingService.packageResults(ctx)).thenReturn(fakeZip);
+        when(telegramBot.sendArtifactDocument(eq(chatId), eq(fakeZip), contains("⚠️"))).thenReturn(true);
+
+        action.execute(stateContext);
+
+        verify(telegramBot).sendArtifactDocument(eq(chatId), eq(fakeZip), contains("⚠️"));
+        verify(persistenceService).completeRunWithGaps(eq("run-degr-tg-001"), anyString());
+        verify(persistenceService, never()).completeRun(anyString(), anyString());
+        assertThat(fakeZip).doesNotExist();
+    }
+
+    @Test
+    @DisplayName("Degraded run with no Telegram bot → persists COMPLETED_WITH_GAPS without artifact, no packaging")
+    void execute_degradedNoBot_persistsCompletedWithGapsWithoutArtifact() {
+        MidasContext ctx = MidasContext.start("No-bot degraded idea", "run-degr-nobot-001")
+                .withTelegramChatId(99999L);
+        stubDegradedContextVars(ctx);
+        when(telegramBotProvider.getIfAvailable()).thenReturn(null);
+
+        action.execute(stateContext);
+
+        verify(persistenceService).completeRunWithGapsWithoutArtifact("run-degr-nobot-001");
+        verify(persistenceService, never()).completeRunWithoutArtifact(anyString());
+        verifyNoInteractions(packagingService);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void stubContextVars(MidasContext ctx) {
         Map<Object, Object> vars = new HashMap<>();
         vars.put(PipelineContextKeys.MIDAS_CONTEXT, ctx);
+        when(extendedState.getVariables()).thenReturn(vars);
+    }
+
+    private void stubDegradedContextVars(MidasContext ctx) {
+        Map<Object, Object> vars = new HashMap<>();
+        vars.put(PipelineContextKeys.MIDAS_CONTEXT, ctx);
+        vars.put(PipelineContextKeys.DEGRADED_COMPLETION, Boolean.TRUE);
         when(extendedState.getVariables()).thenReturn(vars);
     }
 

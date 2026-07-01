@@ -90,6 +90,7 @@ public class PipelineStateMachineConfig
     private final AgentEntryAction           agentEntryAction;
     private final CriticalFailureAction      criticalFailureAction;
     private final PipelineCompletionAction   completionAction;
+    private final DegradeToGapsAction        degradeToGapsAction;
     private final PauseForInputAction        pauseForInputAction;
     private final PipelineTopology           topology;
 
@@ -120,7 +121,11 @@ public class PipelineStateMachineConfig
                 // ── Human-in-the-Loop pause state ─────────────────────────────
                 .stateEntry(MidasState.WAITING_FOR_USER_INPUT, pauseForInputAction)
                 // ── Completion: package + deliver artifacts to Telegram ────────
-                .stateEntry(MidasState.COMPLETED,            completionAction);
+                .stateEntry(MidasState.COMPLETED,            completionAction)
+                // ── Graceful degradation: same packaging/delivery path, degraded status ──
+                // Reuses the completion action; DEGRADED_COMPLETION (set by DegradeToGapsAction on the
+                // inbound transition) makes it finalize as COMPLETED_WITH_GAPS rather than COMPLETED.
+                .stateEntry(MidasState.COMPLETED_WITH_GAPS,  completionAction);
     }
 
     // ── Transitions ───────────────────────────────────────────────────────────
@@ -223,6 +228,17 @@ public class PipelineStateMachineConfig
                 .event(MidasEvent.RESET)
                 .and()
 
+        // ── Graceful degradation: unhealable CODE_GENERATION gap → partial delivery ──
+        // Fired by AgentDispatcher (DEGRADE_ARTIFACT) only when a best-effort partial artifact is
+        // salvageable and degradation is enabled. DegradeToGapsAction stores the partial + an honest
+        // coverage report and flags DEGRADED_COMPLETION; the COMPLETED_WITH_GAPS stateEntry then
+        // packages/delivers via the same completion path — the client gets an artifact, never a crash.
+            .withExternal()
+                .source(MidasState.CODE_GENERATION).target(MidasState.COMPLETED_WITH_GAPS)
+                .event(MidasEvent.DEGRADE_ARTIFACT)
+                .action(degradeToGapsAction)
+                .and()
+
         // ── Terminal resets ───────────────────────────────────────────────────
             .withExternal()
                 .source(MidasState.ERROR).target(MidasState.IDLE)
@@ -230,6 +246,10 @@ public class PipelineStateMachineConfig
                 .and()
             .withExternal()
                 .source(MidasState.COMPLETED).target(MidasState.IDLE)
+                .event(MidasEvent.RESET)
+                .and()
+            .withExternal()
+                .source(MidasState.COMPLETED_WITH_GAPS).target(MidasState.IDLE)
                 .event(MidasEvent.RESET);
     }
 
