@@ -192,7 +192,7 @@ class NousRestClientTest {
 
     private NousRestClient newClient(ExchangeFunction exchange, NousProperties properties) {
         WebClient.Builder builder = WebClient.builder().exchangeFunction(exchange);
-        return new NousRestClient(builder, properties);
+        return new NousRestClient(builder, properties, 16);
     }
 
     private NousProperties routingProperties(boolean enabled, Map<String, String> agents) {

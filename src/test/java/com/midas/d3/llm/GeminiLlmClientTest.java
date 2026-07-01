@@ -177,7 +177,8 @@ class GeminiLlmClientTest {
                 "test-api-key",
                 DEFAULT_MODEL,
                 10,
-                0);
+                0,
+                16);
     }
 
     private static LlmCallRequest requestForRun(String runId) {
