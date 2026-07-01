@@ -233,6 +233,32 @@ class TelegramStateListenerTest {
     }
 
     @Test
+    @DisplayName("renderErrorWithReason surfaces the explicit reason when the context has no lastErrorMessage")
+    void renderErrorWithReason_explicitReason_includesReasonAndRestLink() {
+        // Durable-ERROR fallback: the machine never entered ERROR, so ctx.lastErrorMessage is unset —
+        // the explicit reason (the agent error) is what must reach the chat.
+        MidasContext ctx = MidasContext.start("Build a CRM", "run-wedge-001");
+
+        String message = TelegramStateListener.renderErrorWithReason(
+                ctx, "Unexpected agent error: boom");
+
+        assertThat(message).contains("❌ ОШИБКА");
+        assertThat(message).contains("Unexpected agent error: boom");
+        assertThat(message).contains("/api/v1/pipelines/run-wedge-001/context");
+    }
+
+    @Test
+    @DisplayName("renderErrorWithReason omits the reason line when no reason is available")
+    void renderErrorWithReason_blankReason_omitsReasonLine() {
+        MidasContext ctx = MidasContext.start("Build a CRM", "run-wedge-002");
+
+        String message = TelegramStateListener.renderErrorWithReason(ctx, "   ");
+
+        assertThat(message).contains("❌ ОШИБКА");
+        assertThat(message).doesNotContain("Причина:");
+    }
+
+    @Test
     @DisplayName("renderProgress ERROR state delegates to renderError")
     void renderProgress_errorState_includesReason() {
         MidasContext ctx = MidasContext.start("Build a CRM", "run-error-004")

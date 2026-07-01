@@ -9,6 +9,7 @@ import com.midas.d3.build.BuildVerificationService;
 import com.midas.d3.context.ContextReducer;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.persistence.PersistenceService;
+import com.midas.d3.telegram.TelegramPipelineBot;
 import org.springframework.messaging.Message;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -43,9 +44,12 @@ class AgentDispatcherTest {
     @Mock private StateMachine<MidasState, MidasEvent> machine;
     @Mock private ObjectProvider<PipelineOrchestrator> orchestratorProvider;
     @Mock private PipelineOrchestrator orchestrator;
+    @Mock private ObjectProvider<TelegramPipelineBot> telegramBotProvider;
+    @Mock private TelegramPipelineBot telegramBot;
 
     private AgentDispatcher dispatcher;
     private MidasContext context;
+    private DefaultExtendedState extendedState;
 
     @BeforeEach
     void setUp() {
@@ -55,14 +59,14 @@ class AgentDispatcherTest {
 
         dispatcher = new AgentDispatcher(
                 List.of(agent), syncExecutor, persistenceService, buildVerificationService,
-                orchestratorProvider, true, 0L);
+                orchestratorProvider, telegramBotProvider, true, 0L);
 
         context = MidasContext.start("Build API", "run-dispatch-001");
         Map<Object, Object> variables = new HashMap<>();
         variables.put(PipelineContextKeys.MIDAS_CONTEXT, context);
         variables.put(PipelineContextKeys.AUTO_MODE_KEY, true);
 
-        DefaultExtendedState extendedState = new DefaultExtendedState(variables);
+        extendedState = new DefaultExtendedState(variables);
         when(machine.getExtendedState()).thenReturn(extendedState);
     }
 
@@ -197,7 +201,7 @@ class AgentDispatcherTest {
         JsonNode partial = mapper.readTree("{\"src/main/java/A.java\":\"class A {}\"}");
         AgentDispatcher disabled = new AgentDispatcher(
                 List.of(agent), Runnable::run, persistenceService, buildVerificationService,
-                orchestratorProvider, false, 0L);
+                orchestratorProvider, telegramBotProvider, false, 0L);
         when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
                 "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
                 3, "assembled envelope rejected", partial, mapper.createArrayNode(), List.of("gap"),
@@ -268,6 +272,56 @@ class AgentDispatcherTest {
         assertThat(eventCaptor.getValue().block().getPayload()).isEqualTo(MidasEvent.CRITICAL_FAILURE);
         verify(persistenceService, never()).failRun(anyString(), anyString());
         verifyNoInteractions(orchestratorProvider);
+    }
+
+    @Test
+    @DisplayName("Durable-ERROR wedge on a Telegram run → honest failure pushed to the chat")
+    @SuppressWarnings("unchecked")
+    void dispatch_wedge_telegramRun_pushesErrorToChat() throws Exception {
+        // A Telegram-initiated run carries a chat + message id; the wedge leaves the machine outside
+        // ERROR, so the state listener never renders the failure and the in-progress message is stale.
+        MidasContext telegramCtx = context.withTelegramChatId(555L).withTelegramMessageId(42);
+        extendedState.getVariables().put(PipelineContextKeys.MIDAS_CONTEXT, telegramCtx);
+
+        when(agent.execute(telegramCtx)).thenThrow(new RuntimeException("boom"));
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+        // Machine did NOT reach a terminal state on CRITICAL_FAILURE — genuine wedge.
+        State<MidasState, MidasEvent> stuckState = stateOf(MidasState.SECOPS_AUDIT);
+        when(machine.getState()).thenReturn(stuckState);
+        when(orchestratorProvider.getObject()).thenReturn(orchestrator);
+        when(orchestrator.hasActiveMachine("run-dispatch-001")).thenReturn(true);
+        when(telegramBotProvider.getIfAvailable()).thenReturn(telegramBot);
+
+        dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
+
+        // Durable terminal is still written + machine evicted…
+        verify(persistenceService).failRun(eq("run-dispatch-001"), contains("boom"));
+        verify(orchestrator).evictRun("run-dispatch-001");
+        // …AND — the point of this fix — an honest failure notice is pushed to the originating chat,
+        // carrying the real reason, so the user is not left staring at a stale "in progress" message.
+        verify(telegramBot).updatePipelineErrorMessage(eq(telegramCtx), contains("boom"));
+    }
+
+    @Test
+    @DisplayName("CRITICAL_FAILURE accepted on a Telegram run → NO extra chat push (listener owns ERROR)")
+    @SuppressWarnings("unchecked")
+    void dispatch_criticalFailureAccepted_telegramRun_noExtraChatPush() throws Exception {
+        MidasContext telegramCtx = context.withTelegramChatId(555L).withTelegramMessageId(42);
+        extendedState.getVariables().put(PipelineContextKeys.MIDAS_CONTEXT, telegramCtx);
+
+        when(agent.execute(telegramCtx)).thenThrow(new RuntimeException("boom"));
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+        // Machine accepted CRITICAL_FAILURE and reached ERROR — the normal path.
+        State<MidasState, MidasEvent> errorState = stateOf(MidasState.ERROR);
+        when(machine.getState()).thenReturn(errorState);
+
+        dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
+
+        // On the accepted path TelegramStateListener renders the failure on ERROR entry, so the
+        // dispatcher must NOT push a duplicate — and must not even resolve the bot. (Guards against a
+        // regression that pushes on every failure regardless of whether the machine reached ERROR.)
+        verify(persistenceService, never()).failRun(anyString(), anyString());
+        verifyNoInteractions(telegramBotProvider);
     }
 
     /** Builds a {@link State} mock whose id is {@code id}, for stubbing {@code machine.getState()}. */

@@ -128,7 +128,21 @@ public class TelegramStateListener extends StateMachineListenerAdapter<MidasStat
     }
 
     static String renderError(MidasContext ctx, StateContext<MidasState, MidasEvent> stateContext) {
-        String reason = resolvePipelineErrorReason(ctx, stateContext);
+        return renderErrorBody(ctx, resolvePipelineErrorReason(ctx, stateContext));
+    }
+
+    /**
+     * Renders the terminal ERROR message from an explicit failure reason. Used on the durable-ERROR
+     * fallback path ({@code AgentDispatcher#sendCriticalFailure}), where the machine never entered
+     * ERROR — so {@code ctx.lastErrorMessage} was never written and the normal reason resolution
+     * would come up empty. Passing the reason (the agent error) keeps the pushed notice honest.
+     */
+    static String renderErrorWithReason(MidasContext ctx, String reason) {
+        String resolved = (reason != null && !reason.isBlank()) ? truncateReason(reason.strip()) : null;
+        return renderErrorBody(ctx, resolved);
+    }
+
+    private static String renderErrorBody(MidasContext ctx, String reason) {
         StringBuilder sb = new StringBuilder();
         sb.append(HEADER).append("[❌ ОШИБКА]\n\n");
         sb.append("Пайплайн завершился с ошибкой.\n");

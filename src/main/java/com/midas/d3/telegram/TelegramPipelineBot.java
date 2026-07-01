@@ -304,6 +304,25 @@ public class TelegramPipelineBot extends TelegramLongPollingBot {
     }
 
     /**
+     * Pushes an honest terminal-failure notice to the originating chat on the durable-ERROR fallback
+     * path ({@link com.midas.d3.statemachine.AgentDispatcher}), where the machine never entered the
+     * ERROR state — so {@link TelegramStateListener} never rendered the failure and the user's
+     * in-progress message would otherwise stay stale forever. Edits that message in place, mirroring
+     * what the state listener would have shown on a normal ERROR entry. No-op for REST-initiated runs
+     * (no chat / message id).
+     *
+     * @param ctx    run context carrying the originating {@code telegramChatId} / {@code telegramMessageId}
+     * @param reason honest failure reason (the agent error) — the machine never wrote it into the context
+     */
+    public void updatePipelineErrorMessage(MidasContext ctx, String reason) {
+        if (ctx.getTelegramChatId() == null || ctx.getTelegramMessageId() == null) {
+            return;
+        }
+        editMessage(ctx.getTelegramChatId(), ctx.getTelegramMessageId(),
+                TelegramStateListener.renderErrorWithReason(ctx, reason));
+    }
+
+    /**
      * Sends a plain HTML text message to the specified chat.
      * Exposed publicly so that {@link com.midas.d3.statemachine.action.PipelineCompletionAction}
      * can notify the user of packaging errors.

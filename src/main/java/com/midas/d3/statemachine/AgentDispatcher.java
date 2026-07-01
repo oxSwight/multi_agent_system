@@ -9,6 +9,7 @@ import com.midas.d3.config.AsyncConfig;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.llm.LlmCallException;
 import com.midas.d3.persistence.PersistenceService;
+import com.midas.d3.telegram.TelegramPipelineBot;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -66,6 +67,16 @@ public class AgentDispatcher {
      */
     private final ObjectProvider<PipelineOrchestrator> orchestratorProvider;
 
+    /**
+     * Resolved lazily (and optional) via {@link ObjectProvider}: {@link TelegramPipelineBot} depends on
+     * {@link PipelineOrchestrator}, so a hard dependency would re-introduce the same construction cycle,
+     * and the bean is absent entirely when {@code midas.telegram.enabled=false}. Used only on the
+     * durable-ERROR fallback path to push an honest failure notice to a Telegram-initiated run — the
+     * wedge leaves the machine outside {@link MidasState#ERROR}, so {@code TelegramStateListener} never
+     * fires and the user's in-progress message would otherwise stay stale forever.
+     */
+    private final ObjectProvider<TelegramPipelineBot> telegramBotProvider;
+
     /** When true (default), an unhealable CODE_GENERATION functional gap degrades to COMPLETED_WITH_GAPS
      *  instead of a client-visible CRITICAL FAILURE. Opt-out via {@code midas.degradation.enabled=false}. */
     private final boolean degradationEnabled;
@@ -80,12 +91,14 @@ public class AgentDispatcher {
                            PersistenceService persistenceService,
                            BuildVerificationService buildVerificationService,
                            ObjectProvider<PipelineOrchestrator> orchestratorProvider,
+                           ObjectProvider<TelegramPipelineBot> telegramBotProvider,
                            @Value("${midas.degradation.enabled:true}") boolean degradationEnabled,
                            @Value("${midas.agent.inter-agent-delay-ms:10000}") long interAgentDelayMs) {
         this.agentTaskExecutor  = agentTaskExecutor;
         this.persistenceService = persistenceService;
         this.buildVerificationService = buildVerificationService;
         this.orchestratorProvider = orchestratorProvider;
+        this.telegramBotProvider = telegramBotProvider;
         this.degradationEnabled = degradationEnabled;
         this.interAgentDelayMs = Math.max(0, interAgentDelayMs);
         this.agentMap = new EnumMap<>(MidasState.class);
@@ -358,11 +371,45 @@ public class AgentDispatcher {
         }
 
         // Durable-ERROR fallback: give the client an honest terminal and reclaim the leaked machine.
-        // NOTE: because the machine never entered ERROR here, a Telegram run's state listener does not
-        // fire, so the DB/REST show ERROR but no chat message is pushed — tracked as a P3-4 follow-up.
         log.error("[AgentDispatcher] Run [{}] wedged after CRITICAL_FAILURE (state={}, still registered) "
                 + "— applying durable ERROR fallback (mark ERROR + evict).", runId, state);
         persistenceService.failRun(runId, message);
         orchestrator.evictRun(runId);
+
+        // Because the machine never entered ERROR, TelegramStateListener (which renders the failure only
+        // on ERROR state-entry) never fires — a Telegram-initiated run's "in progress" message would stay
+        // stale forever even though the DB/REST correctly show ERROR. Push an honest failure notice.
+        notifyTelegramWedge(machine, runId, message);
+    }
+
+    /**
+     * On the durable-ERROR wedge path the machine never enters {@link MidasState#ERROR}, so
+     * {@link com.midas.d3.telegram.TelegramStateListener} never renders the failure. Push an honest
+     * terminal notice to the originating chat so a Telegram-initiated run is not left showing "in
+     * progress" forever.
+     *
+     * <p>Strictly additive and best-effort: it is a no-op for REST-initiated runs (no
+     * {@code telegramChatId}) and when Telegram is disabled (bot bean absent), and any Telegram error is
+     * swallowed so it cannot mask the durable terminal already written to the DB. The dispatcher's
+     * non-Telegram paths are therefore unchanged.
+     */
+    private void notifyTelegramWedge(StateMachine<MidasState, MidasEvent> machine,
+                                     String runId, String reason) {
+        MidasContext context = (MidasContext) machine.getExtendedState()
+                .getVariables().get(PipelineContextKeys.MIDAS_CONTEXT);
+        if (context == null || context.getTelegramChatId() == null) {
+            return; // REST-initiated run — nothing to notify.
+        }
+        TelegramPipelineBot bot = telegramBotProvider.getIfAvailable();
+        if (bot == null) {
+            return; // Telegram disabled — DB/REST already reflect ERROR.
+        }
+        try {
+            bot.updatePipelineErrorMessage(context, reason);
+            log.info("[AgentDispatcher] Pushed durable-ERROR failure notice to Telegram chat for run [{}].", runId);
+        } catch (Exception e) {
+            log.warn("[AgentDispatcher] Could not push durable-ERROR notice to Telegram for run [{}]: {}",
+                    runId, e.getMessage());
+        }
     }
 }
