@@ -96,8 +96,8 @@ class ContinuousImprovementServiceTest {
         @Test
         @DisplayName("does nothing when no pending runs exist")
         void doesNothingWhenNoPendingRuns() {
-            when(runRepository.findByStatusAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
-                    eq("COMPLETED"), any(Pageable.class)))
+            when(runRepository.findByStatusInAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
+                    eq(List.of("COMPLETED", "COMPLETED_WITH_GAPS")), any(Pageable.class)))
                     .thenReturn(Page.empty());
 
             service.runEvolutionCycle();
@@ -279,8 +279,8 @@ class ContinuousImprovementServiceTest {
 
     private void givenPendingRun(MidasRunEntity run) {
         Page<MidasRunEntity> page = new PageImpl<>(List.of(run));
-        when(runRepository.findByStatusAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
-                eq("COMPLETED"), any(Pageable.class)))
+        when(runRepository.findByStatusInAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
+                eq(List.of("COMPLETED", "COMPLETED_WITH_GAPS")), any(Pageable.class)))
                 .thenReturn(page);
     }
 

@@ -38,7 +38,7 @@ import java.util.List;
  *
  * <h2>Processing loop (per cycle)</h2>
  * <ol>
- *   <li>Query the database for one {@code COMPLETED} run with
+ *   <li>Query the database for one {@code COMPLETED} or {@code COMPLETED_WITH_GAPS} run with
  *       {@code needs_refactoring = true}, ordered by {@code updated_at ASC} so
  *       the oldest pending run is always processed first.</li>
  *   <li>Assemble a code-review context from all non-error
@@ -88,6 +88,15 @@ public class ContinuousImprovementService {
             "SystemAnalystAgent"
     );
 
+    /**
+     * Terminal statuses whose runs are eligible for evolution analysis. Includes COMPLETED_WITH_GAPS
+     * because graceful-degradation runs are flagged {@code needs_refactoring=true} ("queued for
+     * evolution") by {@code PersistenceService.completeRunWithGaps*} — a run delivered with known gaps
+     * is exactly the kind the improvement loop should analyze.
+     */
+    private static final List<String> EVOLUTION_ELIGIBLE_STATUSES =
+            List.of("COMPLETED", "COMPLETED_WITH_GAPS");
+
     private final MidasRunRepository              runRepository;
     private final MidasAgentLogRepository         logRepository;
     private final EvolutionAgent                  evolutionAgent;
@@ -112,8 +121,8 @@ public class ContinuousImprovementService {
         log.debug("[ContinuousImprovementService] Evolution cycle triggered.");
 
         Page<MidasRunEntity> page = runRepository
-                .findByStatusAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
-                        "COMPLETED", PageRequest.of(0, 1));
+                .findByStatusInAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
+                        EVOLUTION_ELIGIBLE_STATUSES, PageRequest.of(0, 1));
 
         if (page.isEmpty()) {
             log.debug("[ContinuousImprovementService] No runs pending evolution — cycle complete.");

@@ -115,18 +115,19 @@ public interface MidasRunRepository extends JpaRepository<MidasRunEntity, String
                                 @Param("updatedAt") Instant updatedAt);
 
     /**
-     * Returns a {@link Page} of runs with the given status and
+     * Returns a {@link Page} of runs whose status is one of {@code statuses} and
      * {@code needs_refactoring = true}, ordered oldest-first so the Evolution Agent
      * processes runs in the order they were completed.
      *
      * <p>Callers pass {@code PageRequest.of(0, 1)} to claim exactly one candidate
      * per scheduling cycle, preventing multiple simultaneous analyses of the same run.
      *
-     * @param status   the status to filter on (typically {@code "COMPLETED"})
+     * @param statuses terminal statuses to include (e.g. {@code COMPLETED} and
+     *                 {@code COMPLETED_WITH_GAPS} — degraded runs are queued for evolution too)
      * @param pageable paging / size constraint
      */
-    Page<MidasRunEntity> findByStatusAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
-            String status, Pageable pageable);
+    Page<MidasRunEntity> findByStatusInAndNeedsRefactoringTrueOrderByUpdatedAtAsc(
+            List<String> statuses, Pageable pageable);
 
     List<MidasRunEntity> findByStatusNotInAndUpdatedAtBefore(List<String> statuses, Instant updatedAt);
 }
