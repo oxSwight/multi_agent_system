@@ -232,11 +232,12 @@ public class AgentDispatcher {
                 log.warn("[AgentDispatcher] Agent [{}] hit an unhealable functional gap for run [{}] ({}ms) "
                                 + "— delivering a partial artifact + coverage report (COMPLETED_WITH_GAPS). Gaps: {}",
                         agent.getAgentName(), runId, elapsedMs, e.getGaps());
-                // Not a client-visible error: a delivered, degraded product. Logged as non-error with the gaps.
+                // Not a client-visible error: a delivered, degraded product. Logged as non-error with the
+                // gaps AND the real tokens/model already consumed, so this SOLD path records true cost (not $0).
                 persistenceService.logAgentExecution(
                         runId, agent.getAgentName(),
                         "[DEGRADED] Delivered partial artifact with gaps: " + String.join("; ", e.getGaps()),
-                        null, 0, 0, elapsedMs, false);
+                        e.getModelId(), e.getPromptTokens(), e.getCompletionTokens(), elapsedMs, false);
 
                 Map<Object, Object> vars = machine.getExtendedState().getVariables();
                 vars.put(PipelineContextKeys.DEGRADATION_PARTIAL_SOURCE, e.getPartialSource());

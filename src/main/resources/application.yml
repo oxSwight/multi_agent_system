@@ -70,9 +70,13 @@ midas:
     validation-max-attempts: ${MIDAS_AGENT_RETRY_VALIDATION_MAX:3}
 
   finops:
-    # Approximate Gemini 2.5 Flash list prices (USD per 1M tokens) for dashboard estimates.
+    # Cloud list prices (USD per 1M tokens) applied ONLY to non-free models (see free-model-prefixes).
+    # Defaults approximate Gemini 2.5 Flash.
     usd-per-million-prompt-tokens: ${MIDAS_FINOPS_USD_PER_M_PROMPT:0.075}
     usd-per-million-completion-tokens: ${MIDAS_FINOPS_USD_PER_M_COMPLETION:0.30}
+    # Model-id prefixes (case-insensitive) treated as $0 — locally-hosted / self-hosted models with no
+    # per-token cost. The default deployment runs local qwen, which must NOT be charged cloud prices.
+    free-model-prefixes: ${MIDAS_FINOPS_FREE_MODEL_PREFIXES:qwen,llama,codellama,deepseek,mistral,mixtral,phi,gemma,ollama}
 
   # ── LLM client selection ───────────────────────────────────────────────────
   # client-type: GEMINI → GeminiLlmClient (Google AI Studio)
