@@ -2,6 +2,13 @@ spring:
   application:
     name: midas-d3
 
+  # ── Graceful shutdown ─────────────────────────────────────────────────────
+  # On SIGTERM, stop accepting new requests but let in-flight work finish (up to the
+  # timeout) instead of killing a 30–120s agent run mid-stage. Paired with server.shutdown
+  # below and docker-compose stop_grace_period.
+  lifecycle:
+    timeout-per-shutdown-phase: 120s
+
   # ── Datasource (PostgreSQL) ───────────────────────────────────────────────
   datasource:
     url: ${MIDAS_DB_URL:jdbc:postgresql://localhost:5432/midas_db}
@@ -125,8 +132,14 @@ midas:
     # Add your Telegram chat IDs here locally, or leave empty to allow any chat.
     allowed-chat-ids: []
 
+server:
+  # Let the embedded server drain in-flight requests on shutdown (see spring.lifecycle above).
+  shutdown: graceful
+
 logging:
   level:
+    # NOTE: DEBUG is for local development. Production activates the `prod` profile
+    # (application-prod.yml) which lowers com.midas.d3 to INFO.
     com.midas.d3: DEBUG
     org.springframework.statemachine: INFO
     org.flywaydb: INFO

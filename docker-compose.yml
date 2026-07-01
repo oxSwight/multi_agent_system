@@ -32,12 +32,24 @@ services:
       dockerfile: Dockerfile
     container_name: midas_backend
     restart: unless-stopped
+    # Give in-flight agent runs time to drain on redeploy (server.shutdown=graceful,
+    # spring.lifecycle.timeout-per-shutdown-phase=120s). Slightly above the app timeout.
+    stop_grace_period: 130s
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "8080:8080"
+    healthcheck:
+      # Alpine JRE image ships BusyBox wget; hit the readiness probe (verifies DB reachability).
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     environment:
+      # Activate the production profile (INFO logging, no verbose internals).
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       # Database
       MIDAS_DB_URL: jdbc:postgresql://db:5432/midas_db
       MIDAS_DB_USERNAME: ${MIDAS_DB_USERNAME:-midas}
@@ -88,7 +100,8 @@ services:
     container_name: midas_frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "3000:3000"
     networks:

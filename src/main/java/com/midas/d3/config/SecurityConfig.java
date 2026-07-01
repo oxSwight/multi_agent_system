@@ -29,7 +29,8 @@ import java.util.Map;
  * <ul>
  *   <li>CSRF disabled — stateless JWT API; no browser session to protect.</li>
  *   <li>Sessions are STATELESS — no {@code JSESSIONID} cookie is created.</li>
- *   <li>Public paths: only Swagger UI and OpenAPI docs are reachable without a token.</li>
+ *   <li>Public paths: Swagger UI / OpenAPI docs and the {@code /health} liveness &amp; readiness
+ *       probes are reachable without a token (the probes expose only an UP/DOWN status).</li>
  *   <li>Protected paths: the Pipeline REST API ({@code /api/v1/pipelines/**}) and all
  *       {@code /api/v1/dashboard/**} endpoints require a valid
  *       {@code Authorization: Bearer <jwt>} header. The pipeline API exposes
@@ -64,6 +65,10 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html")
+                        .permitAll()
+                        // Health / readiness probes — public so orchestrators & load balancers can
+                        // reach them without a token. They expose no data (status UP/DOWN only).
+                        .requestMatchers("/health", "/health/**")
                         .permitAll()
                         // Pipeline API — JWT-protected (exposes DELETE + full-context read)
                         .requestMatchers("/api/v1/pipelines/**").authenticated()
