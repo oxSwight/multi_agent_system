@@ -17,7 +17,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.statemachine.StateMachine;
+import org.springframework.statemachine.state.State;
 import org.springframework.statemachine.support.DefaultExtendedState;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -39,6 +41,8 @@ class AgentDispatcherTest {
     @Mock private PersistenceService persistenceService;
     @Mock private BuildVerificationService buildVerificationService;
     @Mock private StateMachine<MidasState, MidasEvent> machine;
+    @Mock private ObjectProvider<PipelineOrchestrator> orchestratorProvider;
+    @Mock private PipelineOrchestrator orchestrator;
 
     private AgentDispatcher dispatcher;
     private MidasContext context;
@@ -50,7 +54,8 @@ class AgentDispatcherTest {
         when(agent.getAgentName()).thenReturn("SecOpsAgent");
 
         dispatcher = new AgentDispatcher(
-                List.of(agent), syncExecutor, persistenceService, buildVerificationService, true, 0L);
+                List.of(agent), syncExecutor, persistenceService, buildVerificationService,
+                orchestratorProvider, true, 0L);
 
         context = MidasContext.start("Build API", "run-dispatch-001");
         Map<Object, Object> variables = new HashMap<>();
@@ -166,6 +171,9 @@ class AgentDispatcherTest {
                 3, "nothing salvageable", mapper.createObjectNode(), mapper.createArrayNode(), List.of("gap"),
                 0, 0, "qwen2.5-coder:14b"));
         when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+        // Machine accepts CRITICAL_FAILURE and reaches ERROR — no durable-ERROR fallback needed.
+        State<MidasState, MidasEvent> errorState = stateOf(MidasState.ERROR);
+        when(machine.getState()).thenReturn(errorState);
 
         dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
 
@@ -188,12 +196,16 @@ class AgentDispatcherTest {
         ObjectMapper mapper = new ObjectMapper();
         JsonNode partial = mapper.readTree("{\"src/main/java/A.java\":\"class A {}\"}");
         AgentDispatcher disabled = new AgentDispatcher(
-                List.of(agent), Runnable::run, persistenceService, buildVerificationService, false, 0L);
+                List.of(agent), Runnable::run, persistenceService, buildVerificationService,
+                orchestratorProvider, false, 0L);
         when(agent.execute(context)).thenThrow(new CodeGapDegradationException(
                 "ImplementationAgent", ContextReducer.AgentRole.IMPLEMENTATION_ENGINEER,
                 3, "assembled envelope rejected", partial, mapper.createArrayNode(), List.of("gap"),
                 0, 0, "qwen2.5-coder:14b"));
         when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+        // Machine accepts CRITICAL_FAILURE and reaches ERROR — no durable-ERROR fallback needed.
+        State<MidasState, MidasEvent> errorState = stateOf(MidasState.ERROR);
+        when(machine.getState()).thenReturn(errorState);
 
         disabled.dispatch(machine, MidasState.SECOPS_AUDIT);
 
@@ -207,5 +219,62 @@ class AgentDispatcherTest {
         ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
         verify(machine).sendEvent(eventCaptor.capture());
         assertThat(eventCaptor.getValue().block().getPayload()).isEqualTo(MidasEvent.CRITICAL_FAILURE);
+    }
+
+    // ── Durable-ERROR fallback (P3-4) ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("CRITICAL_FAILURE not accepted (machine stuck non-terminal) → durable ERROR fallback: mark ERROR + evict")
+    @SuppressWarnings("unchecked")
+    void dispatch_criticalFailureNotAccepted_appliesDurableErrorFallback() throws Exception {
+        when(agent.execute(context)).thenThrow(new RuntimeException("boom"));
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+        // The machine did NOT transition to a terminal state on CRITICAL_FAILURE (denied event / wrong
+        // state / already stopped) — it is still sitting in the processing stage.
+        State<MidasState, MidasEvent> stuckState = stateOf(MidasState.SECOPS_AUDIT);
+        when(machine.getState()).thenReturn(stuckState);
+        when(orchestratorProvider.getObject()).thenReturn(orchestrator);
+        // Machine is still registered (never evicted, since it never reached a terminal state) → wedge.
+        when(orchestrator.hasActiveMachine("run-dispatch-001")).thenReturn(true);
+
+        dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
+
+        // The CRITICAL_FAILURE event was still emitted…
+        ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
+        verify(machine).sendEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().block().getPayload()).isEqualTo(MidasEvent.CRITICAL_FAILURE);
+        // …and because the machine never reached a terminal state, the run is force-failed + evicted
+        // instead of wedging forever.
+        verify(persistenceService).failRun(eq("run-dispatch-001"), contains("boom"));
+        verify(orchestrator).evictRun("run-dispatch-001");
+    }
+
+    @Test
+    @DisplayName("CRITICAL_FAILURE accepted (machine reaches ERROR) → no durable-ERROR fallback")
+    @SuppressWarnings("unchecked")
+    void dispatch_criticalFailureAccepted_noFallback() throws Exception {
+        when(agent.execute(context)).thenThrow(new RuntimeException("boom"));
+        when(machine.sendEvent(any(Mono.class))).thenReturn(Flux.empty());
+        State<MidasState, MidasEvent> errorState = stateOf(MidasState.ERROR);
+        when(machine.getState()).thenReturn(errorState);
+
+        dispatcher.dispatch(machine, MidasState.SECOPS_AUDIT);
+
+        // sendCriticalFailure still ran and emitted CRITICAL_FAILURE — but because the machine reached a
+        // terminal state it took the no-fallback branch: no force-fail, no eviction. (Guards against a
+        // regression that drops the terminal check and always falls back.)
+        ArgumentCaptor<Mono<Message<MidasEvent>>> eventCaptor = ArgumentCaptor.forClass(Mono.class);
+        verify(machine).sendEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().block().getPayload()).isEqualTo(MidasEvent.CRITICAL_FAILURE);
+        verify(persistenceService, never()).failRun(anyString(), anyString());
+        verifyNoInteractions(orchestratorProvider);
+    }
+
+    /** Builds a {@link State} mock whose id is {@code id}, for stubbing {@code machine.getState()}. */
+    @SuppressWarnings("unchecked")
+    private State<MidasState, MidasEvent> stateOf(MidasState id) {
+        State<MidasState, MidasEvent> state = mock(State.class);
+        when(state.getId()).thenReturn(id);
+        return state;
     }
 }
