@@ -35,6 +35,10 @@ services:
     # Give in-flight agent runs time to drain on redeploy (server.shutdown=graceful,
     # spring.lifecycle.timeout-per-shutdown-phase=120s). Slightly above the app timeout.
     stop_grace_period: 130s
+    volumes:
+      # Durable artifact store — REST-delivered result ZIPs survive restarts and redeploys
+      # (matches MIDAS_ARTIFACT_DIR below and the mkdir/chown in the Dockerfile).
+      - midas_artifacts:/app/artifacts
     depends_on:
       db:
         condition: service_healthy
@@ -50,6 +54,8 @@ services:
     environment:
       # Activate the production profile (INFO logging, no verbose internals).
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      # Durable artifact store (mounted named volume midas_artifacts below).
+      MIDAS_ARTIFACT_DIR: ${MIDAS_ARTIFACT_DIR:-/app/artifacts}
       # Database
       MIDAS_DB_URL: jdbc:postgresql://db:5432/midas_db
       MIDAS_DB_USERNAME: ${MIDAS_DB_USERNAME:-midas}
@@ -112,6 +118,9 @@ services:
 # ──────────────────────────────────────────────────────────
 volumes:
   midas_pgdata:
+    driver: local
+  # Durable artifact store for REST-delivered result ZIPs (backend → /app/artifacts).
+  midas_artifacts:
     driver: local
 
 networks:

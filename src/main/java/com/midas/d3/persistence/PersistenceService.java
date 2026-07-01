@@ -107,7 +107,7 @@ public class PersistenceService {
      * after the artifacts archive has been created.
      *
      * @param runId        the pipeline run ID
-     * @param artifactPath absolute filesystem path to the generated ZIP file
+     * @param artifactPath artifact key (the ZIP file name) resolved against {@code midas.artifact.dir}
      */
     public void completeRun(String runId, String artifactPath) {
         try {
@@ -146,7 +146,7 @@ public class PersistenceService {
      * instead of a client-visible failure. Also queues the run for Evolution Agent analysis.
      *
      * @param runId        the pipeline run ID
-     * @param artifactPath absolute filesystem path to the generated ZIP file
+     * @param artifactPath artifact key (the ZIP file name) resolved against {@code midas.artifact.dir}
      */
     public void completeRunWithGaps(String runId, String artifactPath) {
         try {

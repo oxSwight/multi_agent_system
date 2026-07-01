@@ -3,6 +3,7 @@ package com.midas.d3.acceptance;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.midas.d3.artifact.ArtifactProperties;
 import com.midas.d3.config.JacksonConfig;
 import com.midas.d3.context.MidasContext;
 import com.midas.d3.telegram.ArtifactPackagingService;
@@ -12,9 +13,11 @@ import com.midas.d3.validation.ValidationHookException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -44,11 +47,17 @@ class ChromeExtensionAcceptanceTest {
     private ImplementationEngineerValidator validator;
     private ArtifactPackagingService packagingService;
 
+    /** Durable artifact directory the packaging service writes result ZIPs into. */
+    @TempDir
+    Path artifactDir;
+
     @BeforeEach
     void setUp() {
         objectMapper = new JacksonConfig().objectMapper();
         validator = new ImplementationEngineerValidator(objectMapper, new FeatureManifestValidator());
-        packagingService = new ArtifactPackagingService(objectMapper);
+        ArtifactProperties artifactProperties = new ArtifactProperties();
+        artifactProperties.setDir(artifactDir.toString());
+        packagingService = new ArtifactPackagingService(objectMapper, artifactProperties);
     }
 
     @Test

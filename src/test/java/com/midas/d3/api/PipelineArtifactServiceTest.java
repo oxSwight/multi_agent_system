@@ -1,5 +1,6 @@
 package com.midas.d3.api;
 
+import com.midas.d3.artifact.ArtifactProperties;
 import com.midas.d3.persistence.entity.MidasRunEntity;
 import com.midas.d3.persistence.repository.MidasRunRepository;
 import com.midas.d3.statemachine.MidasState;
@@ -29,24 +30,27 @@ class PipelineArtifactServiceTest {
     @Mock private PipelineOrchestrator orchestrator;
     @Mock private MidasRunRepository runRepository;
 
-    @TempDir Path tempDir;
+    /** Durable artifact directory; stored keys are resolved against it. */
+    @TempDir Path artifactDir;
 
     private PipelineArtifactService service;
 
     @BeforeEach
     void setUp() {
-        service = new PipelineArtifactService(orchestrator, runRepository);
+        ArtifactProperties artifactProperties = new ArtifactProperties();
+        artifactProperties.setDir(artifactDir.toString());
+        service = new PipelineArtifactService(orchestrator, runRepository, artifactProperties);
     }
 
     @Test
-    @DisplayName("COMPLETED run with persisted ZIP → returns file")
+    @DisplayName("COMPLETED run with persisted ZIP key → returns file")
     void resolveArtifactZip_completedRunWithFile_returnsFile() throws IOException {
-        File zip = Files.createFile(tempDir.resolve("artifact.zip")).toFile();
+        Files.createFile(artifactDir.resolve("artifact.zip"));
         MidasRunEntity run = MidasRunEntity.builder()
                 .id("run-001")
                 .rawUserIdea("idea")
                 .status("COMPLETED")
-                .artifactPath(zip.getAbsolutePath())
+                .artifactPath("artifact.zip")
                 .build();
 
         when(orchestrator.getState("run-001")).thenReturn(MidasState.COMPLETED);
@@ -54,42 +58,44 @@ class PipelineArtifactServiceTest {
 
         File resolved = service.resolveArtifactZip("run-001");
 
-        assertThat(resolved).isEqualTo(zip);
+        assertThat(resolved).exists().isFile().hasName("artifact.zip");
+        assertThat(resolved.getParentFile().toPath().toAbsolutePath().normalize())
+                .isEqualTo(artifactDir.toAbsolutePath().normalize());
     }
 
     @Test
-    @DisplayName("COMPLETED_WITH_GAPS active run with persisted ZIP → returns file (degraded still delivers)")
+    @DisplayName("COMPLETED_WITH_GAPS active run with persisted ZIP key → returns file (degraded still delivers)")
     void resolveArtifactZip_completedWithGapsActive_returnsFile() throws IOException {
-        File zip = Files.createFile(tempDir.resolve("degraded.zip")).toFile();
+        Files.createFile(artifactDir.resolve("degraded.zip"));
         MidasRunEntity run = MidasRunEntity.builder()
                 .id("run-degraded-active")
                 .rawUserIdea("idea")
                 .status("COMPLETED_WITH_GAPS")
-                .artifactPath(zip.getAbsolutePath())
+                .artifactPath("degraded.zip")
                 .build();
 
         when(orchestrator.getState("run-degraded-active")).thenReturn(MidasState.COMPLETED_WITH_GAPS);
         when(runRepository.findById("run-degraded-active")).thenReturn(Optional.of(run));
 
-        assertThat(service.resolveArtifactZip("run-degraded-active")).isEqualTo(zip);
+        assertThat(service.resolveArtifactZip("run-degraded-active")).exists().hasName("degraded.zip");
     }
 
     @Test
-    @DisplayName("COMPLETED_WITH_GAPS persisted status (inactive machine) with ZIP → returns file")
+    @DisplayName("COMPLETED_WITH_GAPS persisted status (inactive machine) with ZIP key → returns file")
     void resolveArtifactZip_completedWithGapsPersisted_returnsFile() throws IOException {
-        File zip = Files.createFile(tempDir.resolve("degraded-persisted.zip")).toFile();
+        Files.createFile(artifactDir.resolve("degraded-persisted.zip"));
         MidasRunEntity run = MidasRunEntity.builder()
                 .id("run-degraded-db")
                 .rawUserIdea("idea")
                 .status("COMPLETED_WITH_GAPS")
-                .artifactPath(zip.getAbsolutePath())
+                .artifactPath("degraded-persisted.zip")
                 .build();
 
         when(orchestrator.getState("run-degraded-db"))
                 .thenThrow(new PipelineOrchestrator.PipelineNotFoundException("missing"));
         when(runRepository.findById("run-degraded-db")).thenReturn(Optional.of(run));
 
-        assertThat(service.resolveArtifactZip("run-degraded-db")).isEqualTo(zip);
+        assertThat(service.resolveArtifactZip("run-degraded-db")).exists().hasName("degraded-persisted.zip");
     }
 
     @Test
@@ -103,7 +109,7 @@ class PipelineArtifactServiceTest {
     }
 
     @Test
-    @DisplayName("COMPLETED run with missing artifact path → ArtifactNotFoundException")
+    @DisplayName("COMPLETED run with missing artifact key → ArtifactNotFoundException")
     void resolveArtifactZip_noArtifactPath_throwsNotFound() {
         MidasRunEntity run = MidasRunEntity.builder()
                 .id("run-no-artifact")
@@ -120,13 +126,13 @@ class PipelineArtifactServiceTest {
     }
 
     @Test
-    @DisplayName("COMPLETED run with missing filesystem file → ArtifactNotFoundException")
+    @DisplayName("COMPLETED run whose key has no file on disk → ArtifactNotFoundException")
     void resolveArtifactZip_missingFileOnDisk_throwsNotFound() {
         MidasRunEntity run = MidasRunEntity.builder()
                 .id("run-missing-file")
                 .rawUserIdea("idea")
                 .status("COMPLETED")
-                .artifactPath(tempDir.resolve("gone.zip").toString())
+                .artifactPath("gone.zip")
                 .build();
 
         when(orchestrator.getState("run-missing-file")).thenReturn(MidasState.COMPLETED);
@@ -164,5 +170,46 @@ class PipelineArtifactServiceTest {
         assertThatThrownBy(() -> service.resolveArtifactZip("run-started"))
                 .isInstanceOf(ArtifactNotFoundException.class)
                 .hasMessageContaining("not COMPLETED");
+    }
+
+    // ── Path-traversal containment (P2-5 download half) ───────────────────────
+
+    @Test
+    @DisplayName("COMPLETED run whose key is an absolute path escaping the artifact dir → not served, even if it exists")
+    void resolveArtifactZip_absoluteKeyOutsideDir_throwsNotFound(@TempDir Path outsideDir) throws IOException {
+        // A poisoned / legacy absolute reference pointing outside midas.artifact.dir must never be
+        // streamed to the client, even when the target file actually exists on disk.
+        File outside = Files.createFile(outsideDir.resolve("secret.zip")).toFile();
+        MidasRunEntity run = MidasRunEntity.builder()
+                .id("run-traversal-abs")
+                .rawUserIdea("idea")
+                .status("COMPLETED")
+                .artifactPath(outside.getAbsolutePath())
+                .build();
+
+        when(orchestrator.getState("run-traversal-abs")).thenReturn(MidasState.COMPLETED);
+        when(runRepository.findById("run-traversal-abs")).thenReturn(Optional.of(run));
+
+        assertThatThrownBy(() -> service.resolveArtifactZip("run-traversal-abs"))
+                .isInstanceOf(ArtifactNotFoundException.class)
+                .hasMessageContaining("invalid artifact reference");
+    }
+
+    @Test
+    @DisplayName("COMPLETED run whose key uses '../' to climb out of the artifact dir → ArtifactNotFoundException")
+    void resolveArtifactZip_relativeTraversalKey_throwsNotFound() {
+        MidasRunEntity run = MidasRunEntity.builder()
+                .id("run-traversal-rel")
+                .rawUserIdea("idea")
+                .status("COMPLETED")
+                .artifactPath("../../etc/passwd")
+                .build();
+
+        when(orchestrator.getState("run-traversal-rel")).thenReturn(MidasState.COMPLETED);
+        when(runRepository.findById("run-traversal-rel")).thenReturn(Optional.of(run));
+
+        assertThatThrownBy(() -> service.resolveArtifactZip("run-traversal-rel"))
+                .isInstanceOf(ArtifactNotFoundException.class)
+                .hasMessageContaining("invalid artifact reference");
     }
 }

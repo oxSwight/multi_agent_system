@@ -2,6 +2,7 @@ package com.midas.d3.telegram;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.midas.d3.artifact.ArtifactProperties;
 import com.midas.d3.context.MidasContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -61,9 +62,11 @@ import java.util.zip.ZipOutputStream;
  * breaks every relative reference inside it, so the delivered artifact must mirror what was built.
  *
  * <h2>Lifecycle</h2>
- * A temporary directory is created, populated, zipped, and then deleted — all within
- * one {@link #packageResults} call. Only the returned ZIP file remains on disk; the
- * caller is responsible for deleting it after use (typically in a {@code finally} block).
+ * A temporary staging directory is created, populated, and zipped, then deleted — all within
+ * one {@link #packageResults} call. The returned ZIP is written to the configured durable
+ * artifact directory ({@code midas.artifact.dir}, a mounted volume in production) and referenced
+ * by its file-name key: a REST run keeps it there for later download, while a Telegram run
+ * deletes it after delivery.
  *
  * <h2>Error handling</h2>
  * All {@link IOException}s from file I/O propagate to the caller as checked exceptions
@@ -82,6 +85,7 @@ public class ArtifactPackagingService {
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
 
     private final ObjectMapper objectMapper;
+    private final ArtifactProperties artifactProperties;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -541,8 +545,14 @@ public class ArtifactPackagingService {
     private File createZip(Path sourceDir, MidasContext ctx) throws IOException {
         String timestamp = TIMESTAMP_FMT.format(Instant.now());
         String runId     = sanitize(ctx.getPipelineRunId());
-        // createTempFile guarantees uniqueness even under concurrent runs
-        Path zipPath = Files.createTempFile("midas_result_" + timestamp + "_" + runId + "_", ".zip");
+        // Durable store: the final ZIP lives in the configured artifact directory (a mounted volume
+        // in production) — NOT the JVM temp dir — so it survives restarts and REST clients can
+        // download it long after packaging. createTempFile guarantees a unique name even under
+        // concurrent runs; that file name is the stable key persisted for the run.
+        Path artifactDir = Path.of(artifactProperties.getDir());
+        Files.createDirectories(artifactDir);
+        Path zipPath = Files.createTempFile(
+                artifactDir, "midas_result_" + timestamp + "_" + runId + "_", ".zip");
 
         try (ZipOutputStream zos = new ZipOutputStream(
                 new BufferedOutputStream(Files.newOutputStream(zipPath)))) {

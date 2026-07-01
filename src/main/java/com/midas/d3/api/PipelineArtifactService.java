@@ -1,5 +1,6 @@
 package com.midas.d3.api;
 
+import com.midas.d3.artifact.ArtifactProperties;
 import com.midas.d3.persistence.entity.MidasRunEntity;
 import com.midas.d3.persistence.repository.MidasRunRepository;
 import com.midas.d3.statemachine.MidasState;
@@ -8,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.nio.file.Path;
 
 @Service
 @RequiredArgsConstructor
@@ -15,6 +17,7 @@ public class PipelineArtifactService {
 
     private final PipelineOrchestrator orchestrator;
     private final MidasRunRepository runRepository;
+    private final ArtifactProperties artifactProperties;
 
     public File resolveArtifactZip(String runId) {
         if (runId == null || runId.isBlank()) {
@@ -36,19 +39,35 @@ public class PipelineArtifactService {
                     "Artifacts are not available: pipeline run " + runId + " is not COMPLETED.");
         }
 
-        String artifactPath = run.getArtifactPath();
-        if (artifactPath == null || artifactPath.isBlank()) {
+        String artifactKey = run.getArtifactPath();
+        if (artifactKey == null || artifactKey.isBlank()) {
             throw new ArtifactNotFoundException(
                     "Artifacts are not available: no artifact archive for run " + runId + ".");
         }
 
-        File file = new File(artifactPath);
+        File file = resolveWithinArtifactDir(artifactKey, runId);
         if (!file.isFile()) {
             throw new ArtifactNotFoundException(
                     "Artifacts are not available: artifact file missing for run " + runId + ".");
         }
 
         return file;
+    }
+
+    /**
+     * Resolves a stored artifact KEY (the ZIP file name) against the configured artifact directory,
+     * containing every download to that directory. A key that escapes the base — a poisoned
+     * {@code "../"} reference or a legacy absolute path — is rejected as not-found rather than
+     * served, closing the path-traversal surface on {@code GET /artifacts}.
+     */
+    private File resolveWithinArtifactDir(String key, String runId) {
+        Path base = Path.of(artifactProperties.getDir()).toAbsolutePath().normalize();
+        Path resolved = base.resolve(key).normalize();
+        if (!resolved.startsWith(base)) {
+            throw new ArtifactNotFoundException(
+                    "Artifacts are not available: invalid artifact reference for run " + runId + ".");
+        }
+        return resolved.toFile();
     }
 
     private MidasState resolveActiveState(String runId) {

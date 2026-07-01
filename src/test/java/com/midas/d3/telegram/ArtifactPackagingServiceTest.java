@@ -2,6 +2,7 @@ package com.midas.d3.telegram;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.midas.d3.artifact.ArtifactProperties;
 import com.midas.d3.context.MidasContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,10 +31,16 @@ class ArtifactPackagingServiceTest {
     private ArtifactPackagingService service;
     private ObjectMapper             objectMapper;
 
+    /** Durable artifact directory the service writes result ZIPs into (auto-cleaned per test). */
+    @TempDir
+    Path artifactDir;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        service      = new ArtifactPackagingService(objectMapper);
+        ArtifactProperties artifactProperties = new ArtifactProperties();
+        artifactProperties.setDir(artifactDir.toString());
+        service = new ArtifactPackagingService(objectMapper, artifactProperties);
     }
 
     // ── README always present ─────────────────────────────────────────────────
@@ -404,20 +411,21 @@ class ArtifactPackagingServiceTest {
     // ── Cleanup verification ──────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Temp directory is cleaned up after packaging; only ZIP remains")
-    void packageResults_tempDirectoryIsDeletedAfterZip(@TempDir Path ignored) throws IOException {
+    @DisplayName("ZIP is written to the durable artifact dir; transient staging dir is cleaned up")
+    void packageResults_writesToArtifactDirAndCleansStaging() throws IOException {
         MidasContext ctx = MidasContext.start("Cleanup test", "run-cleanup-001");
 
-        long tempDirCountBefore = countTempDirEntries();
+        long stagingBefore = countTempDirEntries();
         File zip = service.packageResults(ctx);
-        long tempDirCountAfter  = countTempDirEntries();
+        long stagingAfter  = countTempDirEntries();
 
         try {
-            // The zip file itself is in temp — everything else (temp subdirs) must be gone
+            // The durable ZIP lives under the configured artifact dir, not the JVM temp dir.
             assertThat(zip).exists();
-            // Net change should be just +1 (the ZIP file) or 0 if temp was pre-existing;
-            // importantly, no "midas_..." directories should linger
-            assertThat(tempDirCountAfter - tempDirCountBefore).isLessThanOrEqualTo(1);
+            assertThat(zip.getParentFile().toPath().toAbsolutePath().normalize())
+                    .isEqualTo(artifactDir.toAbsolutePath().normalize());
+            // The transient "midas_*" staging directory in java.io.tmpdir must be gone (no leak).
+            assertThat(stagingAfter - stagingBefore).isLessThanOrEqualTo(0);
         } finally {
             zip.delete();
         }

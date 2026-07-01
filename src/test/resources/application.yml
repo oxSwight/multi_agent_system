@@ -35,6 +35,10 @@ midas:
     max-artifact-size-kb: 512
   validation:
     max-retries: 3
+  # Durable artifact store under target/ (gitignored) so PipelineControllerIT can package a
+  # ZIP and resolve it back by key through GET /artifacts.
+  artifact:
+    dir: target/artifacts-it
   agent-retry:
     parse-max-attempts: 2
     validation-max-attempts: 3
