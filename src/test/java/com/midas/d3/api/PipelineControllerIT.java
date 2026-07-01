@@ -235,6 +235,37 @@ class PipelineControllerIT {
     }
 
     @Test
+    @DisplayName("POST / ignores a client-supplied telegramChatId (no chat binding over REST) → 201 normal run")
+    void startPipeline_ignoresClientTelegramChatId_returns201() {
+        // A REST caller must NOT be able to bind delivery to an arbitrary Telegram chat; the field is
+        // gone from the DTO, so an extra telegramChatId key is simply ignored and a normal REST run starts.
+        String runId = given()
+                    .contentType(ContentType.JSON)
+                    .body(Map.of("rawUserIdea", "Build a normal REST run", "telegramChatId", 999_999))
+                .when()
+                    .post()
+                .then()
+                    .statusCode(201)
+                    .body("state", equalTo("SYSTEM_ANALYSIS"))
+                .extract().path("runId");
+
+        cleanup(runId);
+    }
+
+    @Test
+    @DisplayName("POST / with oversized rawUserIdea (>20000 chars) → 400 with size violation")
+    void startPipeline_oversizedIdea_returns400() {
+        given()
+                .contentType(ContentType.JSON)
+                .body(Map.of("rawUserIdea", "x".repeat(20_001)))
+            .when()
+                .post()
+            .then()
+                .statusCode(400)
+                .body("violations", hasItem(containsString("20000")));
+    }
+
+    @Test
     @DisplayName("POST / without Content-Type → 415 Unsupported Media Type")
     void startPipeline_noContentType_returns415() {
         given()

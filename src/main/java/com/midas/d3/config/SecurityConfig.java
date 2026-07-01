@@ -36,8 +36,9 @@ import java.util.Map;
  *       {@code Authorization: Bearer <jwt>} header. The pipeline API exposes
  *       destructive ({@code DELETE}) and full-context-read operations, so it must
  *       never be anonymously accessible.</li>
- *   <li>CORS: origin {@code http://localhost:3000} (Next.js dev) is allowed for
- *       all dashboard and pipeline paths.</li>
+ *   <li>CORS: allowed origins are configurable via {@code midas.security.cors.allowed-origins}
+ *       (env {@code MIDAS_CORS_ALLOWED_ORIGINS}), defaulting to {@code http://localhost:3000} for
+ *       Next.js dev, applied to all {@code /api/**} paths.</li>
  * </ul>
  *
  * <h2>Error responses</h2>
@@ -53,12 +54,14 @@ public class SecurityConfig {
     private final ObjectMapper            objectMapper;
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   CorsConfigurationSource corsConfigurationSource)
+            throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm ->
                         sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .authorizeHttpRequests(auth -> auth
                         // Swagger / OpenAPI
                         .requestMatchers(
@@ -112,9 +115,12 @@ public class SecurityConfig {
     }
 
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
+    public CorsConfigurationSource corsConfigurationSource(
+            @org.springframework.beans.factory.annotation.Value(
+                    "${midas.security.cors.allowed-origins:http://localhost:3000}") List<String> allowedOrigins) {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of("http://localhost:3000"));
+        // Externalized so prod can set its real origin(s) via MIDAS_CORS_ALLOWED_ORIGINS without a code change.
+        config.setAllowedOrigins(allowedOrigins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
         config.setExposedHeaders(List.of("Authorization"));

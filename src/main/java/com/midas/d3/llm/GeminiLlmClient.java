@@ -22,7 +22,9 @@ import java.util.regex.Pattern;
  * Google Gemini API implementation of {@link LlmClient}.
  *
  * <p><b>Endpoint:</b>
- * {@code POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}}
+ * {@code POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent}
+ * with the API key sent via the {@code x-goog-api-key} header (never as a {@code ?key=} query param,
+ * which would leak the secret into access logs and proxies).
  *
  * <p><b>Retry policy:</b>
  * <ul>
@@ -101,10 +103,10 @@ public class GeminiLlmClient implements LlmClient {
         while (true) {
             try {
                 GeminiResponse response = webClient.post()
-                        .uri(uriBuilder -> uriBuilder
-                                .path(url)
-                                .queryParam("key", apiKey)
-                                .build())
+                        // Send the key via header, NOT ?key= — a query-string secret leaks into access
+                        // logs, proxies, and error traces.
+                        .uri(uriBuilder -> uriBuilder.path(url).build())
+                        .header("x-goog-api-key", apiKey)
                         .bodyValue(body)
                         .retrieve()
                         .bodyToMono(GeminiResponse.class)
