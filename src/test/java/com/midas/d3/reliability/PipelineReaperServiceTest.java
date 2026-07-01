@@ -9,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -53,7 +54,7 @@ class PipelineReaperServiceTest {
                     .updatedAt(Instant.now().minusSeconds(7200))
                     .build();
             when(runRepository.findByStatusNotInAndUpdatedAtBefore(
-                    eq(List.of("COMPLETED", "ERROR")), any(Instant.class)))
+                    eq(List.of("COMPLETED", "COMPLETED_WITH_GAPS", "ERROR")), any(Instant.class)))
                     .thenReturn(List.of(stale));
             when(orchestrator.hasActiveMachine("stale-run-001")).thenReturn(false);
 
@@ -75,7 +76,7 @@ class PipelineReaperServiceTest {
                     .updatedAt(Instant.now().minusSeconds(7200))
                     .build();
             when(runRepository.findByStatusNotInAndUpdatedAtBefore(
-                    eq(List.of("COMPLETED", "ERROR")), any(Instant.class)))
+                    eq(List.of("COMPLETED", "COMPLETED_WITH_GAPS", "ERROR")), any(Instant.class)))
                     .thenReturn(List.of(stale));
             when(orchestrator.hasActiveMachine("active-run-001")).thenReturn(true);
 
@@ -89,7 +90,7 @@ class PipelineReaperServiceTest {
         @DisplayName("returns zero and performs no updates when no stale candidates exist")
         void noOp_whenQueueEmpty() {
             when(runRepository.findByStatusNotInAndUpdatedAtBefore(
-                    eq(List.of("COMPLETED", "ERROR")), any(Instant.class)))
+                    eq(List.of("COMPLETED", "COMPLETED_WITH_GAPS", "ERROR")), any(Instant.class)))
                     .thenReturn(List.of());
 
             int reaped = service.runReaperCycle();
@@ -107,7 +108,7 @@ class PipelineReaperServiceTest {
                     .updatedAt(Instant.now().minusSeconds(7200))
                     .build();
             when(runRepository.findByStatusNotInAndUpdatedAtBefore(
-                    eq(List.of("COMPLETED", "ERROR")), any(Instant.class)))
+                    eq(List.of("COMPLETED", "COMPLETED_WITH_GAPS", "ERROR")), any(Instant.class)))
                     .thenReturn(List.of(stale));
             when(orchestrator.hasActiveMachine("stale-secops")).thenReturn(false);
 
@@ -118,6 +119,22 @@ class PipelineReaperServiceTest {
                     "stale-secops",
                     PipelineReaperService.ORPHAN_MESSAGE,
                     "SECOPS_AUDIT");
+        }
+
+        @Test
+        @DisplayName("treats COMPLETED_WITH_GAPS as terminal — never reaped (graceful degradation)")
+        void treatsCompletedWithGapsAsTerminal() {
+            ArgumentCaptor<List<String>> statusesCaptor = ArgumentCaptor.forClass(List.class);
+            when(runRepository.findByStatusNotInAndUpdatedAtBefore(any(), any(Instant.class)))
+                    .thenReturn(List.of());
+
+            service.runReaperCycle();
+
+            verify(runRepository).findByStatusNotInAndUpdatedAtBefore(
+                    statusesCaptor.capture(), any(Instant.class));
+            // A degraded run that honestly delivered a partial artifact must be excluded from reaping,
+            // otherwise it would be flipped to ERROR after the stale timeout — a client-visible crash.
+            assertThat(statusesCaptor.getValue()).contains("COMPLETED_WITH_GAPS");
         }
     }
 }

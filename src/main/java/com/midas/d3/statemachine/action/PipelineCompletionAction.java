@@ -186,8 +186,11 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
             persistCompletionWithoutArtifact(runId, degraded);
             log.error("[PipelineCompletionAction] Failed to package artifacts for run [{}]: {}",
                     runId, e.getMessage(), e);
+            String completionPhrase = degraded
+                    ? "Пайплайн завершён с оговорками"
+                    : "Пайплайн успешно завершен";
             bot.sendHtmlMessage(chatId,
-                    "⚠️ <b>Пайплайн успешно завершен</b>, однако при создании архива " +
+                    "⚠️ <b>" + completionPhrase + "</b>, однако при создании архива " +
                     "артефактов произошла ошибка:\n<code>" + escapeHtml(e.getMessage()) + "</code>\n\n" +
                     "Вы можете получить результаты через REST API:\n" +
                     "<code>GET /api/v1/pipelines/" + runId + "/context</code>");

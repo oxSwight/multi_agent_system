@@ -58,6 +58,41 @@ class PipelineArtifactServiceTest {
     }
 
     @Test
+    @DisplayName("COMPLETED_WITH_GAPS active run with persisted ZIP → returns file (degraded still delivers)")
+    void resolveArtifactZip_completedWithGapsActive_returnsFile() throws IOException {
+        File zip = Files.createFile(tempDir.resolve("degraded.zip")).toFile();
+        MidasRunEntity run = MidasRunEntity.builder()
+                .id("run-degraded-active")
+                .rawUserIdea("idea")
+                .status("COMPLETED_WITH_GAPS")
+                .artifactPath(zip.getAbsolutePath())
+                .build();
+
+        when(orchestrator.getState("run-degraded-active")).thenReturn(MidasState.COMPLETED_WITH_GAPS);
+        when(runRepository.findById("run-degraded-active")).thenReturn(Optional.of(run));
+
+        assertThat(service.resolveArtifactZip("run-degraded-active")).isEqualTo(zip);
+    }
+
+    @Test
+    @DisplayName("COMPLETED_WITH_GAPS persisted status (inactive machine) with ZIP → returns file")
+    void resolveArtifactZip_completedWithGapsPersisted_returnsFile() throws IOException {
+        File zip = Files.createFile(tempDir.resolve("degraded-persisted.zip")).toFile();
+        MidasRunEntity run = MidasRunEntity.builder()
+                .id("run-degraded-db")
+                .rawUserIdea("idea")
+                .status("COMPLETED_WITH_GAPS")
+                .artifactPath(zip.getAbsolutePath())
+                .build();
+
+        when(orchestrator.getState("run-degraded-db"))
+                .thenThrow(new PipelineOrchestrator.PipelineNotFoundException("missing"));
+        when(runRepository.findById("run-degraded-db")).thenReturn(Optional.of(run));
+
+        assertThat(service.resolveArtifactZip("run-degraded-db")).isEqualTo(zip);
+    }
+
+    @Test
     @DisplayName("Active run not COMPLETED → ArtifactNotFoundException")
     void resolveArtifactZip_activeRunNotCompleted_throwsNotFound() {
         when(orchestrator.getState("run-active")).thenReturn(MidasState.CODE_GENERATION);

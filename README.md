@@ -54,6 +54,10 @@ SYSTEM_ANALYSIS ─▶ ARCHITECTURE_DESIGN ─▶ INTEGRATION_STRATEGY
   the upstream artifacts it needs, with a fail-closed prompt-budget guard.
 - **Bounded, automated remediation** — QA and SecOps failures are isolated and retried
   within configurable limits instead of failing the whole run.
+- **Graceful degradation** — when `CODE_GENERATION` hits an unhealable functional gap, the run
+  terminates in `COMPLETED_WITH_GAPS`: it delivers the best-effort partial source plus an honest
+  `MIDAS_COVERAGE_REPORT.md` (what was built vs. the specific unmet gaps) instead of a
+  client-visible failure. Opt-out with `midas.degradation.enabled=false`.
 
 ## Tech stack
 

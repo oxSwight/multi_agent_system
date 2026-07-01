@@ -22,7 +22,10 @@ public class PipelineReaperService {
     static final String ORPHAN_MESSAGE =
             "Pipeline timed out or unexpectedly terminated. Run lost — please resubmit.";
 
-    private static final List<String> TERMINAL_STATUSES = List.of("COMPLETED", "ERROR");
+    // Terminal run statuses that must never be reaped. COMPLETED_WITH_GAPS is the graceful-degradation
+    // terminal: a run that honestly delivered a partial artifact must stay terminal, otherwise the reaper
+    // would flip a delivered (degraded) product to ERROR after the stale timeout — a client-visible crash.
+    private static final List<String> TERMINAL_STATUSES = List.of("COMPLETED", "COMPLETED_WITH_GAPS", "ERROR");
 
     private final MidasRunRepository runRepository;
     private final PersistenceService persistenceService;
