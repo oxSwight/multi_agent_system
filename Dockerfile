@@ -29,6 +29,12 @@ COPY --from=builder /build/target/midas-d3-0.1.0-SNAPSHOT.jar app.jar
 
 RUN chown midas:midas app.jar
 
+# Durable artifact store — REST-delivered result ZIPs are written here. docker-compose mounts a
+# named volume (midas_artifacts) at this path so archives survive container restarts. Created and
+# owned by midas while still root, then defaulted via MIDAS_ARTIFACT_DIR for the app to pick up.
+RUN mkdir -p /app/artifacts && chown midas:midas /app/artifacts
+ENV MIDAS_ARTIFACT_DIR=/app/artifacts
+
 USER midas
 
 EXPOSE 8080

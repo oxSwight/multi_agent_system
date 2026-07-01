@@ -143,7 +143,10 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
             log.info("[PipelineCompletionAction] Packaging REST artifacts for run [{}]{}.",
                     runId, degraded ? " (degraded)" : "");
             zipFile = packagingService.packageResults(ctx);
-            persistCompletion(runId, zipFile.getAbsolutePath(), degraded);
+            // Persist the file-name KEY, not a node-local absolute path: the reader resolves it
+            // against midas.artifact.dir (the durable volume), so the reference stays valid across
+            // restarts and cannot point outside the artifact store.
+            persistCompletion(runId, zipFile.getName(), degraded);
             log.info("[PipelineCompletionAction] REST artifact ZIP saved at [{}] for run [{}].",
                     zipFile.getAbsolutePath(), runId);
         } catch (Exception e) {
@@ -169,8 +172,9 @@ public class PipelineCompletionAction implements Action<MidasState, MidasEvent> 
 
             zipFile = packagingService.packageResults(ctx);
 
-            // Persist the artifact path and mark COMPLETED (or COMPLETED_WITH_GAPS) before sending.
-            persistCompletion(runId, zipFile.getAbsolutePath(), degraded);
+            // Persist the file-name KEY (resolved against midas.artifact.dir by the reader) and mark
+            // COMPLETED (or COMPLETED_WITH_GAPS) before sending.
+            persistCompletion(runId, zipFile.getName(), degraded);
 
             boolean delivered = bot.sendArtifactDocument(chatId, zipFile,
                     degraded ? CAPTION_DEGRADED : CAPTION_SUCCESS);

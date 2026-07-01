@@ -52,6 +52,9 @@ midas_hybrid.zip
 # Generated sample/demo output from local pipeline runs (not core VCS)
 job-app-hybrid/
 
+# Durable artifact store (default MIDAS_ARTIFACT_DIR for local dev; volume-mounted in prod)
+midas-artifacts/
+
 # ── Markdown & AI assistant rules (local-only) ───────────────
 # Only README files reach the remote. Every other .md (internal docs,
 # the audit log, OSS templates) and the .cursorrules workflow file stay

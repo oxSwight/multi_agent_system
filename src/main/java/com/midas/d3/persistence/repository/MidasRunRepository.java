@@ -59,7 +59,7 @@ public interface MidasRunRepository extends JpaRepository<MidasRunEntity, String
      * after the artifacts ZIP has been created.
      *
      * @param id           the pipeline run ID
-     * @param artifactPath absolute path to the generated ZIP file
+     * @param artifactPath artifact key (the ZIP file name) resolved against {@code midas.artifact.dir}
      * @param status       final status (typically {@code "COMPLETED"})
      * @param updatedAt    the timestamp to write into {@code updated_at}
      */

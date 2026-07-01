@@ -65,6 +65,14 @@ midas:
   validation:
     max-retries: 3
 
+  # ── Durable artifact store ────────────────────────────────────────────────
+  # Directory for REST-delivered result ZIPs. Referenced from the DB by file-name key
+  # only (never a node-local absolute path). In production MIDAS_ARTIFACT_DIR maps to a
+  # mounted volume (docker-compose: named volume midas_artifacts → /app/artifacts) so
+  # archives survive container restarts.
+  artifact:
+    dir: ${MIDAS_ARTIFACT_DIR:./midas-artifacts}
+
   agent-retry:
     parse-max-attempts: ${MIDAS_AGENT_RETRY_PARSE_MAX:2}
     validation-max-attempts: ${MIDAS_AGENT_RETRY_VALIDATION_MAX:3}
