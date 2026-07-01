@@ -24,6 +24,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -181,11 +182,44 @@ public class PerFileCodeGenerationStrategy {
         }
         List<String> paths = new ArrayList<>();
         for (JsonNode entry : layout) {
-            if (entry.isTextual() && !entry.asText().isBlank()) {
-                paths.add(entry.asText().strip());
+            if (!entry.isTextual() || entry.asText().isBlank()) {
+                continue;
             }
+            String path = entry.asText().strip();
+            // Binary assets (icons/images/fonts) cannot be authored by an LLM as a text code block.
+            // The deterministic Assembler (ArtifactPackagingService) backfills referenced icons at
+            // packaging, and the reference validators (ManifestReferenceValidator,
+            // ExtensionStructureVerifier) tolerate their absence — so they are excluded from per-file
+            // generation, where an architect that (correctly) declared the path would otherwise
+            // dead-end the whole pass on the impossible task of "writing a PNG".
+            if (isBinaryAsset(path)) {
+                continue;
+            }
+            paths.add(path);
         }
         return paths;
+    }
+
+    /** File extensions for binary assets an LLM cannot emit as a text source code block. */
+    private static final Set<String> BINARY_ASSET_EXTENSIONS = Set.of(
+            "png", "jpg", "jpeg", "gif", "ico", "webp", "bmp", "avif", "tiff", "svgz",
+            "woff", "woff2", "ttf", "eot", "otf");
+
+    /**
+     * True when {@code path} names a binary asset (by extension) that cannot be authored as source.
+     * Such paths are skipped by per-file generation and backfilled deterministically downstream.
+     * Text-based assets (e.g. {@code .svg}) are intentionally NOT matched — a model can author those.
+     */
+    static boolean isBinaryAsset(String path) {
+        if (path == null) {
+            return false;
+        }
+        int slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        int dot = path.lastIndexOf('.');
+        if (dot <= slash || dot == path.length() - 1) {
+            return false; // no extension
+        }
+        return BINARY_ASSET_EXTENSIONS.contains(path.substring(dot + 1).toLowerCase(Locale.ROOT));
     }
 
     private FileGenerationResult generateSingleFile(MidasContext context,

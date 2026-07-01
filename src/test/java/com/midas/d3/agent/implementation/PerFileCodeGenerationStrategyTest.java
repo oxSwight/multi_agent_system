@@ -235,6 +235,29 @@ class PerFileCodeGenerationStrategyTest {
                 .containsExactly("a.ts", "b.ts");
     }
 
+    @Test
+    @DisplayName("resolveFileLayout skips binary assets (icons/images/fonts) but keeps code and .svg")
+    void resolveFileLayout_skipsBinaryAssets() throws Exception {
+        JsonNode architecture = objectMapper.readTree("""
+                {"file_layout":["manifest.json","src/popup.ts","icons/icon-16.png",
+                 "src/icon-autofill.png","assets/logo.jpg","fonts/inter.woff2","assets/vector.svg"]}
+                """);
+        assertThat(PerFileCodeGenerationStrategy.resolveFileLayout(viewWithArchitecture(architecture)))
+                .containsExactly("manifest.json", "src/popup.ts", "assets/vector.svg");
+    }
+
+    @Test
+    @DisplayName("isBinaryAsset matches binary extensions only")
+    void isBinaryAsset_classifies() {
+        assertThat(PerFileCodeGenerationStrategy.isBinaryAsset("icons/icon-48.png")).isTrue();
+        assertThat(PerFileCodeGenerationStrategy.isBinaryAsset("a/b/logo.JPG")).isTrue();
+        assertThat(PerFileCodeGenerationStrategy.isBinaryAsset("fonts/inter.woff2")).isTrue();
+        assertThat(PerFileCodeGenerationStrategy.isBinaryAsset("assets/vector.svg")).isFalse();
+        assertThat(PerFileCodeGenerationStrategy.isBinaryAsset("src/content_script.js")).isFalse();
+        assertThat(PerFileCodeGenerationStrategy.isBinaryAsset("Makefile")).isFalse();
+        assertThat(PerFileCodeGenerationStrategy.isBinaryAsset("weird.png.ts")).isFalse();
+    }
+
     private AgentContextView viewWithArchitecture(JsonNode architecture) {
         ObjectNode arch = architecture.isObject()
                 ? (ObjectNode) architecture
