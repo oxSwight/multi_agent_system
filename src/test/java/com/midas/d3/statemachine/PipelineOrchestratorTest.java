@@ -66,6 +66,40 @@ class PipelineOrchestratorTest {
     }
 
     @Test
+    void evictRun_removesRunFromRegistry() {
+        String runId = orchestrator.startPipeline("Build an evictable run");
+        assertThat(orchestrator.hasActiveMachine(runId)).isTrue();
+
+        orchestrator.evictRun(runId);
+
+        assertThat(orchestrator.hasActiveMachine(runId)).isFalse();
+        assertThatThrownBy(() -> orchestrator.getState(runId))
+                .isInstanceOf(PipelineOrchestrator.PipelineNotFoundException.class);
+    }
+
+    @Test
+    void evictRun_unknownRun_isNoOp() {
+        // Idempotent: evicting an unknown/already-evicted run must not throw.
+        orchestrator.evictRun("never-existed-run");
+        assertThat(orchestrator.hasActiveMachine("never-existed-run")).isFalse();
+    }
+
+    @Test
+    void restRun_reachingTerminalError_isNotEvicted() {
+        // REST (non-auto) runs must stay queryable after a terminal state so the client can still GET
+        // status/context/artifacts. Only auto-mode runs get the terminal-eviction listener.
+        String runId = orchestrator.startPipeline("Build a REST run that will error out");
+        orchestrator.submitResult(runId, "{ bad json");
+        orchestrator.submitResult(runId, "{ bad json");
+        orchestrator.submitResult(runId, "{ bad json");
+
+        assertThat(orchestrator.getState(runId)).isEqualTo(MidasState.ERROR);
+        assertThat(orchestrator.hasActiveMachine(runId)).isTrue();
+
+        orchestrator.reset(runId);
+    }
+
+    @Test
     void submitResult_withNullRunId_throwsIllegalArgument() {
         assertThatThrownBy(() -> orchestrator.submitResult(null, "{}"))
                 .isInstanceOf(IllegalArgumentException.class);
