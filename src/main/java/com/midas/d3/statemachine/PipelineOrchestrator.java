@@ -9,12 +9,16 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.statemachine.StateMachine;
 import org.springframework.statemachine.config.StateMachineFactory;
 import org.springframework.statemachine.listener.StateMachineListener;
+import org.springframework.statemachine.listener.StateMachineListenerAdapter;
+import org.springframework.statemachine.state.State;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
+import java.util.EnumSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -41,6 +45,10 @@ public class PipelineOrchestrator {
     /** Active machine instances keyed by pipeline run ID. */
     private final ConcurrentHashMap<String, StateMachine<MidasState, MidasEvent>> activeMachines =
             new ConcurrentHashMap<>();
+
+    /** Terminal states after which an auto-mode run's machine can be evicted from the registry. */
+    private static final EnumSet<MidasState> TERMINAL_STATES = EnumSet.of(
+            MidasState.COMPLETED, MidasState.COMPLETED_WITH_GAPS, MidasState.ERROR);
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -104,6 +112,14 @@ public class PipelineOrchestrator {
 
         if (listener != null) {
             machine.addStateListener(listener);
+        }
+        if (autoMode) {
+            // Auto-drive runs (Telegram/auto) have no client to DELETE/reset them, so without this the
+            // StateMachine + MidasContext would stay pinned in the registry forever (heap leak / OOM) and
+            // the reaper would skip them (hasActiveMachine==true), leaving stuck auto runs un-reapable.
+            // REST runs deliberately do NOT get this listener: clients must still GET status/context/
+            // artifacts after a terminal state, until they explicitly reset the run.
+            machine.addStateListener(new TerminalEvictionListener(runId));
         }
 
         machine.startReactively().block();
@@ -269,6 +285,49 @@ public class PipelineOrchestrator {
 
     public boolean hasActiveMachine(String runId) {
         return runId != null && !runId.isBlank() && activeMachines.containsKey(runId);
+    }
+
+    /**
+     * Removes a run's machine from the active registry and stops it off the caller's thread. Idempotent
+     * (a no-op if the run was already evicted/reset). Called by the auto-mode terminal-eviction listener;
+     * package-private so lifecycle behaviour can be unit-tested.
+     */
+    void evictRun(String runId) {
+        StateMachine<MidasState, MidasEvent> machine = activeMachines.remove(runId);
+        if (machine == null) {
+            return;
+        }
+        // Stop off-thread: this is invoked from inside the machine's own stateEntered callback, so a
+        // synchronous stopReactively().block() here could deadlock the transition.
+        CompletableFuture.runAsync(() -> {
+            try {
+                machine.stopReactively().block();
+            } catch (Exception e) {
+                log.warn("[PipelineOrchestrator] Error stopping evicted machine [{}]: {}", runId, e.getMessage());
+            }
+        });
+        log.info("[PipelineOrchestrator] Run [{}] evicted from active registry.", runId);
+    }
+
+    /**
+     * State listener attached ONLY to auto-mode runs: evicts the machine once it enters a terminal state
+     * so completed/errored auto runs do not leak in the registry and stuck ones become reapable.
+     */
+    private final class TerminalEvictionListener extends StateMachineListenerAdapter<MidasState, MidasEvent> {
+        private final String runId;
+
+        private TerminalEvictionListener(String runId) {
+            this.runId = runId;
+        }
+
+        @Override
+        public void stateEntered(State<MidasState, MidasEvent> state) {
+            if (state != null && TERMINAL_STATES.contains(state.getId())) {
+                log.info("[PipelineOrchestrator] Auto-mode run [{}] reached terminal [{}] — evicting.",
+                        runId, state.getId());
+                evictRun(runId);
+            }
+        }
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
